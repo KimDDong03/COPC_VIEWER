@@ -24,6 +24,10 @@ import {
   type CopcHierarchyNodeSuggestion,
   type CopcTargetPoint,
 } from "./core/copc/suggestHierarchyNode";
+import {
+  selectHierarchyNodesForCamera,
+  type CopcHierarchyNodeCameraSelection,
+} from "./core/copc/selectHierarchyNodesForCamera";
 import type { PointSample } from "./core/PointSample";
 import { createHardcodedPointSamples } from "./core/hardcodedPointSamples";
 import "./style.css";
@@ -97,6 +101,10 @@ elements.addSuggestionButton.addEventListener("click", () => {
   if (currentSuggestion) {
     addNodeToRenderSet(currentSuggestion.node.key);
   }
+});
+
+elements.autoLodButton.addEventListener("click", () => {
+  void renderAutomaticNodeSet();
 });
 
 elements.renderSetButton.addEventListener("click", () => {
@@ -174,6 +182,7 @@ function renderInspection(
   pointResult?: CopcNodePointSampleResult,
   selectedNode?: CopcHierarchyNodeSummary,
   nodeSetResult?: CopcMultiNodePointSampleResult,
+  cameraSelection?: CopcHierarchyNodeCameraSelection,
 ): void {
   elements.statusText.textContent = "COPC metadata loaded.";
   elements.metadataList.replaceChildren(
@@ -218,6 +227,10 @@ function renderInspection(
       nodeSetResult
         ? `${nodeSetResult.nodeKeys.length.toLocaleString()} nodes, ${nodeSetResult.sampledPointCount.toLocaleString()} points rendered`
         : formatRenderSetSummary(),
+    ),
+    metadataRow(
+      "Auto LOD",
+      cameraSelection ? formatCameraSelection(cameraSelection) : "Not applied",
     ),
     metadataRow("VLRs", formatVlrs(inspection)),
     metadataRow("WKT", inspection.wkt ? truncateText(inspection.wkt, 220) : "Not found"),
@@ -298,13 +311,43 @@ async function renderSelectedHierarchyNode(): Promise<void> {
 }
 
 async function renderSelectedNodeSet(): Promise<void> {
-  if (!currentInspection || !currentSource || renderNodeSet.size === 0) {
+  await renderNodeKeySet([...renderNodeSet]);
+}
+
+async function renderAutomaticNodeSet(): Promise<void> {
+  if (!currentInspection || !currentHierarchy) {
+    return;
+  }
+
+  const selection = selectHierarchyNodesForCamera(currentHierarchy.nodes, {
+    target: cameraPositionToCopc(currentInspection),
+    viewportHeightPixels: viewer.scene.canvas.clientHeight,
+    maxNodes: 4,
+  });
+
+  if (!selection || selection.nodes.length === 0) {
+    return;
+  }
+
+  renderNodeSet.clear();
+  selection.nodes.forEach((node) => renderNodeSet.add(node.key));
+  renderRenderSetControls();
+  await renderNodeKeySet(
+    selection.nodes.map((node) => node.key),
+    selection,
+  );
+}
+
+async function renderNodeKeySet(
+  nodeKeys: readonly string[],
+  cameraSelection?: CopcHierarchyNodeCameraSelection,
+): Promise<void> {
+  if (!currentInspection || !currentSource || nodeKeys.length === 0) {
     return;
   }
 
   const source = currentSource;
   const inspection = currentInspection;
-  const nodeKeys = [...renderNodeSet];
   const nodes = nodeKeys.map(findRequiredNode);
   elements.statusText.textContent = `Reading ${nodeKeys.length.toLocaleString()} COPC nodes...`;
 
@@ -329,8 +372,16 @@ async function renderSelectedNodeSet(): Promise<void> {
       destination: cameraTargetForPointCloud(cesiumPoints),
       duration: 0,
     });
-    renderInspection(inspection, undefined, undefined, pointSamples);
-    elements.statusText.textContent = `Rendered ${pointSamples.sampledPointCount.toLocaleString()} points from ${pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
+    renderInspection(
+      inspection,
+      undefined,
+      undefined,
+      pointSamples,
+      cameraSelection,
+    );
+    elements.statusText.textContent = cameraSelection
+      ? `Auto LOD rendered ${pointSamples.sampledPointCount.toLocaleString()} points from ${pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`
+      : `Rendered ${pointSamples.sampledPointCount.toLocaleString()} points from ${pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
@@ -418,6 +469,7 @@ function renderRenderSetControls(): void {
     !selectedNodeKey || renderNodeSet.has(selectedNodeKey);
   elements.addSuggestionButton.disabled =
     !suggestedNodeKey || renderNodeSet.has(suggestedNodeKey);
+  elements.autoLodButton.disabled = !currentInspection || !currentHierarchy;
   elements.renderSetButton.disabled = !hasNodes;
   elements.clearSetButton.disabled = !hasNodes;
 }
@@ -447,6 +499,7 @@ function getPrototypeElements(): {
   readonly renderSetText: HTMLParagraphElement;
   readonly addSelectedButton: HTMLButtonElement;
   readonly addSuggestionButton: HTMLButtonElement;
+  readonly autoLodButton: HTMLButtonElement;
   readonly renderSetButton: HTMLButtonElement;
   readonly clearSetButton: HTMLButtonElement;
   readonly statusText: HTMLParagraphElement;
@@ -467,6 +520,7 @@ function getPrototypeElements(): {
   const addSuggestionButton = document.querySelector<HTMLButtonElement>(
     "#copc-add-suggestion",
   );
+  const autoLodButton = document.querySelector<HTMLButtonElement>("#copc-auto-lod");
   const renderSetButton = document.querySelector<HTMLButtonElement>(
     "#copc-render-set-button",
   );
@@ -484,6 +538,7 @@ function getPrototypeElements(): {
     !renderSetText ||
     !addSelectedButton ||
     !addSuggestionButton ||
+    !autoLodButton ||
     !renderSetButton ||
     !clearSetButton ||
     !statusText ||
@@ -502,6 +557,7 @@ function getPrototypeElements(): {
     renderSetText,
     addSelectedButton,
     addSuggestionButton,
+    autoLodButton,
     renderSetButton,
     clearSetButton,
     statusText,
@@ -557,6 +613,12 @@ function formatRenderSetSummary(): string {
   return renderNodeSet.size > 0
     ? `${renderNodeSet.size.toLocaleString()} nodes queued`
     : "Empty";
+}
+
+function formatCameraSelection(
+  selection: CopcHierarchyNodeCameraSelection,
+): string {
+  return `${selection.nodes.length.toLocaleString()} nodes at depth ${selection.selectedDepth.toLocaleString()} (target depth ${selection.targetDepth.toLocaleString()}, root span ${selection.estimatedRootScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px)`;
 }
 
 function formatSuggestionDistance(value: number): string {
