@@ -13,6 +13,12 @@ export interface CesiumCoordinate {
   readonly heightMeters: number;
 }
 
+export interface CopcCoordinate {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
 export function createCopcCoordinateTransform(
   inspection: CopcInspection,
 ): (x: number, y: number, z: number) => CesiumCoordinate {
@@ -29,6 +35,26 @@ export function createCopcCoordinateTransform(
   };
 }
 
+export function createCesiumToCopcCoordinateTransform(
+  inspection: CopcInspection,
+): (
+  longitudeDegrees: number,
+  latitudeDegrees: number,
+  heightMeters: number,
+) => CopcCoordinate {
+  const horizontalTransform = createInverseHorizontalTransform(inspection);
+
+  return (longitudeDegrees, latitudeDegrees, heightMeters) => {
+    const [x, y] = horizontalTransform(longitudeDegrees, latitudeDegrees);
+
+    return {
+      x,
+      y,
+      z: heightFromMeters(heightMeters, inspection),
+    };
+  };
+}
+
 function createHorizontalTransform(
   inspection: CopcInspection,
 ): (x: number, y: number) => [number, number] {
@@ -39,6 +65,30 @@ function createHorizontalTransform(
   if (inspection.wkt?.includes('AUTHORITY["EPSG","2992"]')) {
     configureKnownProjections();
     return (x, y) => proj4(EPSG_2992, WGS84, [x, y]) as [number, number];
+  }
+
+  throw new Error(
+    "This prototype can only render geographic coordinates or the sample EPSG:2992 COPC CRS.",
+  );
+}
+
+function createInverseHorizontalTransform(
+  inspection: CopcInspection,
+): (longitudeDegrees: number, latitudeDegrees: number) => [number, number] {
+  if (isLikelyGeographic(inspection)) {
+    return (longitudeDegrees, latitudeDegrees) => [
+      longitudeDegrees,
+      latitudeDegrees,
+    ];
+  }
+
+  if (inspection.wkt?.includes('AUTHORITY["EPSG","2992"]')) {
+    configureKnownProjections();
+    return (longitudeDegrees, latitudeDegrees) =>
+      proj4(WGS84, EPSG_2992, [longitudeDegrees, latitudeDegrees]) as [
+        number,
+        number,
+      ];
   }
 
   throw new Error(
@@ -75,4 +125,12 @@ function heightToMeters(z: number, inspection: CopcInspection): number {
   }
 
   return z;
+}
+
+function heightFromMeters(heightMeters: number, inspection: CopcInspection): number {
+  if (inspection.wkt?.includes('VERT_CS["NAVD88 height (ftUS)"')) {
+    return heightMeters / US_SURVEY_FOOT_TO_METER;
+  }
+
+  return heightMeters;
 }

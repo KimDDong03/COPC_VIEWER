@@ -33,6 +33,7 @@ The default example URL loads the public Autzen COPC sample, reads the root hier
 The hierarchy node selector lists nodes from the root hierarchy page and lets the example render one selected node at a time.
 `CopcSource` keeps the opened COPC metadata, hierarchy page, and sampled node point data in memory for the active URL.
 The example also computes the selected node bounds and renders a yellow debug bounding box in CesiumJS.
+It can suggest the nearest loaded hierarchy node to the current camera position and apply that suggestion on demand.
 
 ## Planned Shape
 

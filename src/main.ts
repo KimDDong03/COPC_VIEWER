@@ -1,7 +1,13 @@
-import { Cartesian3, Viewer } from "cesium";
+import {
+  Cartesian3,
+  Cartographic,
+  Math as CesiumMath,
+  Viewer,
+} from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import { CesiumBoundsRenderer } from "./cesium/CesiumBoundsRenderer";
 import { CesiumPointRenderer } from "./cesium/CesiumPointRenderer";
+import { createCesiumToCopcCoordinateTransform } from "./cesium/copcCoordinateTransform";
 import { createPointSamplesFromCopc } from "./cesium/createPointSamplesFromCopc";
 import { CopcSource } from "./core/copc/CopcSource";
 import type {
@@ -10,6 +16,11 @@ import type {
 } from "./core/copc/CopcHierarchySummary";
 import type { CopcBounds, CopcInspection } from "./core/copc/CopcInspection";
 import type { CopcNodePointSampleResult } from "./core/copc/CopcPointDataSample";
+import {
+  suggestHierarchyNode,
+  type CopcHierarchyNodeSuggestion,
+  type CopcTargetPoint,
+} from "./core/copc/suggestHierarchyNode";
 import type { PointSample } from "./core/PointSample";
 import { createHardcodedPointSamples } from "./core/hardcodedPointSamples";
 import "./style.css";
@@ -18,6 +29,7 @@ const elements = getPrototypeElements();
 let currentSource: CopcSource | undefined;
 let currentInspection: CopcInspection | undefined;
 let currentHierarchy: CopcHierarchySummary | undefined;
+let currentSuggestion: CopcHierarchyNodeSuggestion | undefined;
 
 const viewer = new Viewer(elements.container, {
   animation: false,
@@ -62,6 +74,19 @@ elements.form.addEventListener("submit", (event) => {
   void inspectUrl(elements.urlInput.value);
 });
 
+elements.applySuggestionButton.addEventListener("click", () => {
+  if (!currentSuggestion) {
+    return;
+  }
+
+  elements.nodeSelect.value = currentSuggestion.node.key;
+  void renderSelectedHierarchyNode();
+});
+
+viewer.camera.moveEnd.addEventListener(() => {
+  updateSuggestedNode();
+});
+
 void inspectUrl(elements.urlInput.value);
 
 async function inspectUrl(url: string): Promise<void> {
@@ -70,7 +95,9 @@ async function inspectUrl(url: string): Promise<void> {
   currentSource = source;
   currentInspection = undefined;
   currentHierarchy = undefined;
+  currentSuggestion = undefined;
   boundsRenderer.clear();
+  renderSuggestion(undefined);
 
   try {
     const [inspection, hierarchy] = await Promise.all([
@@ -86,6 +113,7 @@ async function inspectUrl(url: string): Promise<void> {
     currentHierarchy = hierarchy;
     populateNodeSelect(hierarchy);
     renderInspection(inspection);
+    updateSuggestedNode();
     await renderSelectedHierarchyNode();
   } catch (error) {
     setInspectionError(error);
@@ -98,6 +126,7 @@ function setInspectionLoading(): void {
   elements.nodeSelect.disabled = true;
   elements.nodeSelect.replaceChildren(new Option("Loading hierarchy...", ""));
   boundsRenderer.clear();
+  renderSuggestion(undefined);
 }
 
 function setInspectionError(error: unknown): void {
@@ -108,6 +137,7 @@ function setInspectionError(error: unknown): void {
   elements.metadataList.replaceChildren();
   elements.nodeSelect.disabled = true;
   boundsRenderer.clear();
+  renderSuggestion(undefined);
 }
 
 function renderInspection(
@@ -224,9 +254,57 @@ async function renderSelectedHierarchyNode(): Promise<void> {
     });
     renderInspection(inspection, pointSamples, selectedNode);
     elements.statusText.textContent = `Rendered ${pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`;
+    updateSuggestedNode();
   } catch (error) {
     setInspectionError(error);
   }
+}
+
+function updateSuggestedNode(): void {
+  currentSuggestion = undefined;
+
+  if (!currentInspection || !currentHierarchy) {
+    renderSuggestion(undefined);
+    return;
+  }
+
+  try {
+    currentSuggestion = suggestHierarchyNode(currentHierarchy.nodes, {
+      target: cameraPositionToCopc(currentInspection),
+    });
+    renderSuggestion(currentSuggestion);
+  } catch (error) {
+    elements.suggestionText.textContent =
+      error instanceof Error
+        ? `Suggested node unavailable: ${error.message}`
+        : "Suggested node unavailable.";
+    elements.applySuggestionButton.disabled = true;
+  }
+}
+
+function cameraPositionToCopc(inspection: CopcInspection): CopcTargetPoint {
+  const cartographic = Cartographic.fromCartesian(viewer.camera.positionWC);
+  const transform = createCesiumToCopcCoordinateTransform(inspection);
+
+  return transform(
+    CesiumMath.toDegrees(cartographic.longitude),
+    CesiumMath.toDegrees(cartographic.latitude),
+    cartographic.height,
+  );
+}
+
+function renderSuggestion(
+  suggestion: CopcHierarchyNodeSuggestion | undefined,
+): void {
+  if (!suggestion) {
+    elements.suggestionText.textContent = "Suggested node: not available.";
+    elements.applySuggestionButton.disabled = true;
+    return;
+  }
+
+  const isSelected = suggestion.node.key === elements.nodeSelect.value;
+  elements.suggestionText.textContent = `Suggested node: ${suggestion.node.key} (${formatSuggestionDistance(suggestion.distanceToBounds)})`;
+  elements.applySuggestionButton.disabled = isSelected;
 }
 
 function findNode(nodeKey: string): CopcHierarchyNodeSummary | undefined {
@@ -253,6 +331,8 @@ function getPrototypeElements(): {
   readonly form: HTMLFormElement;
   readonly urlInput: HTMLInputElement;
   readonly nodeSelect: HTMLSelectElement;
+  readonly suggestionText: HTMLParagraphElement;
+  readonly applySuggestionButton: HTMLButtonElement;
   readonly statusText: HTMLParagraphElement;
   readonly metadataList: HTMLDListElement;
 } {
@@ -260,10 +340,23 @@ function getPrototypeElements(): {
   const form = document.querySelector<HTMLFormElement>("#copc-form");
   const urlInput = document.querySelector<HTMLInputElement>("#copc-url");
   const nodeSelect = document.querySelector<HTMLSelectElement>("#copc-node-select");
+  const suggestionText = document.querySelector<HTMLParagraphElement>("#copc-suggestion");
+  const applySuggestionButton = document.querySelector<HTMLButtonElement>(
+    "#copc-apply-suggestion",
+  );
   const statusText = document.querySelector<HTMLParagraphElement>("#copc-status");
   const metadataList = document.querySelector<HTMLDListElement>("#copc-metadata");
 
-  if (!container || !form || !urlInput || !nodeSelect || !statusText || !metadataList) {
+  if (
+    !container ||
+    !form ||
+    !urlInput ||
+    !nodeSelect ||
+    !suggestionText ||
+    !applySuggestionButton ||
+    !statusText ||
+    !metadataList
+  ) {
     throw new Error("Missing prototype DOM elements.");
   }
 
@@ -272,6 +365,8 @@ function getPrototypeElements(): {
     form,
     urlInput,
     nodeSelect,
+    suggestionText,
+    applySuggestionButton,
     statusText,
     metadataList,
   };
@@ -319,6 +414,12 @@ function formatVlrs(inspection: CopcInspection): string {
 
 function formatDensity(value: number): string {
   return `${value.toExponential(3)} pts / unit^3`;
+}
+
+function formatSuggestionDistance(value: number): string {
+  return value === 0
+    ? "camera position inside XY bounds"
+    : `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} COPC units from camera XY`;
 }
 
 function truncateText(text: string, maxLength: number): string {
