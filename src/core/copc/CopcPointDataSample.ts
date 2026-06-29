@@ -11,8 +11,9 @@ export interface CopcPointDataSample {
   readonly color?: CopcPointColor;
 }
 
-export interface CopcRootPointSampleResult {
-  readonly rootPointCount: number;
+export interface CopcNodePointSampleResult {
+  readonly nodeKey: string;
+  readonly nodePointCount: number;
   readonly sampledPointCount: number;
   readonly points: readonly CopcPointDataSample[];
 }

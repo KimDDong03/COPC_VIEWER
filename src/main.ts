@@ -2,15 +2,19 @@ import { Cartesian3, Viewer } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import { CesiumPointRenderer } from "./cesium/CesiumPointRenderer";
 import { createPointSamplesFromCopc } from "./cesium/createPointSamplesFromCopc";
+import type { CopcHierarchySummary } from "./core/copc/CopcHierarchySummary";
 import type { CopcInspection } from "./core/copc/CopcInspection";
-import type { CopcRootPointSampleResult } from "./core/copc/CopcPointDataSample";
+import type { CopcNodePointSampleResult } from "./core/copc/CopcPointDataSample";
 import { inspectCopc } from "./core/copc/inspectCopc";
-import { loadRootPointSamples } from "./core/copc/loadRootPointSamples";
+import { loadHierarchySummary } from "./core/copc/loadHierarchySummary";
+import { loadNodePointSamples } from "./core/copc/loadNodePointSamples";
 import type { PointSample } from "./core/PointSample";
 import { createHardcodedPointSamples } from "./core/hardcodedPointSamples";
 import "./style.css";
 
 const elements = getPrototypeElements();
+let currentUrl = "";
+let currentInspection: CopcInspection | undefined;
 
 const viewer = new Viewer(elements.container, {
   animation: false,
@@ -58,25 +62,16 @@ void inspectUrl(elements.urlInput.value);
 
 async function inspectUrl(url: string): Promise<void> {
   setInspectionLoading();
+  currentUrl = url;
+  currentInspection = undefined;
 
   try {
     const inspection = await inspectCopc(url);
+    const hierarchy = await loadHierarchySummary(url);
+    currentInspection = inspection;
+    populateNodeSelect(hierarchy);
     renderInspection(inspection);
-    elements.statusText.textContent = "Reading COPC root point data...";
-
-    const rootPointSamples = await loadRootPointSamples(url);
-    const cesiumPoints = createPointSamplesFromCopc(
-      rootPointSamples.points,
-      inspection,
-    );
-
-    renderer.setPoints(cesiumPoints);
-    viewer.camera.flyTo({
-      destination: cameraTargetForPointCloud(cesiumPoints),
-      duration: 0,
-    });
-    renderInspection(inspection, rootPointSamples);
-    elements.statusText.textContent = `Rendered ${rootPointSamples.sampledPointCount.toLocaleString()} real COPC points from the root node.`;
+    await renderSelectedHierarchyNode();
   } catch (error) {
     setInspectionError(error);
   }
@@ -85,6 +80,8 @@ async function inspectUrl(url: string): Promise<void> {
 function setInspectionLoading(): void {
   elements.statusText.textContent = "Reading COPC metadata...";
   elements.metadataList.replaceChildren();
+  elements.nodeSelect.disabled = true;
+  elements.nodeSelect.replaceChildren(new Option("Loading hierarchy...", ""));
 }
 
 function setInspectionError(error: unknown): void {
@@ -93,11 +90,12 @@ function setInspectionError(error: unknown): void {
       ? `COPC inspection failed: ${error.message}`
       : "COPC inspection failed.";
   elements.metadataList.replaceChildren();
+  elements.nodeSelect.disabled = true;
 }
 
 function renderInspection(
   inspection: CopcInspection,
-  pointResult?: CopcRootPointSampleResult,
+  pointResult?: CopcNodePointSampleResult,
 ): void {
   elements.statusText.textContent = "COPC metadata loaded.";
   elements.metadataList.replaceChildren(
@@ -120,9 +118,9 @@ function renderInspection(
     ),
     metadataRow("GPS time", formatVector(inspection.gpsTimeRange)),
     metadataRow(
-      "Root points",
+      "Selected node",
       pointResult
-        ? `${pointResult.rootPointCount.toLocaleString()} loaded, ${pointResult.sampledPointCount.toLocaleString()} rendered`
+        ? `${pointResult.nodePointCount.toLocaleString()} loaded, ${pointResult.sampledPointCount.toLocaleString()} rendered`
         : "Not loaded yet",
     ),
     metadataRow("VLRs", formatVlrs(inspection)),
@@ -155,20 +153,68 @@ function cameraTargetForPointCloud(pointSamples: readonly PointSample[]): Cartes
   );
 }
 
+elements.nodeSelect.addEventListener("change", () => {
+  void renderSelectedHierarchyNode();
+});
+
+async function renderSelectedHierarchyNode(): Promise<void> {
+  if (!currentInspection || !currentUrl || !elements.nodeSelect.value) {
+    return;
+  }
+
+  const nodeKey = elements.nodeSelect.value;
+  elements.statusText.textContent = `Reading COPC node ${nodeKey}...`;
+
+  try {
+    const pointSamples = await loadNodePointSamples(currentUrl, { nodeKey });
+    const cesiumPoints = createPointSamplesFromCopc(
+      pointSamples.points,
+      currentInspection,
+    );
+
+    renderer.setPoints(cesiumPoints);
+    viewer.camera.flyTo({
+      destination: cameraTargetForPointCloud(cesiumPoints),
+      duration: 0,
+    });
+    renderInspection(currentInspection, pointSamples);
+    elements.statusText.textContent = `Rendered ${pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`;
+  } catch (error) {
+    setInspectionError(error);
+  }
+}
+
+function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
+  elements.nodeSelect.replaceChildren(
+    ...hierarchy.nodes.map((node) => {
+      const option = new Option(
+        `${node.key} | ${node.pointCount.toLocaleString()} pts | ${formatBytes(node.pointDataLength)}`,
+        node.key,
+      );
+      option.title = `offset ${node.pointDataOffset.toLocaleString()}`;
+      return option;
+    }),
+  );
+  elements.nodeSelect.disabled = hierarchy.nodes.length === 0;
+  elements.nodeSelect.value = hierarchy.nodes[0]?.key ?? "";
+}
+
 function getPrototypeElements(): {
   readonly container: HTMLDivElement;
   readonly form: HTMLFormElement;
   readonly urlInput: HTMLInputElement;
+  readonly nodeSelect: HTMLSelectElement;
   readonly statusText: HTMLParagraphElement;
   readonly metadataList: HTMLDListElement;
 } {
   const container = document.querySelector<HTMLDivElement>("#cesium-container");
   const form = document.querySelector<HTMLFormElement>("#copc-form");
   const urlInput = document.querySelector<HTMLInputElement>("#copc-url");
+  const nodeSelect = document.querySelector<HTMLSelectElement>("#copc-node-select");
   const statusText = document.querySelector<HTMLParagraphElement>("#copc-status");
   const metadataList = document.querySelector<HTMLDListElement>("#copc-metadata");
 
-  if (!container || !form || !urlInput || !statusText || !metadataList) {
+  if (!container || !form || !urlInput || !nodeSelect || !statusText || !metadataList) {
     throw new Error("Missing prototype DOM elements.");
   }
 
@@ -176,6 +222,7 @@ function getPrototypeElements(): {
     container,
     form,
     urlInput,
+    nodeSelect,
     statusText,
     metadataList,
   };
@@ -223,4 +270,14 @@ function formatVlrs(inspection: CopcInspection): string {
 
 function truncateText(text: string, maxLength: number): string {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function formatBytes(byteCount: number): string {
+  if (byteCount < 1024) {
+    return `${byteCount.toLocaleString()} B`;
+  }
+
+  return `${(byteCount / 1024).toLocaleString(undefined, {
+    maximumFractionDigits: 1,
+  })} KB`;
 }

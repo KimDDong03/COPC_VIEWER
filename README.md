@@ -30,6 +30,7 @@ npm run dev
 Open `http://localhost:3000`.
 
 The default example URL loads the public Autzen COPC sample, reads the root hierarchy node, samples up to 5,000 points, and renders them in CesiumJS.
+The hierarchy node selector lists nodes from the root hierarchy page and lets the example render one selected node at a time.
 
 ## Planned Shape
 

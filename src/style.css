@@ -45,13 +45,18 @@ body {
   font-weight: 700;
 }
 
+.copc-node-label {
+  margin-top: 12px;
+}
+
 .copc-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 
-#copc-url {
+#copc-url,
+#copc-node-select {
   min-width: 0;
   height: 36px;
   padding: 0 10px;
@@ -61,7 +66,17 @@ body {
   border-radius: 6px;
 }
 
-#copc-url:focus {
+#copc-node-select {
+  width: 100%;
+}
+
+#copc-node-select:disabled {
+  color: #93a3b5;
+  cursor: not-allowed;
+}
+
+#copc-url:focus,
+#copc-node-select:focus {
   outline: 2px solid #75b7ff;
   outline-offset: 1px;
 }

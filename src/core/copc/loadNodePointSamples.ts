@@ -4,20 +4,23 @@ import { getSharedLazPerf } from "./createLazPerf";
 import type {
   CopcPointColor,
   CopcPointDataSample,
-  CopcRootPointSampleResult,
+  CopcNodePointSampleResult,
 } from "./CopcPointDataSample";
 
-export interface LoadRootPointSamplesOptions {
+export interface LoadNodePointSamplesOptions {
+  readonly nodeKey?: string;
   readonly maxPointCount?: number;
 }
 
 const DEFAULT_MAX_POINT_COUNT = 5_000;
+const DEFAULT_NODE_KEY = "0-0-0-0";
 
-export async function loadRootPointSamples(
+export async function loadNodePointSamples(
   url: string,
-  options: LoadRootPointSamplesOptions = {},
-): Promise<CopcRootPointSampleResult> {
+  options: LoadNodePointSamplesOptions = {},
+): Promise<CopcNodePointSampleResult> {
   const maxPointCount = options.maxPointCount ?? DEFAULT_MAX_POINT_COUNT;
+  const nodeKey = options.nodeKey ?? DEFAULT_NODE_KEY;
 
   if (!Number.isSafeInteger(maxPointCount) || maxPointCount <= 0) {
     throw new Error("maxPointCount must be a positive integer.");
@@ -26,13 +29,13 @@ export async function loadRootPointSamples(
   const getter = createHttpRangeGetter(url);
   const copc = await Copc.create(getter);
   const hierarchy = await Copc.loadHierarchyPage(getter, copc.info.rootHierarchyPage);
-  const root = hierarchy.nodes["0-0-0-0"];
+  const node = hierarchy.nodes[nodeKey];
 
-  if (!root) {
-    throw new Error("COPC root hierarchy node was not found.");
+  if (!node) {
+    throw new Error(`COPC hierarchy node was not found: ${nodeKey}`);
   }
 
-  const view = await Copc.loadPointDataView(getter, copc, root, {
+  const view = await Copc.loadPointDataView(getter, copc, node, {
     lazPerf: await getSharedLazPerf(),
     include: ["X", "Y", "Z", "Red", "Green", "Blue"],
   });
@@ -60,7 +63,8 @@ export async function loadRootPointSamples(
   }
 
   return {
-    rootPointCount: view.pointCount,
+    nodeKey,
+    nodePointCount: view.pointCount,
     sampledPointCount,
     points,
   };
