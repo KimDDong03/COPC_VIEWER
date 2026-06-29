@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>COPC Viewer Prototype</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="cesium-container"></div>
+      <section id="copc-panel" aria-label="COPC metadata">
+        <form id="copc-form">
+          <label for="copc-url">COPC URL</label>
+          <div class="copc-controls">
+            <input
+              id="copc-url"
+              name="copc-url"
+              type="url"
+              value="https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz"
+            />
+            <button type="submit">Inspect</button>
+          </div>
+        </form>
+        <p id="copc-status">Ready to inspect COPC metadata.</p>
+        <dl id="copc-metadata"></dl>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
