@@ -3,6 +3,7 @@ import type { Copc as CopcData, Getter, Hierarchy } from "copc";
 import { createHttpRangeGetter } from "./createHttpRangeGetter";
 import { getSharedLazPerf } from "./createLazPerf";
 import type {
+  CopcHierarchyPageReference,
   CopcHierarchyNodeSummary,
   CopcHierarchySummary,
 } from "./CopcHierarchySummary";
@@ -39,7 +40,11 @@ export class CopcSource {
   private readonly copcPromise: Promise<CopcData>;
   private hierarchyPromise: Promise<Hierarchy.Subtree> | undefined;
   private inspectionPromise: Promise<CopcInspection> | undefined;
-  private hierarchySummaryPromise: Promise<CopcHierarchySummary> | undefined;
+  private readonly hierarchyPagePromises = new Map<
+    string,
+    Promise<Hierarchy.Subtree>
+  >();
+  private readonly loadedHierarchyPageIds = new Set<string>();
   private readonly nodePointSamplePromises = new Map<
     string,
     Promise<CopcNodePointSampleResult>
@@ -62,15 +67,58 @@ export class CopcSource {
   }
 
   loadHierarchySummary(): Promise<CopcHierarchySummary> {
-    this.hierarchySummaryPromise ??= Promise.all([
+    return Promise.all([
       this.copcPromise,
       this.loadHierarchy(),
-    ]).then(([copc, hierarchy]) => ({
-      nodes: summarizeNodes(hierarchy.nodes, copc.info.cube),
-      pageCount: Object.values(hierarchy.pages).filter(Boolean).length,
-    }));
+    ]).then(([copc, hierarchy]) =>
+      summarizeHierarchy(
+        hierarchy,
+        copc.info.cube,
+        this.loadedHierarchyPageIds.size,
+      ),
+    );
+  }
 
-    return this.hierarchySummaryPromise;
+  async loadHierarchyPage(pageKey: string): Promise<CopcHierarchySummary> {
+    const [copc, hierarchy] = await Promise.all([
+      this.copcPromise,
+      this.loadHierarchy(),
+    ]);
+    const page = hierarchy.pages[pageKey];
+
+    if (!page) {
+      if (hierarchy.nodes[pageKey]) {
+        return summarizeHierarchy(
+          hierarchy,
+          copc.info.cube,
+          this.loadedHierarchyPageIds.size,
+        );
+      }
+
+      throw new Error(`COPC hierarchy page was not found: ${pageKey}`);
+    }
+
+    const subtree = await this.loadHierarchyPageData(page);
+    this.loadedHierarchyPageIds.add(hierarchyPageId(page));
+    delete hierarchy.pages[pageKey];
+    mergeHierarchy(hierarchy, subtree);
+
+    return summarizeHierarchy(
+      hierarchy,
+      copc.info.cube,
+      this.loadedHierarchyPageIds.size,
+    );
+  }
+
+  async loadNextHierarchyPage(): Promise<CopcHierarchySummary | undefined> {
+    const hierarchy = await this.loadHierarchy();
+    const nextPageKey = Object.keys(hierarchy.pages).sort(compareNodeKeys)[0];
+
+    if (!nextPageKey) {
+      return undefined;
+    }
+
+    return this.loadHierarchyPage(nextPageKey);
   }
 
   loadNodePointSamples(
@@ -139,11 +187,31 @@ export class CopcSource {
   }
 
   private loadHierarchy(): Promise<Hierarchy.Subtree> {
-    this.hierarchyPromise ??= this.copcPromise.then((copc) =>
-      Copc.loadHierarchyPage(this.getter, copc.info.rootHierarchyPage),
-    );
+    this.hierarchyPromise ??= this.copcPromise.then(async (copc) => {
+      const subtree = await this.loadHierarchyPageData(
+        copc.info.rootHierarchyPage,
+      );
+      this.loadedHierarchyPageIds.add(
+        hierarchyPageId(copc.info.rootHierarchyPage),
+      );
+      return subtree;
+    });
 
     return this.hierarchyPromise;
+  }
+
+  private loadHierarchyPageData(
+    page: Hierarchy.Page,
+  ): Promise<Hierarchy.Subtree> {
+    const pageId = hierarchyPageId(page);
+    let promise = this.hierarchyPagePromises.get(pageId);
+
+    if (!promise) {
+      promise = Copc.loadHierarchyPage(this.getter, page);
+      this.hierarchyPagePromises.set(pageId, promise);
+    }
+
+    return promise;
   }
 
   private async loadNodePointSamplesWithoutCache(
@@ -154,7 +222,12 @@ export class CopcSource {
       this.copcPromise,
       this.loadHierarchy(),
     ]);
-    const node = hierarchy.nodes[nodeKey];
+    let node = hierarchy.nodes[nodeKey];
+
+    if (!node && hierarchy.pages[nodeKey]) {
+      await this.loadHierarchyPage(nodeKey);
+      node = hierarchy.nodes[nodeKey];
+    }
 
     if (!node) {
       throw new Error(`COPC hierarchy node was not found: ${nodeKey}`);
@@ -248,6 +321,50 @@ function summarizeNodes(
     .sort(compareNodes);
 }
 
+function summarizeHierarchy(
+  hierarchy: Hierarchy.Subtree,
+  cube: readonly number[],
+  loadedPageCount: number,
+): CopcHierarchySummary {
+  const pendingPages = summarizePendingPages(hierarchy.pages);
+
+  return {
+    nodes: summarizeNodes(hierarchy.nodes, cube),
+    pendingPages,
+    pageCount: pendingPages.length,
+    loadedPageCount,
+    pendingPageCount: pendingPages.length,
+  };
+}
+
+function summarizePendingPages(
+  pages: Hierarchy.Page.Map,
+): CopcHierarchyPageReference[] {
+  return Object.entries(pages)
+    .flatMap(([key, page]) => {
+      if (!page) {
+        return [];
+      }
+
+      return [
+        {
+          key,
+          pageOffset: page.pageOffset,
+          pageLength: page.pageLength,
+        },
+      ];
+    })
+    .sort((left, right) => compareNodeKeys(left.key, right.key));
+}
+
+function mergeHierarchy(
+  target: Hierarchy.Subtree,
+  source: Hierarchy.Subtree,
+): void {
+  Object.assign(target.nodes, source.nodes);
+  Object.assign(target.pages, source.pages);
+}
+
 function createNodeSummary(
   key: string,
   node: Hierarchy.Node,
@@ -318,6 +435,17 @@ function compareNodes(
   left: CopcHierarchyNodeSummary,
   right: CopcHierarchyNodeSummary,
 ): number {
+  return compareParsedNodeKeys(left, right);
+}
+
+function compareNodeKeys(leftKey: string, rightKey: string): number {
+  return compareParsedNodeKeys(parseNodeKey(leftKey), parseNodeKey(rightKey));
+}
+
+function compareParsedNodeKeys(
+  left: Pick<CopcHierarchyNodeSummary, "depth" | "x" | "y" | "z">,
+  right: Pick<CopcHierarchyNodeSummary, "depth" | "x" | "y" | "z">,
+): number {
   return (
     left.depth - right.depth ||
     left.z - right.z ||
@@ -379,4 +507,8 @@ function colorAt(
 
 function toByteColor(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value / 257)));
+}
+
+function hierarchyPageId(page: Hierarchy.Page): string {
+  return `${page.pageOffset}:${page.pageLength}`;
 }

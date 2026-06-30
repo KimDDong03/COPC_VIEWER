@@ -146,6 +146,7 @@ await writeFile(
   createProj4CoordinateTransforms,
   type CopcPointCloudLayerCameraSelectionOptions,
   type CopcCoordinateTransformStatus,
+  type CopcHierarchyPageReference,
   type CopcInspection,
 } from "copc-cesium";
 import { CopcSource, type CopcPointSampleCacheStats } from "copc-cesium/core";
@@ -161,6 +162,7 @@ const exportedConstructors = [
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
 const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
+const hierarchyPage: CopcHierarchyPageReference | undefined = undefined;
 const cameraSelectionOptions:
   | CopcPointCloudLayerCameraSelectionOptions
   | undefined = undefined;
@@ -172,6 +174,7 @@ if (app) {
     String(Boolean(inspection)),
     String(Boolean(transformStatus)),
     String(Boolean(cacheStats)),
+    String(Boolean(hierarchyPage)),
     String(Boolean(cameraSelectionOptions)),
   ].join(" | ");
 }

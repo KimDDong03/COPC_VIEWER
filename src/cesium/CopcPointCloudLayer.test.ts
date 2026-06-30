@@ -90,6 +90,31 @@ describe("CopcPointCloudLayer coordinate transforms", () => {
   });
 });
 
+describe("CopcPointCloudLayer hierarchy loading", () => {
+  it("keeps load results in sync after loading another hierarchy page", async () => {
+    const layer = new CopcPointCloudLayer(createSceneStub(), {
+      url: "https://example.com/sample.copc.laz",
+    });
+    const expandedHierarchy = createHierarchy([
+      createHierarchyNode("0-0-0-0"),
+      createHierarchyNode("1-0-0-0"),
+    ]);
+
+    layer.source.inspect = async () => createInspection();
+    layer.source.loadHierarchySummary = async () =>
+      createHierarchy([createHierarchyNode("0-0-0-0")]);
+    layer.source.loadNextHierarchyPage = async () => expandedHierarchy;
+
+    await layer.load();
+    const hierarchy = await layer.loadNextHierarchyPage();
+    const loadResult = await layer.load();
+
+    expect(hierarchy).toBe(expandedHierarchy);
+    expect(layer.hierarchy).toBe(expandedHierarchy);
+    expect(loadResult.hierarchy).toBe(expandedHierarchy);
+  });
+});
+
 function patchLayerSource(layer: CopcPointCloudLayer): void {
   layer.source.inspect = async () => createInspection();
   layer.source.loadHierarchySummary = async () => createHierarchy();
@@ -189,23 +214,40 @@ function createInspection(): CopcInspection {
   };
 }
 
-function createHierarchy(): CopcHierarchySummary {
+function createHierarchy(
+  nodes: readonly CopcHierarchySummary["nodes"][number][] = [
+    createHierarchyNode("0-0-0-0"),
+  ],
+): CopcHierarchySummary {
   return {
     pageCount: 1,
-    nodes: [
+    loadedPageCount: 1,
+    pendingPageCount: 1,
+    pendingPages: [
       {
-        key: "0-0-0-0",
-        depth: 0,
-        x: 0,
-        y: 0,
-        z: 0,
-        bounds: createBounds(),
-        pointCount: 1,
-        pointDensity: 1,
-        pointDataOffset: 0,
-        pointDataLength: 10,
+        key: "1-0-0-0",
+        pageOffset: 10,
+        pageLength: 20,
       },
     ],
+    nodes,
+  };
+}
+
+function createHierarchyNode(key: string): CopcHierarchySummary["nodes"][number] {
+  const [depth, x, y, z] = key.split("-").map(Number);
+
+  return {
+    key,
+    depth: depth ?? 0,
+    x: x ?? 0,
+    y: y ?? 0,
+    z: z ?? 0,
+    bounds: createBounds(),
+    pointCount: 1,
+    pointDensity: 1,
+    pointDataOffset: 0,
+    pointDataLength: 10,
   };
 }
 

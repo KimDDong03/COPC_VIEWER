@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Copc as CopcData, Hierarchy } from "copc";
 import { CopcSource } from "./CopcSource";
 import type { CopcNodePointSampleResult } from "./CopcPointDataSample";
 
@@ -47,4 +48,86 @@ describe("CopcSource point sample cache", () => {
       cacheMissCount: 2,
     });
   });
+
+  it("loads and merges additional hierarchy pages on demand", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const loadedPageOffsets: number[] = [];
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async (page) => {
+      loadedPageOffsets.push(page.pageOffset);
+
+      if (page.pageOffset === 10) {
+        return {
+          nodes: {
+            "0-0-0-0": createNode(100),
+          },
+          pages: {
+            "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+          },
+        };
+      }
+
+      return {
+        nodes: {
+          "1-0-0-0": createNode(50),
+          "2-0-0-0": createNode(25),
+        },
+        pages: {
+          "2-1-0-0": { pageOffset: 70, pageLength: 80 },
+        },
+      };
+    };
+
+    const rootHierarchy = await source.loadHierarchySummary();
+
+    expect(rootHierarchy.nodes.map((node) => node.key)).toEqual(["0-0-0-0"]);
+    expect(rootHierarchy.loadedPageCount).toBe(1);
+    expect(rootHierarchy.pendingPageCount).toBe(1);
+    expect(rootHierarchy.pageCount).toBe(1);
+    expect(rootHierarchy.pendingPages).toEqual([
+      {
+        key: "1-0-0-0",
+        pageOffset: 30,
+        pageLength: 40,
+      },
+    ]);
+
+    const expandedHierarchy = await source.loadHierarchyPage("1-0-0-0");
+
+    expect(loadedPageOffsets).toEqual([10, 30]);
+    expect(expandedHierarchy.nodes.map((node) => node.key)).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-0-0-0",
+    ]);
+    expect(expandedHierarchy.loadedPageCount).toBe(2);
+    expect(expandedHierarchy.pendingPageCount).toBe(1);
+    expect(expandedHierarchy.pendingPages).toEqual([
+      {
+        key: "2-1-0-0",
+        pageOffset: 70,
+        pageLength: 80,
+      },
+    ]);
+  });
 });
+
+function createNode(pointCount: number): Hierarchy.Node {
+  return {
+    pointCount,
+    pointDataOffset: pointCount,
+    pointDataLength: pointCount * 10,
+  };
+}

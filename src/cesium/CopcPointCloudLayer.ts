@@ -103,7 +103,7 @@ export class CopcPointCloudLayer {
   private readonly coordinateTransformFactory: CopcCoordinateTransformFactory;
   private coordinateTransforms: CopcCoordinateTransformSet | undefined;
   private coordinateTransformStatus: CopcCoordinateTransformStatus | undefined;
-  private loadPromise: Promise<CopcPointCloudLayerLoadResult> | undefined;
+  private loadPromise: Promise<void> | undefined;
   private loadedInspection: CopcInspection | undefined;
   private loadedHierarchy: CopcHierarchySummary | undefined;
   private destroyed = false;
@@ -141,13 +141,39 @@ export class CopcPointCloudLayer {
       this.assertNotDestroyed();
       this.loadedInspection = inspection;
       this.loadedHierarchy = hierarchy;
-      const coordinateTransform =
-        this.getCoordinateTransformStatus(inspection);
-
-      return { inspection, hierarchy, coordinateTransform };
+      this.getCoordinateTransformStatus(inspection);
     });
 
-    return this.loadPromise;
+    await this.loadPromise;
+    this.assertNotDestroyed();
+
+    return {
+      inspection: this.requireInspection(),
+      hierarchy: this.requireHierarchy(),
+      coordinateTransform: this.requireCoordinateTransformStatus(),
+    };
+  }
+
+  async loadHierarchyPage(pageKey: string): Promise<CopcHierarchySummary> {
+    this.assertNotDestroyed();
+    await this.load();
+    this.loadedHierarchy = await this.source.loadHierarchyPage(pageKey);
+    this.assertNotDestroyed();
+
+    return this.loadedHierarchy;
+  }
+
+  async loadNextHierarchyPage(): Promise<CopcHierarchySummary | undefined> {
+    this.assertNotDestroyed();
+    await this.load();
+    const hierarchy = await this.source.loadNextHierarchyPage();
+    this.assertNotDestroyed();
+
+    if (hierarchy) {
+      this.loadedHierarchy = hierarchy;
+    }
+
+    return hierarchy;
   }
 
   async renderNode(
@@ -370,6 +396,30 @@ export class CopcPointCloudLayer {
 
   private shouldShowBounds(showBounds: boolean | undefined): boolean {
     return showBounds ?? this.defaultShowBounds;
+  }
+
+  private requireInspection(): CopcInspection {
+    if (!this.loadedInspection) {
+      throw new Error("COPC inspection was not loaded.");
+    }
+
+    return this.loadedInspection;
+  }
+
+  private requireHierarchy(): CopcHierarchySummary {
+    if (!this.loadedHierarchy) {
+      throw new Error("COPC hierarchy was not loaded.");
+    }
+
+    return this.loadedHierarchy;
+  }
+
+  private requireCoordinateTransformStatus(): CopcCoordinateTransformStatus {
+    if (!this.coordinateTransformStatus) {
+      throw new Error("COPC coordinate transform status was not initialized.");
+    }
+
+    return this.coordinateTransformStatus;
   }
 
   private assertNotDestroyed(): void {

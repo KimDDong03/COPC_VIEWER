@@ -130,6 +130,10 @@ elements.addSuggestionButton.addEventListener("click", () => {
   }
 });
 
+elements.loadMoreHierarchyButton.addEventListener("click", () => {
+  void loadNextHierarchyPage();
+});
+
 elements.autoLodButton.addEventListener("click", () => {
   void renderAutomaticNodeSet();
 });
@@ -182,6 +186,7 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
   syncSampleSelectWithSource(activeSource);
   renderNodeSet.clear();
   renderSuggestion(undefined);
+  renderHierarchyPageControls();
   renderRenderSetControls();
 
   try {
@@ -195,6 +200,7 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
     currentHierarchy = hierarchy;
     currentCoordinateTransform = coordinateTransform;
     populateNodeSelect(hierarchy);
+    renderHierarchyPageControls();
     renderInspection(inspection);
     updateSuggestedNode();
     await renderSelectedHierarchyNode();
@@ -217,6 +223,7 @@ function setInspectionLoading(): void {
   elements.nodeSelect.replaceChildren(new Option("Loading hierarchy...", ""));
   currentLayer?.clear();
   renderSuggestion(undefined);
+  renderHierarchyPageControls();
   renderRenderSetControls();
 }
 
@@ -229,6 +236,7 @@ function setInspectionError(error: unknown): void {
   elements.nodeSelect.disabled = true;
   currentLayer?.clear();
   renderSuggestion(undefined);
+  renderHierarchyPageControls();
   renderRenderSetControls();
 }
 
@@ -259,6 +267,10 @@ function renderInspection(
     metadataRow(
       "Root hierarchy",
       `${inspection.rootHierarchyPage.pageLength.toLocaleString()} bytes at ${inspection.rootHierarchyPage.pageOffset.toLocaleString()}`,
+    ),
+    metadataRow(
+      "Hierarchy pages",
+      currentHierarchy ? formatHierarchyPageStats(currentHierarchy) : "Not loaded",
     ),
     metadataRow("GPS time", formatVector(inspection.gpsTimeRange)),
     metadataRow(
@@ -359,6 +371,46 @@ async function renderSelectedHierarchyNode(): Promise<void> {
     elements.statusText.textContent = `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`;
     updateSuggestedNode();
     renderRenderSetControls();
+  } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
+    setInspectionError(error);
+  }
+}
+
+async function loadNextHierarchyPage(): Promise<void> {
+  if (!currentInspection || !currentLayer || !currentHierarchy) {
+    return;
+  }
+
+  const layer = currentLayer;
+  const inspection = currentInspection;
+  const nextPage = currentHierarchy.pendingPages[0];
+
+  if (!nextPage) {
+    elements.statusText.textContent = "No pending COPC hierarchy pages remain.";
+    renderHierarchyPageControls();
+    return;
+  }
+
+  const previousNodeKey = elements.nodeSelect.value;
+  elements.statusText.textContent = `Reading COPC hierarchy page ${nextPage.key}...`;
+
+  try {
+    const hierarchy = await layer.loadNextHierarchyPage();
+
+    if (layer !== currentLayer || !hierarchy) {
+      return;
+    }
+
+    currentHierarchy = hierarchy;
+    populateNodeSelect(hierarchy, previousNodeKey);
+    renderHierarchyPageControls();
+    updateSuggestedNode();
+    renderInspection(inspection);
+    elements.statusText.textContent = `Loaded hierarchy page ${nextPage.key}. ${hierarchy.nodes.length.toLocaleString()} nodes are available.`;
   } catch (error) {
     if (layer !== currentLayer) {
       return;
@@ -586,6 +638,18 @@ function addNodeToRenderSet(nodeKey: string): void {
   renderRenderSetControls();
 }
 
+function renderHierarchyPageControls(): void {
+  if (!currentHierarchy) {
+    elements.hierarchyPagesText.textContent = "Hierarchy pages: not loaded.";
+    elements.loadMoreHierarchyButton.disabled = true;
+    return;
+  }
+
+  elements.hierarchyPagesText.textContent = `Hierarchy pages: ${currentHierarchy.loadedPageCount.toLocaleString()} loaded, ${currentHierarchy.pendingPageCount.toLocaleString()} pending.`;
+  elements.loadMoreHierarchyButton.disabled =
+    !currentLayer || currentHierarchy.pendingPageCount === 0;
+}
+
 function renderRenderSetControls(): void {
   const nodeKeys = [...renderNodeSet];
   const hasNodes = nodeKeys.length > 0;
@@ -697,7 +761,10 @@ function clearCustomProjectionInputs(): void {
   elements.sourceDefinitionInput.value = "";
 }
 
-function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
+function populateNodeSelect(
+  hierarchy: CopcHierarchySummary,
+  preferredNodeKey = "",
+): void {
   elements.nodeSelect.replaceChildren(
     ...hierarchy.nodes.map((node) => {
       const option = new Option(
@@ -709,7 +776,11 @@ function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
     }),
   );
   elements.nodeSelect.disabled = hierarchy.nodes.length === 0;
-  elements.nodeSelect.value = hierarchy.nodes[0]?.key ?? "";
+  elements.nodeSelect.value = hierarchy.nodes.some(
+    (node) => node.key === preferredNodeKey,
+  )
+    ? preferredNodeKey
+    : hierarchy.nodes[0]?.key ?? "";
 }
 
 function getPrototypeElements(): {
@@ -720,6 +791,8 @@ function getPrototypeElements(): {
   readonly sourceCrsInput: HTMLInputElement;
   readonly sourceDefinitionInput: HTMLTextAreaElement;
   readonly nodeSelect: HTMLSelectElement;
+  readonly hierarchyPagesText: HTMLParagraphElement;
+  readonly loadMoreHierarchyButton: HTMLButtonElement;
   readonly suggestionText: HTMLParagraphElement;
   readonly applySuggestionButton: HTMLButtonElement;
   readonly renderSetText: HTMLParagraphElement;
@@ -745,6 +818,12 @@ function getPrototypeElements(): {
     "#copc-source-definition",
   );
   const nodeSelect = document.querySelector<HTMLSelectElement>("#copc-node-select");
+  const hierarchyPagesText = document.querySelector<HTMLParagraphElement>(
+    "#copc-hierarchy-pages",
+  );
+  const loadMoreHierarchyButton = document.querySelector<HTMLButtonElement>(
+    "#copc-load-more-hierarchy",
+  );
   const suggestionText = document.querySelector<HTMLParagraphElement>("#copc-suggestion");
   const applySuggestionButton = document.querySelector<HTMLButtonElement>(
     "#copc-apply-suggestion",
@@ -775,6 +854,8 @@ function getPrototypeElements(): {
     !sourceCrsInput ||
     !sourceDefinitionInput ||
     !nodeSelect ||
+    !hierarchyPagesText ||
+    !loadMoreHierarchyButton ||
     !suggestionText ||
     !applySuggestionButton ||
     !renderSetText ||
@@ -798,6 +879,8 @@ function getPrototypeElements(): {
     sourceCrsInput,
     sourceDefinitionInput,
     nodeSelect,
+    hierarchyPagesText,
+    loadMoreHierarchyButton,
     suggestionText,
     applySuggestionButton,
     renderSetText,
@@ -866,6 +949,10 @@ function formatPointSampleCacheStats(
   stats: CopcPointSampleCacheStats,
 ): string {
   return `${stats.cachedSampleSetCount.toLocaleString()} sample sets, ${stats.cacheHitCount.toLocaleString()} hits, ${stats.cacheMissCount.toLocaleString()} misses`;
+}
+
+function formatHierarchyPageStats(hierarchy: CopcHierarchySummary): string {
+  return `${hierarchy.loadedPageCount.toLocaleString()} loaded, ${hierarchy.pendingPageCount.toLocaleString()} pending`;
 }
 
 function formatCameraSelection(

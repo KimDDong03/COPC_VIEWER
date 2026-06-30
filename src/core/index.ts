@@ -1,5 +1,6 @@
 export type { PointColor, PointSample } from "./PointSample";
 export type {
+  CopcHierarchyPageReference,
   CopcHierarchyNodeSummary,
   CopcHierarchySummary,
 } from "./copc/CopcHierarchySummary";

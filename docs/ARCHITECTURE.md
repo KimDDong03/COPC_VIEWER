@@ -7,7 +7,7 @@ The library is intentionally not a standalone viewer product. The example app ex
 ## Goals
 
 - Open a COPC file or URL in the browser.
-- Inspect COPC metadata and root hierarchy.
+- Inspect COPC metadata and hierarchy.
 - Read selected point-data nodes with HTTP range requests.
 - Convert COPC source coordinates into Cesium-friendly longitude, latitude, and height.
 - Render sampled points in a Cesium scene.
@@ -38,7 +38,7 @@ examples/basic-viewer/
 ```text
 COPC URL
 -> CopcSource
--> COPC metadata and root hierarchy
+-> COPC metadata and loaded hierarchy pages
 -> selected hierarchy node keys
 -> range-read point data
 -> sampled source XYZ points
@@ -52,6 +52,7 @@ In this prototype, streaming means loading COPC hierarchy and point-data byte ra
 
 The current implementation includes:
 
+- `CopcSource.loadHierarchyPage` and `loadNextHierarchyPage` for on-demand COPC hierarchy page range reads.
 - `CopcSource` point sample caching by node key and sample count.
 - `selectHierarchyNodesForCamera` for simple camera-based node selection.
 - `CopcPointCloudLayer.renderAutomatic` for selecting and rendering nodes in one call.
@@ -77,7 +78,7 @@ Camera-based selection requires both directions:
 
 ## Current Limitations
 
-- Only the root hierarchy page is summarized.
+- Hierarchy page expansion is explicit; the prototype does not yet prefetch or prioritize pages automatically.
 - Point rendering uses Cesium point primitives, not a custom optimized WebGL primitive.
 - Cache is in-memory and unbounded.
 - Camera streaming is shallow and prototype-oriented.
@@ -85,8 +86,8 @@ Camera-based selection requires both directions:
 
 ## Near-Term Roadmap
 
-1. Expand cache policy with explicit stats, limits, and invalidation.
-2. Improve hierarchy traversal beyond the root page.
-3. Add a better progressive loading policy for camera movement.
+1. Expand cache policy with explicit limits and invalidation.
+2. Add a better progressive hierarchy and point loading policy for camera movement.
+3. Add optional hierarchy page prefetch around the current camera target.
 4. Move heavy point decoding/preparation work into Web Workers.
 5. Replace point primitive rendering with a more scalable Cesium-native primitive path when the basic API stabilizes.

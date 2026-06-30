@@ -1,4 +1,8 @@
-import type { CopcBounds } from "./CopcInspection";
+import type { CopcBounds, CopcHierarchyPageSummary } from "./CopcInspection";
+
+export interface CopcHierarchyPageReference extends CopcHierarchyPageSummary {
+  readonly key: string;
+}
 
 export interface CopcHierarchyNodeSummary {
   readonly key: string;
@@ -15,5 +19,8 @@ export interface CopcHierarchyNodeSummary {
 
 export interface CopcHierarchySummary {
   readonly nodes: readonly CopcHierarchyNodeSummary[];
+  readonly pendingPages: readonly CopcHierarchyPageReference[];
   readonly pageCount: number;
+  readonly loadedPageCount: number;
+  readonly pendingPageCount: number;
 }
