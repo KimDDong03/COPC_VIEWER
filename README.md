@@ -37,12 +37,14 @@ Open `http://localhost:3000`.
 npm run build:lib
 npm run build:example
 npm run build
+npm run smoke:example
 npm run smoke:package
 ```
 
 `npm run build:lib` writes the library package contract to `dist/lib`.
 `npm run build:example` writes the runnable demo bundle to `dist/example`.
 `npm pack --dry-run` can be used after `npm run build` to inspect the package contents without publishing.
+`npm run smoke:example` builds the example, starts a temporary preview server, and verifies Autzen, SoFi, and Custom URL + proj4 rendering in a browser. Run `npm run smoke:example:install-browser` once if Playwright reports that Chrome for Testing is missing.
 `npm run smoke:package` packs the local build, installs it into a temporary consumer project, and verifies public imports from `copc-viewer`, `copc-viewer/core`, and `copc-viewer/cesium`.
 
 The runnable prototype lives in `examples/basic-viewer`. The root `src` folder contains reusable COPC and Cesium integration code used by that example.
