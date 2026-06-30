@@ -7,13 +7,19 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": false,
+    "baseUrl": ".",
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "copc-viewer": ["src/index.ts"],
+      "copc-viewer/core": ["src/core/index.ts"],
+      "copc-viewer/cesium": ["src/cesium/index.ts"]
+    }
   },
-  "include": ["src", "examples", "vite.config.ts"]
+  "include": ["src", "examples", "vite.config.ts", "vite.lib.config.ts"]
 }

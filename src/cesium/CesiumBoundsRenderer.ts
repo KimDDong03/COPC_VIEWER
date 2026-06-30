@@ -3,7 +3,7 @@ import {
   Color,
   Material,
   PolylineCollection,
-  Scene,
+  type Scene,
 } from "cesium";
 import type { CopcBounds, CopcInspection } from "../core/copc/CopcInspection";
 import { createCopcCoordinateTransform } from "./copcCoordinateTransform";

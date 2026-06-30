@@ -2,7 +2,7 @@ import {
   Cartesian3,
   Color,
   PointPrimitiveCollection,
-  Scene,
+  type Scene,
 } from "cesium";
 import type { PointColor, PointSample } from "../core/PointSample";
 
