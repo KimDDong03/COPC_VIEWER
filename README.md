@@ -61,7 +61,7 @@ The Auto LOD button selects a few nearby root-hierarchy nodes from the current c
 Included example presets:
 
 - Autzen classified: EPSG:2992 sample handled by the default transform.
-- SoFi Stadium: EPSG:32611 sample handled by an example-specific transform.
+- SoFi Stadium: EPSG:32611 sample handled by `createProj4CoordinateTransforms`.
 
 ## API Sketch
 
@@ -89,6 +89,7 @@ layer.destroy();
 
 The prototype default transform supports geographic coordinates and the public Autzen EPSG:2992 sample. Other CRS values should pass a custom transform factory that returns `toCesium`; camera-based node suggestion and Auto LOD also require `toCopc`.
 `layer.load()` returns a `coordinateTransform` status so examples and applications can show whether the active transform is `geographic`, `epsg:2992`, or `custom`, and whether camera-based selection is available.
+For projected CRS data, `createProj4CoordinateTransforms({ sourceCrs, sourceDefinition })` creates a `coordinateTransforms` factory backed by `proj4`.
 
 ## Planned Shape
 

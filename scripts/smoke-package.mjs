@@ -143,6 +143,7 @@ await writeFile(
   `import {
   CopcPointCloudLayer,
   createDefaultCopcCoordinateTransforms,
+  createProj4CoordinateTransforms,
   type CopcCoordinateTransformStatus,
   type CopcInspection,
 } from "copc-viewer";
@@ -154,6 +155,7 @@ const exportedConstructors = [
   CopcSource,
   CesiumPointRenderer,
   createDefaultCopcCoordinateTransforms,
+  createProj4CoordinateTransforms,
 ] as const;
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;

@@ -54,6 +54,15 @@ export type CopcCoordinateTransformFactory = (
   inspection: CopcInspection,
 ) => CopcCoordinateTransformSet;
 
+export interface Proj4CoordinateTransformOptions {
+  readonly sourceCrs: string;
+  readonly sourceDefinition?: string;
+  readonly targetCrs?: string;
+  readonly targetDefinition?: string;
+  readonly label?: string;
+  readonly heightScaleToMeters?: number;
+}
+
 export function createDefaultCopcCoordinateTransforms(
   inspection: CopcInspection,
 ): CopcCoordinateTransformSet {
@@ -61,6 +70,51 @@ export function createDefaultCopcCoordinateTransforms(
     toCesium: createCopcCoordinateTransform(inspection),
     toCopc: createCesiumToCopcCoordinateTransform(inspection),
     status: detectDefaultCoordinateTransformStatus(inspection),
+  };
+}
+
+export function createProj4CoordinateTransforms(
+  options: Proj4CoordinateTransformOptions,
+): CopcCoordinateTransformFactory {
+  const targetCrs = options.targetCrs ?? WGS84;
+  const heightScaleToMeters = options.heightScaleToMeters ?? 1;
+  const label = options.label ?? `${options.sourceCrs} to ${targetCrs}`;
+
+  return () => {
+    configureProjectionDefinition(options.sourceCrs, options.sourceDefinition);
+    configureProjectionDefinition(targetCrs, options.targetDefinition);
+
+    return {
+      toCesium: (x, y, z) => {
+        const [longitudeDegrees, latitudeDegrees] = proj4(
+          options.sourceCrs,
+          targetCrs,
+          [x, y],
+        ) as [number, number];
+
+        return {
+          longitudeDegrees,
+          latitudeDegrees,
+          heightMeters: z * heightScaleToMeters,
+        };
+      },
+      toCopc: (longitudeDegrees, latitudeDegrees, heightMeters) => {
+        const [x, y] = proj4(targetCrs, options.sourceCrs, [
+          longitudeDegrees,
+          latitudeDegrees,
+        ]) as [number, number];
+
+        return {
+          x,
+          y,
+          z: heightMeters / heightScaleToMeters,
+        };
+      },
+      status: {
+        kind: "custom",
+        label,
+      },
+    };
   };
 }
 
@@ -143,6 +197,15 @@ function configureKnownProjections(): void {
     "+proj=lcc +lat_0=41.75 +lon_0=-120.5 +lat_1=43 +lat_2=45.5 +x_0=400000 +y_0=0 +datum=NAD83 +units=ft +no_defs +type=crs",
   );
   projectionsConfigured = true;
+}
+
+function configureProjectionDefinition(
+  crs: string,
+  definition: string | undefined,
+): void {
+  if (definition) {
+    proj4.defs(crs, definition);
+  }
 }
 
 function isLikelyGeographic(inspection: CopcInspection): boolean {

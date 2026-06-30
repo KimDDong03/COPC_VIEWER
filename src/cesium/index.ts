@@ -15,6 +15,7 @@ export {
   createDefaultCopcCoordinateTransforms,
   createCesiumToCopcCoordinateTransform,
   createCopcCoordinateTransform,
+  createProj4CoordinateTransforms,
   type CesiumCoordinate,
   type CesiumToCopcCoordinateTransform,
   type CopcCoordinate,
@@ -23,5 +24,6 @@ export {
   type CopcCoordinateTransformSet,
   type CopcCoordinateTransformStatus,
   type CopcToCesiumCoordinateTransform,
+  type Proj4CoordinateTransformOptions,
 } from "./copcCoordinateTransform";
 export { createPointSamplesFromCopc } from "./createPointSamplesFromCopc";
