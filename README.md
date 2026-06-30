@@ -51,6 +51,8 @@ const { hierarchy } = await layer.load();
 
 await layer.renderNode(hierarchy.nodes[0].key);
 await layer.renderAutomatic({ camera: viewer.camera, maxNodes: 4 });
+
+layer.destroy();
 ```
 
 ## Planned Shape

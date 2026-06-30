@@ -92,6 +92,7 @@ export class CopcPointCloudLayer {
   private loadPromise: Promise<CopcPointCloudLayerLoadResult> | undefined;
   private loadedInspection: CopcInspection | undefined;
   private loadedHierarchy: CopcHierarchySummary | undefined;
+  private destroyed = false;
 
   constructor(scene: Scene, options: CopcPointCloudLayerOptions) {
     this.scene = scene;
@@ -111,10 +112,13 @@ export class CopcPointCloudLayer {
   }
 
   async load(): Promise<CopcPointCloudLayerLoadResult> {
+    this.assertNotDestroyed();
+
     this.loadPromise ??= Promise.all([
       this.source.inspect(),
       this.source.loadHierarchySummary(),
     ]).then(([inspection, hierarchy]) => {
+      this.assertNotDestroyed();
       this.loadedInspection = inspection;
       this.loadedHierarchy = hierarchy;
 
@@ -128,13 +132,19 @@ export class CopcPointCloudLayer {
     nodeKey: string,
     options: CopcPointCloudLayerRenderNodeOptions = {},
   ): Promise<CopcPointCloudLayerNodeRenderResult> {
+    this.assertNotDestroyed();
+
     const { inspection, hierarchy } = await this.load();
+    this.assertNotDestroyed();
+
     const node = findRequiredNode(hierarchy, nodeKey);
     const pointSamples = await this.source.loadNodePointSamples({
       nodeKey,
       maxPointCount:
         options.maxPointCount ?? this.defaultMaxPointCountPerNode,
     });
+    this.assertNotDestroyed();
+
     const points = createPointSamplesFromCopc(pointSamples.points, inspection);
 
     this.pointRenderer.setPoints(points);
@@ -156,8 +166,12 @@ export class CopcPointCloudLayer {
     nodeKeys: readonly string[],
     options: CopcPointCloudLayerRenderNodesOptions = {},
   ): Promise<CopcPointCloudLayerNodesRenderResult> {
+    this.assertNotDestroyed();
+
     const normalizedNodeKeys = uniqueNodeKeys(nodeKeys);
     const { inspection, hierarchy } = await this.load();
+    this.assertNotDestroyed();
+
     const nodes = normalizedNodeKeys.map((nodeKey) =>
       findRequiredNode(hierarchy, nodeKey),
     );
@@ -166,6 +180,8 @@ export class CopcPointCloudLayer {
       maxPointCountPerNode:
         options.maxPointCountPerNode ?? this.defaultMaxPointCountPerNode,
     });
+    this.assertNotDestroyed();
+
     const points = createPointSamplesFromCopc(pointSamples.points, inspection);
 
     this.pointRenderer.setPoints(points);
@@ -189,6 +205,8 @@ export class CopcPointCloudLayer {
   async renderAutomatic(
     options: CopcPointCloudLayerAutomaticRenderOptions,
   ): Promise<CopcPointCloudLayerAutomaticRenderResult | undefined> {
+    this.assertNotDestroyed();
+
     const {
       camera,
       viewportHeightPixels,
@@ -197,6 +215,8 @@ export class CopcPointCloudLayer {
       ...selectionOptions
     } = options;
     const { inspection, hierarchy } = await this.load();
+    this.assertNotDestroyed();
+
     const cameraSelection = selectHierarchyNodesForCamera(hierarchy.nodes, {
       ...selectionOptions,
       target: this.cameraPositionToCopc(camera, inspection),
@@ -225,6 +245,8 @@ export class CopcPointCloudLayer {
   suggestNodeForCamera(
     camera: Camera,
   ): CopcHierarchyNodeSuggestion | undefined {
+    this.assertNotDestroyed();
+
     if (!this.loadedInspection || !this.loadedHierarchy) {
       return undefined;
     }
@@ -235,8 +257,24 @@ export class CopcPointCloudLayer {
   }
 
   clear(): void {
-    this.pointRenderer.setPoints([]);
+    if (this.destroyed) {
+      return;
+    }
+
+    this.pointRenderer.clear();
     this.boundsRenderer.clear();
+  }
+
+  destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+
+    this.destroyed = true;
+    this.loadedInspection = undefined;
+    this.loadedHierarchy = undefined;
+    this.pointRenderer.destroy();
+    this.boundsRenderer.destroy();
   }
 
   private cameraPositionToCopc(
@@ -255,6 +293,12 @@ export class CopcPointCloudLayer {
 
   private shouldShowBounds(showBounds: boolean | undefined): boolean {
     return showBounds ?? this.defaultShowBounds;
+  }
+
+  private assertNotDestroyed(): void {
+    if (this.destroyed) {
+      throw new Error("CopcPointCloudLayer has been destroyed.");
+    }
   }
 }
 

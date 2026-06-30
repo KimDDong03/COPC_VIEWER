@@ -109,9 +109,11 @@ viewer.camera.moveEnd.addEventListener(() => {
 void inspectUrl(elements.urlInput.value);
 
 async function inspectUrl(url: string): Promise<void> {
+  const previousLayer = currentLayer;
+  currentLayer = undefined;
+  previousLayer?.destroy();
   setInspectionLoading();
-  currentLayer?.clear();
-  previewRenderer.setPoints([]);
+  previewRenderer.clear();
   const layer = new CopcPointCloudLayer(viewer.scene, { url });
   currentLayer = layer;
   currentInspection = undefined;
@@ -135,6 +137,12 @@ async function inspectUrl(url: string): Promise<void> {
     updateSuggestedNode();
     await renderSelectedHierarchyNode();
   } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
+    layer.destroy();
+    currentLayer = undefined;
     setInspectionError(error);
   }
 }
@@ -275,6 +283,10 @@ async function renderSelectedHierarchyNode(): Promise<void> {
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
     setInspectionError(error);
   }
 }
@@ -318,6 +330,10 @@ async function renderAutomaticNodeSet(): Promise<void> {
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
     setInspectionError(error);
   }
 }
@@ -353,6 +369,10 @@ async function renderNodeKeySet(
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
     setInspectionError(error);
   }
 }

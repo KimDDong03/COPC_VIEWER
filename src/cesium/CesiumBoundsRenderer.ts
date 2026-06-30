@@ -24,9 +24,12 @@ const EDGE_INDEXES = [
 ] as const;
 
 export class CesiumBoundsRenderer {
+  private readonly scene: Scene;
   private readonly collection: PolylineCollection;
+  private destroyed = false;
 
   constructor(scene: Scene) {
+    this.scene = scene;
     this.collection = scene.primitives.add(new PolylineCollection());
   }
 
@@ -35,7 +38,8 @@ export class CesiumBoundsRenderer {
   }
 
   setBoundsList(boundsList: readonly CopcBounds[], inspection: CopcInspection): void {
-    this.collection.removeAll();
+    this.assertNotDestroyed();
+    this.clear();
 
     const transform = createCopcCoordinateTransform(inspection);
     for (const bounds of boundsList) {
@@ -44,7 +48,21 @@ export class CesiumBoundsRenderer {
   }
 
   clear(): void {
+    if (this.destroyed) {
+      return;
+    }
+
     this.collection.removeAll();
+  }
+
+  destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+
+    this.clear();
+    this.scene.primitives.remove(this.collection);
+    this.destroyed = true;
   }
 
   private addBounds(
@@ -68,6 +86,12 @@ export class CesiumBoundsRenderer {
           color: Color.YELLOW.withAlpha(0.9),
         }),
       });
+    }
+  }
+
+  private assertNotDestroyed(): void {
+    if (this.destroyed) {
+      throw new Error("CesiumBoundsRenderer has been destroyed.");
     }
   }
 }
