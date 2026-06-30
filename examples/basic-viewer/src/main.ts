@@ -19,7 +19,14 @@ import {
   type PointSample,
 } from "copc-viewer";
 import { createHardcodedPointSamples } from "./hardcodedPointSamples";
+import {
+  DEFAULT_SAMPLE_COPC_SOURCE,
+  SAMPLE_COPC_SOURCES,
+  type SampleCopcSource,
+} from "./sampleCopcSources";
 import "./style.css";
+
+const CUSTOM_SAMPLE_OPTION_VALUE = "custom";
 
 const elements = getPrototypeElements();
 let currentLayer: CopcPointCloudLayer | undefined;
@@ -27,6 +34,7 @@ let currentInspection: CopcInspection | undefined;
 let currentHierarchy: CopcHierarchySummary | undefined;
 let currentCoordinateTransform: CopcCoordinateTransformStatus | undefined;
 let currentSuggestion: CopcHierarchyNodeSuggestion | undefined;
+let currentSourceLabel: string = DEFAULT_SAMPLE_COPC_SOURCE.label;
 const renderNodeSet = new Set<string>();
 
 const viewer = new Viewer(elements.container, {
@@ -71,6 +79,22 @@ elements.form.addEventListener("submit", (event) => {
   void inspectUrl(elements.urlInput.value);
 });
 
+elements.sampleSelect.addEventListener("change", () => {
+  const sample = findSampleById(elements.sampleSelect.value);
+
+  if (!sample) {
+    elements.urlInput.focus();
+    return;
+  }
+
+  elements.urlInput.value = sample.url;
+  void inspectUrl(sample.url);
+});
+
+elements.urlInput.addEventListener("input", () => {
+  syncSampleSelectWithUrl(elements.urlInput.value);
+});
+
 elements.applySuggestionButton.addEventListener("click", () => {
   if (!currentSuggestion) {
     return;
@@ -109,16 +133,18 @@ viewer.camera.moveEnd.addEventListener(() => {
   updateSuggestedNode();
 });
 
-void inspectUrl(elements.urlInput.value);
+populateSampleSelect();
+void inspectUrl(DEFAULT_SAMPLE_COPC_SOURCE.url);
 
 async function inspectUrl(url: string): Promise<void> {
+  const normalizedUrl = url.trim();
   const previousLayer = currentLayer;
   currentLayer = undefined;
   previousLayer?.destroy();
   setInspectionLoading();
   previewRenderer.clear();
   const layer = new CopcPointCloudLayer(viewer.scene, {
-    url,
+    url: normalizedUrl,
     coordinateTransforms: createDefaultCopcCoordinateTransforms,
   });
   currentLayer = layer;
@@ -126,6 +152,9 @@ async function inspectUrl(url: string): Promise<void> {
   currentHierarchy = undefined;
   currentCoordinateTransform = undefined;
   currentSuggestion = undefined;
+  currentSourceLabel = formatActiveSourceLabel(normalizedUrl);
+  elements.urlInput.value = normalizedUrl;
+  syncSampleSelectWithUrl(normalizedUrl);
   renderNodeSet.clear();
   renderSuggestion(undefined);
   renderRenderSetControls();
@@ -188,6 +217,7 @@ function renderInspection(
   elements.statusText.textContent = "COPC metadata loaded.";
   elements.metadataList.replaceChildren(
     metadataRow("Point count", inspection.pointCount.toLocaleString()),
+    metadataRow("Source preset", currentSourceLabel),
     metadataRow("LAS version", inspection.lasVersion),
     metadataRow(
       "Point format",
@@ -476,6 +506,38 @@ function renderRenderSetControls(): void {
   elements.clearSetButton.disabled = !hasNodes;
 }
 
+function populateSampleSelect(): void {
+  elements.sampleSelect.replaceChildren(
+    ...SAMPLE_COPC_SOURCES.map((sample) => {
+      const option = new Option(sample.label, sample.id);
+      option.title = sample.description;
+      return option;
+    }),
+    new Option("Custom URL", CUSTOM_SAMPLE_OPTION_VALUE),
+  );
+  elements.sampleSelect.value = DEFAULT_SAMPLE_COPC_SOURCE.id;
+  elements.urlInput.value = DEFAULT_SAMPLE_COPC_SOURCE.url;
+}
+
+function syncSampleSelectWithUrl(url: string): void {
+  const sample = findSampleByUrl(url.trim());
+  elements.sampleSelect.value = sample?.id ?? CUSTOM_SAMPLE_OPTION_VALUE;
+}
+
+function findSampleById(sampleId: string): SampleCopcSource | undefined {
+  return SAMPLE_COPC_SOURCES.find((sample) => sample.id === sampleId);
+}
+
+function findSampleByUrl(url: string): SampleCopcSource | undefined {
+  return SAMPLE_COPC_SOURCES.find((sample) => sample.url === url);
+}
+
+function formatActiveSourceLabel(url: string): string {
+  const sample = findSampleByUrl(url);
+
+  return sample ? sample.label : "Custom URL";
+}
+
 function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
   elements.nodeSelect.replaceChildren(
     ...hierarchy.nodes.map((node) => {
@@ -494,6 +556,7 @@ function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
 function getPrototypeElements(): {
   readonly container: HTMLDivElement;
   readonly form: HTMLFormElement;
+  readonly sampleSelect: HTMLSelectElement;
   readonly urlInput: HTMLInputElement;
   readonly nodeSelect: HTMLSelectElement;
   readonly suggestionText: HTMLParagraphElement;
@@ -509,6 +572,9 @@ function getPrototypeElements(): {
 } {
   const container = document.querySelector<HTMLDivElement>("#cesium-container");
   const form = document.querySelector<HTMLFormElement>("#copc-form");
+  const sampleSelect = document.querySelector<HTMLSelectElement>(
+    "#copc-sample-select",
+  );
   const urlInput = document.querySelector<HTMLInputElement>("#copc-url");
   const nodeSelect = document.querySelector<HTMLSelectElement>("#copc-node-select");
   const suggestionText = document.querySelector<HTMLParagraphElement>("#copc-suggestion");
@@ -533,6 +599,7 @@ function getPrototypeElements(): {
   if (
     !container ||
     !form ||
+    !sampleSelect ||
     !urlInput ||
     !nodeSelect ||
     !suggestionText ||
@@ -552,6 +619,7 @@ function getPrototypeElements(): {
   return {
     container,
     form,
+    sampleSelect,
     urlInput,
     nodeSelect,
     suggestionText,

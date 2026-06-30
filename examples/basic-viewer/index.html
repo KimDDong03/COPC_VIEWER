@@ -11,13 +11,14 @@
       <div id="cesium-container"></div>
       <section id="copc-panel" aria-label="COPC metadata">
         <form id="copc-form">
-          <label for="copc-url">COPC URL</label>
+          <label for="copc-sample-select">Sample</label>
+          <select id="copc-sample-select"></select>
+          <label class="copc-url-label" for="copc-url">COPC URL</label>
           <div class="copc-controls">
             <input
               id="copc-url"
               name="copc-url"
               type="url"
-              value="https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz"
             />
             <button type="submit">Inspect</button>
           </div>
