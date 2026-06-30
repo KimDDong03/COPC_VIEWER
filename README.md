@@ -16,9 +16,9 @@ The current prototype is intentionally small:
 2. Open and inspect a COPC file or URL.
 3. Read a small set of real XYZ points.
 4. Transform the sample COPC CRS into Cesium-friendly longitude, latitude, and height.
-5. Display sampled root-node COPC points in CesiumJS.
+5. Display sampled COPC hierarchy-node points in CesiumJS.
 
-Advanced LOD, cache management, workers, custom primitives, packaging, and styling come later.
+Full LOD, persistent cache management, workers, custom primitives, packaging, and advanced styling come later.
 
 ## Run
 
@@ -28,6 +28,8 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+The runnable prototype lives in `examples/basic-viewer`. The root `src` folder contains reusable COPC and Cesium integration code used by that example.
 
 The default example URL loads the public Autzen COPC sample, reads the root hierarchy node, samples up to 5,000 points, and renders them in CesiumJS.
 The hierarchy node selector lists nodes from the root hierarchy page and lets the example render one selected node at a time.
@@ -40,7 +42,7 @@ The Auto LOD button selects a few nearby root-hierarchy nodes from the current c
 ## Planned Shape
 
 ```text
-src/core/      COPC loading and point data preparation
-src/cesium/    CesiumJS rendering and coordinate conversion
-examples/      Minimal runnable examples
+src/core/              COPC loading and point data preparation
+src/cesium/            CesiumJS rendering and coordinate conversion
+examples/basic-viewer/ Minimal runnable example
 ```

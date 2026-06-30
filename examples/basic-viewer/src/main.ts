@@ -5,31 +5,34 @@ import {
   Viewer,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
-import { CesiumBoundsRenderer } from "./cesium/CesiumBoundsRenderer";
-import { CesiumPointRenderer } from "./cesium/CesiumPointRenderer";
-import { createCesiumToCopcCoordinateTransform } from "./cesium/copcCoordinateTransform";
-import { createPointSamplesFromCopc } from "./cesium/createPointSamplesFromCopc";
-import { CopcSource } from "./core/copc/CopcSource";
+import { CesiumBoundsRenderer } from "../../../src/cesium/CesiumBoundsRenderer";
+import { CesiumPointRenderer } from "../../../src/cesium/CesiumPointRenderer";
+import { createCesiumToCopcCoordinateTransform } from "../../../src/cesium/copcCoordinateTransform";
+import { createPointSamplesFromCopc } from "../../../src/cesium/createPointSamplesFromCopc";
+import { CopcSource } from "../../../src/core/copc/CopcSource";
 import type {
   CopcHierarchyNodeSummary,
   CopcHierarchySummary,
-} from "./core/copc/CopcHierarchySummary";
-import type { CopcBounds, CopcInspection } from "./core/copc/CopcInspection";
+} from "../../../src/core/copc/CopcHierarchySummary";
+import type {
+  CopcBounds,
+  CopcInspection,
+} from "../../../src/core/copc/CopcInspection";
 import type {
   CopcMultiNodePointSampleResult,
   CopcNodePointSampleResult,
-} from "./core/copc/CopcPointDataSample";
+} from "../../../src/core/copc/CopcPointDataSample";
 import {
   suggestHierarchyNode,
   type CopcHierarchyNodeSuggestion,
   type CopcTargetPoint,
-} from "./core/copc/suggestHierarchyNode";
+} from "../../../src/core/copc/suggestHierarchyNode";
 import {
   selectHierarchyNodesForCamera,
   type CopcHierarchyNodeCameraSelection,
-} from "./core/copc/selectHierarchyNodesForCamera";
-import type { PointSample } from "./core/PointSample";
-import { createHardcodedPointSamples } from "./core/hardcodedPointSamples";
+} from "../../../src/core/copc/selectHierarchyNodesForCamera";
+import type { PointSample } from "../../../src/core/PointSample";
+import { createHardcodedPointSamples } from "../../../src/core/hardcodedPointSamples";
 import "./style.css";
 
 const elements = getPrototypeElements();

@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host localhost --port 3000",
-    "build": "tsc && vite build",
-    "preview": "vite preview --host localhost --port 3000",
+    "dev": "vite examples/basic-viewer --config vite.config.ts --host localhost --port 3000",
+    "build": "tsc && vite build examples/basic-viewer --config vite.config.ts --outDir ../../dist --emptyOutDir",
+    "preview": "vite preview examples/basic-viewer --config vite.config.ts --host localhost --port 3000 --outDir ../../dist",
     "test": "vitest run"
   },
   "dependencies": {
