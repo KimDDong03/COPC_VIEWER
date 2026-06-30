@@ -167,12 +167,23 @@ function createSmokeFlow(baseUrl) {
   }
 
   async function waitForRenderedStatus() {
-    await page.waitForFunction(
-      (statusText) =>
-        document.querySelector("#copc-status")?.textContent?.includes(statusText),
-      expectedStatus,
-      { timeout: 60_000 },
-    );
+    await waitForStatusIncludes(expectedStatus);
+  }
+
+  async function waitForStatusIncludes(statusText) {
+    try {
+      await page.waitForFunction(
+        (statusText) =>
+          document.querySelector("#copc-status")?.textContent?.includes(statusText),
+        statusText,
+        { timeout: 60_000 },
+      );
+    } catch (error) {
+      const currentStatus = await page.locator("#copc-status").textContent();
+      throw new Error(
+        \`Timed out waiting for status "\${statusText}". Current status: "\${currentStatus}". \${error.message}\`,
+      );
+    }
   }
 
   async function check(condition, message) {
@@ -210,6 +221,13 @@ function createSmokeFlow(baseUrl) {
       (await metadataValue("Coordinate transform"))?.includes("EPSG:32611"),
     "SoFi coordinate transform was not reported.",
   );
+  await page.getByRole("checkbox", { name: "Stream on camera move" }).check();
+  await waitForStatusIncludes("Camera stream rendered");
+  await check(
+    async () => (await metadataValue("Point cache"))?.includes("hits"),
+    "Point sample cache stats were not reported after camera streaming.",
+  );
+  await page.getByRole("checkbox", { name: "Stream on camera move" }).uncheck();
 
   await page.getByRole("textbox", { name: "COPC URL" }).fill(sofiUrl);
   await page.getByLabel("Sample").selectOption("custom");

@@ -16,6 +16,7 @@ import type {
   CopcNodePointSampleResult,
   CopcPointColor,
   CopcPointDataSample,
+  CopcPointSampleCacheStats,
 } from "./CopcPointDataSample";
 
 export interface LoadNodePointSamplesOptions {
@@ -43,6 +44,8 @@ export class CopcSource {
     string,
     Promise<CopcNodePointSampleResult>
   >();
+  private pointSampleCacheHitCount = 0;
+  private pointSampleCacheMissCount = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -84,12 +87,22 @@ export class CopcSource {
     const cached = this.nodePointSamplePromises.get(cacheKey);
 
     if (cached) {
+      this.pointSampleCacheHitCount += 1;
       return cached;
     }
 
+    this.pointSampleCacheMissCount += 1;
     const promise = this.loadNodePointSamplesWithoutCache(nodeKey, maxPointCount);
     this.nodePointSamplePromises.set(cacheKey, promise);
     return promise;
+  }
+
+  getPointSampleCacheStats(): CopcPointSampleCacheStats {
+    return {
+      cachedSampleSetCount: this.nodePointSamplePromises.size,
+      cacheHitCount: this.pointSampleCacheHitCount,
+      cacheMissCount: this.pointSampleCacheMissCount,
+    };
   }
 
   async loadNodesPointSamples(

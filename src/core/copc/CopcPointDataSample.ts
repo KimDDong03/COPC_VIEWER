@@ -25,3 +25,9 @@ export interface CopcMultiNodePointSampleResult {
   readonly sampledPointCount: number;
   readonly points: readonly CopcPointDataSample[];
 }
+
+export interface CopcPointSampleCacheStats {
+  readonly cachedSampleSetCount: number;
+  readonly cacheHitCount: number;
+  readonly cacheMissCount: number;
+}

@@ -2,6 +2,7 @@ export {
   CopcPointCloudLayer,
   type CopcPointCloudLayerAutomaticRenderOptions,
   type CopcPointCloudLayerAutomaticRenderResult,
+  type CopcPointCloudLayerCameraSelectionOptions,
   type CopcPointCloudLayerLoadResult,
   type CopcPointCloudLayerNodeRenderResult,
   type CopcPointCloudLayerNodesRenderResult,

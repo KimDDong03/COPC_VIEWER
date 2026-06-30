@@ -144,10 +144,11 @@ await writeFile(
   CopcPointCloudLayer,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
+  type CopcPointCloudLayerCameraSelectionOptions,
   type CopcCoordinateTransformStatus,
   type CopcInspection,
 } from "copc-viewer";
-import { CopcSource } from "copc-viewer/core";
+import { CopcSource, type CopcPointSampleCacheStats } from "copc-viewer/core";
 import { CesiumPointRenderer } from "copc-viewer/cesium";
 
 const exportedConstructors = [
@@ -159,6 +160,10 @@ const exportedConstructors = [
 ] as const;
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
+const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
+const cameraSelectionOptions:
+  | CopcPointCloudLayerCameraSelectionOptions
+  | undefined = undefined;
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (app) {
@@ -166,6 +171,8 @@ if (app) {
     exportedConstructors.map((constructor) => constructor.name).join(", "),
     String(Boolean(inspection)),
     String(Boolean(transformStatus)),
+    String(Boolean(cacheStats)),
+    String(Boolean(cameraSelectionOptions)),
   ].join(" | ");
 }
 `,

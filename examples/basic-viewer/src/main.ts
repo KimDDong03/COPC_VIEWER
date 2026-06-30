@@ -15,6 +15,7 @@ import {
   type CopcInspection,
   type CopcMultiNodePointSampleResult,
   type CopcNodePointSampleResult,
+  type CopcPointSampleCacheStats,
   type PointSample,
 } from "copc-viewer";
 import { createHardcodedPointSamples } from "./hardcodedPointSamples";
@@ -29,6 +30,8 @@ import {
 import "./style.css";
 
 const CUSTOM_SAMPLE_OPTION_VALUE = "custom";
+const CAMERA_STREAM_MAX_NODES = 1;
+const CAMERA_STREAM_MAX_DEPTH = 1;
 
 const elements = getPrototypeElements();
 let currentLayer: CopcPointCloudLayer | undefined;
@@ -37,6 +40,8 @@ let currentHierarchy: CopcHierarchySummary | undefined;
 let currentCoordinateTransform: CopcCoordinateTransformStatus | undefined;
 let currentSuggestion: CopcHierarchyNodeSuggestion | undefined;
 let currentSource: CopcSourceConfig = DEFAULT_SAMPLE_COPC_SOURCE;
+let automaticStreamRequestId = 0;
+let lastAutomaticStreamNodeKeySignature = "";
 const renderNodeSet = new Set<string>();
 
 const viewer = new Viewer(elements.container, {
@@ -129,6 +134,14 @@ elements.autoLodButton.addEventListener("click", () => {
   void renderAutomaticNodeSet();
 });
 
+elements.autoStreamCheckbox.addEventListener("change", () => {
+  lastAutomaticStreamNodeKeySignature = "";
+
+  if (elements.autoStreamCheckbox.checked) {
+    void renderAutomaticNodeSetForCameraMove(true);
+  }
+});
+
 elements.renderSetButton.addEventListener("click", () => {
   void renderSelectedNodeSet();
 });
@@ -140,6 +153,7 @@ elements.clearSetButton.addEventListener("click", () => {
 
 viewer.camera.moveEnd.addEventListener(() => {
   updateSuggestedNode();
+  void renderAutomaticNodeSetForCameraMove(false);
 });
 
 populateSampleSelect();
@@ -162,6 +176,8 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
   currentCoordinateTransform = undefined;
   currentSuggestion = undefined;
   currentSource = activeSource;
+  automaticStreamRequestId += 1;
+  lastAutomaticStreamNodeKeySignature = "";
   elements.urlInput.value = activeSource.url;
   syncSampleSelectWithSource(activeSource);
   renderNodeSet.clear();
@@ -274,6 +290,12 @@ function renderInspection(
       nodeSetResult
         ? `${nodeSetResult.nodeKeys.length.toLocaleString()} nodes, ${nodeSetResult.sampledPointCount.toLocaleString()} points rendered`
         : formatRenderSetSummary(),
+    ),
+    metadataRow(
+      "Point cache",
+      currentLayer
+        ? formatPointSampleCacheStats(currentLayer.source.getPointSampleCacheStats())
+        : "Not loaded",
     ),
     metadataRow(
       "Auto LOD",
@@ -399,6 +421,80 @@ async function renderAutomaticNodeSet(): Promise<void> {
   }
 }
 
+async function renderAutomaticNodeSetForCameraMove(
+  forceRender: boolean,
+): Promise<void> {
+  if (
+    !elements.autoStreamCheckbox.checked ||
+    !currentInspection ||
+    !currentHierarchy ||
+    !currentLayer ||
+    !currentCoordinateTransform?.supportsCameraSelection
+  ) {
+    return;
+  }
+
+  const layer = currentLayer;
+  const requestId = (automaticStreamRequestId += 1);
+
+  try {
+    const cameraSelection = await layer.selectNodesForCamera({
+      camera: viewer.camera,
+      maxNodes: CAMERA_STREAM_MAX_NODES,
+      maxDepth: CAMERA_STREAM_MAX_DEPTH,
+    });
+
+    if (
+      !cameraSelection ||
+      cameraSelection.nodes.length === 0 ||
+      layer !== currentLayer ||
+      requestId !== automaticStreamRequestId ||
+      !elements.autoStreamCheckbox.checked
+    ) {
+      return;
+    }
+
+    const nodeKeys = cameraSelection.nodes.map((node) => node.key);
+    const nodeKeySignature = nodeKeys.join("|");
+
+    if (!forceRender && nodeKeySignature === lastAutomaticStreamNodeKeySignature) {
+      return;
+    }
+
+    lastAutomaticStreamNodeKeySignature = nodeKeySignature;
+    elements.statusText.textContent = `Streaming ${nodeKeys.length.toLocaleString()} COPC nodes for camera position...`;
+
+    const result = await layer.renderNodes(nodeKeys);
+
+    if (
+      layer !== currentLayer ||
+      requestId !== automaticStreamRequestId ||
+      !elements.autoStreamCheckbox.checked
+    ) {
+      return;
+    }
+
+    renderNodeSet.clear();
+    result.nodes.forEach((node) => renderNodeSet.add(node.key));
+    renderRenderSetControls();
+    renderInspection(
+      result.inspection,
+      undefined,
+      undefined,
+      result.pointSamples,
+      cameraSelection,
+    );
+    elements.statusText.textContent = `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
+    updateSuggestedNode();
+  } catch (error) {
+    if (layer !== currentLayer) {
+      return;
+    }
+
+    setInspectionError(error);
+  }
+}
+
 async function renderNodeKeySet(
   nodeKeys: readonly string[],
 ): Promise<void> {
@@ -512,6 +608,11 @@ function renderRenderSetControls(): void {
   elements.autoLodButton.title = canUseCameraSelection
     ? ""
     : "Auto LOD requires coordinateTransforms.toCopc.";
+  elements.autoStreamCheckbox.disabled = !canUseCameraSelection;
+  if (!canUseCameraSelection) {
+    elements.autoStreamCheckbox.checked = false;
+    lastAutomaticStreamNodeKeySignature = "";
+  }
   elements.renderSetButton.disabled = !hasNodes;
   elements.clearSetButton.disabled = !hasNodes;
 }
@@ -625,6 +726,7 @@ function getPrototypeElements(): {
   readonly addSelectedButton: HTMLButtonElement;
   readonly addSuggestionButton: HTMLButtonElement;
   readonly autoLodButton: HTMLButtonElement;
+  readonly autoStreamCheckbox: HTMLInputElement;
   readonly renderSetButton: HTMLButtonElement;
   readonly clearSetButton: HTMLButtonElement;
   readonly statusText: HTMLParagraphElement;
@@ -655,6 +757,9 @@ function getPrototypeElements(): {
     "#copc-add-suggestion",
   );
   const autoLodButton = document.querySelector<HTMLButtonElement>("#copc-auto-lod");
+  const autoStreamCheckbox = document.querySelector<HTMLInputElement>(
+    "#copc-auto-stream",
+  );
   const renderSetButton = document.querySelector<HTMLButtonElement>(
     "#copc-render-set-button",
   );
@@ -676,6 +781,7 @@ function getPrototypeElements(): {
     !addSelectedButton ||
     !addSuggestionButton ||
     !autoLodButton ||
+    !autoStreamCheckbox ||
     !renderSetButton ||
     !clearSetButton ||
     !statusText ||
@@ -698,6 +804,7 @@ function getPrototypeElements(): {
     addSelectedButton,
     addSuggestionButton,
     autoLodButton,
+    autoStreamCheckbox,
     renderSetButton,
     clearSetButton,
     statusText,
@@ -753,6 +860,12 @@ function formatRenderSetSummary(): string {
   return renderNodeSet.size > 0
     ? `${renderNodeSet.size.toLocaleString()} nodes queued`
     : "Empty";
+}
+
+function formatPointSampleCacheStats(
+  stats: CopcPointSampleCacheStats,
+): string {
+  return `${stats.cachedSampleSetCount.toLocaleString()} sample sets, ${stats.cacheHitCount.toLocaleString()} hits, ${stats.cacheMissCount.toLocaleString()} misses`;
 }
 
 function formatCameraSelection(

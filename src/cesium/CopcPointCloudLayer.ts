@@ -58,13 +58,17 @@ export interface CopcPointCloudLayerRenderNodesOptions {
   readonly showBounds?: boolean;
 }
 
-export interface CopcPointCloudLayerAutomaticRenderOptions
+export interface CopcPointCloudLayerCameraSelectionOptions
   extends Omit<
     SelectHierarchyNodesForCameraOptions,
     "target" | "viewportHeightPixels"
   > {
   readonly camera: Camera;
   readonly viewportHeightPixels?: number;
+}
+
+export interface CopcPointCloudLayerAutomaticRenderOptions
+  extends CopcPointCloudLayerCameraSelectionOptions {
   readonly maxPointCountPerNode?: number;
   readonly showBounds?: boolean;
 }
@@ -241,21 +245,11 @@ export class CopcPointCloudLayer {
     this.assertNotDestroyed();
 
     const {
-      camera,
-      viewportHeightPixels,
       maxPointCountPerNode,
       showBounds,
       ...selectionOptions
     } = options;
-    const { inspection, hierarchy } = await this.load();
-    this.assertNotDestroyed();
-
-    const cameraSelection = selectHierarchyNodesForCamera(hierarchy.nodes, {
-      ...selectionOptions,
-      target: this.cameraPositionToCopc(camera, inspection),
-      viewportHeightPixels:
-        viewportHeightPixels ?? this.scene.canvas.clientHeight,
-    });
+    const cameraSelection = await this.selectNodesForCamera(selectionOptions);
 
     if (!cameraSelection || cameraSelection.nodes.length === 0) {
       return undefined;
@@ -273,6 +267,23 @@ export class CopcPointCloudLayer {
       ...renderResult,
       cameraSelection,
     };
+  }
+
+  async selectNodesForCamera(
+    options: CopcPointCloudLayerCameraSelectionOptions,
+  ): Promise<CopcHierarchyNodeCameraSelection | undefined> {
+    this.assertNotDestroyed();
+
+    const { camera, viewportHeightPixels, ...selectionOptions } = options;
+    const { inspection, hierarchy } = await this.load();
+    this.assertNotDestroyed();
+
+    return selectHierarchyNodesForCamera(hierarchy.nodes, {
+      ...selectionOptions,
+      target: this.cameraPositionToCopc(camera, inspection),
+      viewportHeightPixels:
+        viewportHeightPixels ?? this.scene.canvas.clientHeight,
+    });
   }
 
   suggestNodeForCamera(

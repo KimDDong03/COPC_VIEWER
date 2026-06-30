@@ -60,6 +60,7 @@ The example also computes the selected node bounds and renders a yellow debug bo
 It can suggest the nearest loaded hierarchy node to the current camera position and apply that suggestion on demand.
 The manual render set can combine multiple hierarchy nodes and render their sampled points together.
 The Auto LOD button selects a few nearby root-hierarchy nodes from the current camera position and viewport height, then renders them through the same multi-node path.
+The Stream on camera move toggle reruns the same camera-based node selection after camera movement and reuses the in-memory COPC point-sample cache for already loaded node/sample-count pairs.
 
 Included example presets:
 
@@ -82,6 +83,7 @@ const { hierarchy, coordinateTransform } = await layer.load();
 
 await layer.renderNode(hierarchy.nodes[0].key);
 await layer.renderAutomatic({ camera: viewer.camera, maxNodes: 4 });
+const selection = await layer.selectNodesForCamera({ camera: viewer.camera });
 
 layer.destroy();
 ```

@@ -14,6 +14,7 @@ export type {
   CopcNodePointSampleResult,
   CopcPointColor,
   CopcPointDataSample,
+  CopcPointSampleCacheStats,
 } from "./copc/CopcPointDataSample";
 export {
   CopcSource,
