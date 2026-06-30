@@ -17,6 +17,7 @@ export type {
   CopcPointCloudRenderer,
   CopcPointCloudRendererFactory,
 } from "./CopcPointCloudRenderer";
+export { CesiumPointPrimitiveRenderer } from "./CesiumPointPrimitiveRenderer";
 export { CesiumPointRenderer } from "./CesiumPointRenderer";
 export {
   createDefaultCopcCoordinateTransforms,

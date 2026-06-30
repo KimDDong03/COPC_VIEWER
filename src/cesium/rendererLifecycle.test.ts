@@ -2,12 +2,13 @@ import type { Scene } from "cesium";
 import { describe, expect, it } from "vitest";
 import type { CopcBounds, CopcInspection } from "../core";
 import { CesiumBoundsRenderer } from "./CesiumBoundsRenderer";
+import { CesiumPointPrimitiveRenderer } from "./CesiumPointPrimitiveRenderer";
 import { CesiumPointRenderer } from "./CesiumPointRenderer";
 
 describe("Cesium renderer lifecycle", () => {
   it("removes point primitive collections once when destroyed", () => {
     const { removedPrimitives, scene } = createSceneStub();
-    const renderer = new CesiumPointRenderer(scene);
+    const renderer = new CesiumPointPrimitiveRenderer(scene);
 
     renderer.setPoints([
       {
@@ -21,6 +22,17 @@ describe("Cesium renderer lifecycle", () => {
     renderer.destroy();
 
     expect(removedPrimitives).toHaveLength(1);
+    expect(() => renderer.setPoints([])).toThrow(
+      "CesiumPointPrimitiveRenderer has been destroyed.",
+    );
+  });
+
+  it("keeps CesiumPointRenderer as a compatibility alias", () => {
+    const { scene } = createSceneStub();
+    const renderer = new CesiumPointRenderer(scene);
+
+    renderer.destroy();
+
     expect(() => renderer.setPoints([])).toThrow(
       "CesiumPointRenderer has been destroyed.",
     );

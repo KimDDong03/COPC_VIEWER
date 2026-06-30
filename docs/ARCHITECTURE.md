@@ -64,7 +64,7 @@ The current implementation includes:
 - Optional `pointSampleLoading: "worker"` support that moves COPC point-data reads and LAZ decoding into a Web Worker, with main-thread fallback when a worker cannot be created.
 - A small `maxConcurrentPointSampleWorkerRequests` queue so worker-backed point sampling applies request backpressure before dispatch.
 - `AbortSignal` support for point-sample loading and Cesium render calls so stale camera-stream worker requests can be canceled and late worker responses ignored.
-- A `CopcPointCloudRenderer` interface with `CesiumPointRenderer` as the default `PointPrimitiveCollection` implementation, allowing a future custom primitive backend without changing COPC loading code.
+- A `CopcPointCloudRenderer` interface with `CesiumPointPrimitiveRenderer` as the default `PointPrimitiveCollection` implementation, allowing a future custom primitive backend without changing COPC loading code. `CesiumPointRenderer` remains as a compatibility alias.
 - Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering.
 
 The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.

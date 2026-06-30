@@ -4,7 +4,7 @@ import {
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import {
-  CesiumPointRenderer,
+  CesiumPointPrimitiveRenderer,
   CopcPointCloudLayer,
   type CopcBounds,
   type CopcCoordinateTransformStatus,
@@ -69,7 +69,7 @@ const viewer = new Viewer(elements.container, {
 });
 
 const points = createHardcodedPointSamples();
-const previewRenderer = new CesiumPointRenderer(viewer.scene);
+const previewRenderer = new CesiumPointPrimitiveRenderer(viewer.scene);
 previewRenderer.setPoints(points);
 
 viewer.camera.flyTo({
