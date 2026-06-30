@@ -51,6 +51,7 @@ Reusable source entry points are `src/index.ts`, `src/core/index.ts`, and `src/c
 
 The default example URL loads the public Autzen COPC sample, reads the root hierarchy node, samples up to 5,000 points, and renders them in CesiumJS.
 The example keeps sample COPC URLs and their transform factories in a small preset list while still allowing direct custom URL entry.
+For custom URLs, the example can also accept a source CRS and optional proj4 definition before loading the COPC file.
 The hierarchy node selector lists nodes from the root hierarchy page and lets the example render one selected node at a time.
 `CopcSource` keeps the opened COPC metadata, hierarchy page, and sampled node point data in memory for the active URL.
 The example also computes the selected node bounds and renders a yellow debug bounding box in CesiumJS.
@@ -90,6 +91,7 @@ layer.destroy();
 The prototype default transform supports geographic coordinates and the public Autzen EPSG:2992 sample. Other CRS values should pass a custom transform factory that returns `toCesium`; camera-based node suggestion and Auto LOD also require `toCopc`.
 `layer.load()` returns a `coordinateTransform` status so examples and applications can show whether the active transform is `geographic`, `epsg:2992`, or `custom`, and whether camera-based selection is available.
 For projected CRS data, `createProj4CoordinateTransforms({ sourceCrs, sourceDefinition })` creates a `coordinateTransforms` factory backed by `proj4`.
+In the basic viewer, custom URLs use the default transform when the Source CRS field is empty. If Source CRS is filled, the viewer creates a proj4-backed transform from that CRS and the optional proj4 definition field.
 
 ## Planned Shape
 

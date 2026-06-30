@@ -22,6 +22,24 @@
             />
             <button type="submit">Inspect</button>
           </div>
+          <div class="copc-projection-controls">
+            <label for="copc-source-crs">Source CRS</label>
+            <input
+              id="copc-source-crs"
+              name="copc-source-crs"
+              type="text"
+              autocomplete="off"
+              placeholder="EPSG:32611"
+            />
+            <label for="copc-source-definition">proj4 definition</label>
+            <textarea
+              id="copc-source-definition"
+              name="copc-source-definition"
+              rows="3"
+              spellcheck="false"
+              placeholder="+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs"
+            ></textarea>
+          </div>
         </form>
         <label class="copc-node-label" for="copc-node-select">Hierarchy node</label>
         <select id="copc-node-select" disabled>

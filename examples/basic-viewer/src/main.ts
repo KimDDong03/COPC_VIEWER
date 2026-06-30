@@ -22,6 +22,7 @@ import {
   createCustomCopcSource,
   DEFAULT_SAMPLE_COPC_SOURCE,
   SAMPLE_COPC_SOURCES,
+  type CustomCopcProjectionOptions,
   type CopcSourceConfig,
   type SampleCopcSource,
 } from "./sampleCopcSources";
@@ -77,18 +78,25 @@ function cameraTargetForPoints(pointSamples: readonly PointSample[]): Cartesian3
 
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
-  void inspectSource(createSourceConfigFromUrl(elements.urlInput.value));
+  try {
+    void inspectSource(createSourceConfigFromForm());
+  } catch (error) {
+    setInspectionError(error);
+  }
 });
 
 elements.sampleSelect.addEventListener("change", () => {
   const sample = findSampleById(elements.sampleSelect.value);
 
   if (!sample) {
+    syncCustomProjectionControls();
     elements.urlInput.focus();
     return;
   }
 
   elements.urlInput.value = sample.url;
+  clearCustomProjectionInputs();
+  syncCustomProjectionControls();
   void inspectSource(sample);
 });
 
@@ -155,7 +163,7 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
   currentSuggestion = undefined;
   currentSource = activeSource;
   elements.urlInput.value = activeSource.url;
-  syncSampleSelectWithUrl(activeSource.url);
+  syncSampleSelectWithSource(activeSource);
   renderNodeSet.clear();
   renderSuggestion(undefined);
   renderRenderSetControls();
@@ -519,11 +527,20 @@ function populateSampleSelect(): void {
   );
   elements.sampleSelect.value = DEFAULT_SAMPLE_COPC_SOURCE.id;
   elements.urlInput.value = DEFAULT_SAMPLE_COPC_SOURCE.url;
+  clearCustomProjectionInputs();
+  syncCustomProjectionControls();
 }
 
 function syncSampleSelectWithUrl(url: string): void {
   const sample = findSampleByUrl(url.trim());
   elements.sampleSelect.value = sample?.id ?? CUSTOM_SAMPLE_OPTION_VALUE;
+  syncCustomProjectionControls();
+}
+
+function syncSampleSelectWithSource(source: CopcSourceConfig): void {
+  const sample = isSampleCopcSource(source) ? source : undefined;
+  elements.sampleSelect.value = sample?.id ?? CUSTOM_SAMPLE_OPTION_VALUE;
+  syncCustomProjectionControls();
 }
 
 function findSampleById(sampleId: string): SampleCopcSource | undefined {
@@ -534,11 +551,23 @@ function findSampleByUrl(url: string): SampleCopcSource | undefined {
   return SAMPLE_COPC_SOURCES.find((sample) => sample.url === url);
 }
 
-function createSourceConfigFromUrl(url: string): CopcSourceConfig {
-  const normalizedUrl = url.trim();
-  const sample = findSampleByUrl(normalizedUrl);
+function isSampleCopcSource(
+  source: CopcSourceConfig,
+): source is SampleCopcSource {
+  return "id" in source;
+}
 
-  return sample ?? createCustomCopcSource(normalizedUrl);
+function createSourceConfigFromForm(): CopcSourceConfig {
+  const normalizedUrl = elements.urlInput.value.trim();
+  const sample =
+    elements.sampleSelect.value === CUSTOM_SAMPLE_OPTION_VALUE
+      ? undefined
+      : findSampleByUrl(normalizedUrl);
+
+  return (
+    sample ??
+    createCustomCopcSource(normalizedUrl, readCustomProjectionOptions())
+  );
 }
 
 function normalizeSourceConfig(source: CopcSourceConfig): CopcSourceConfig {
@@ -546,6 +575,25 @@ function normalizeSourceConfig(source: CopcSourceConfig): CopcSourceConfig {
     ...source,
     url: source.url.trim(),
   };
+}
+
+function readCustomProjectionOptions(): CustomCopcProjectionOptions {
+  return {
+    sourceCrs: elements.sourceCrsInput.value,
+    sourceDefinition: elements.sourceDefinitionInput.value,
+  };
+}
+
+function syncCustomProjectionControls(): void {
+  const isCustomSource =
+    elements.sampleSelect.value === CUSTOM_SAMPLE_OPTION_VALUE;
+  elements.sourceCrsInput.disabled = !isCustomSource;
+  elements.sourceDefinitionInput.disabled = !isCustomSource;
+}
+
+function clearCustomProjectionInputs(): void {
+  elements.sourceCrsInput.value = "";
+  elements.sourceDefinitionInput.value = "";
 }
 
 function populateNodeSelect(hierarchy: CopcHierarchySummary): void {
@@ -568,6 +616,8 @@ function getPrototypeElements(): {
   readonly form: HTMLFormElement;
   readonly sampleSelect: HTMLSelectElement;
   readonly urlInput: HTMLInputElement;
+  readonly sourceCrsInput: HTMLInputElement;
+  readonly sourceDefinitionInput: HTMLTextAreaElement;
   readonly nodeSelect: HTMLSelectElement;
   readonly suggestionText: HTMLParagraphElement;
   readonly applySuggestionButton: HTMLButtonElement;
@@ -586,6 +636,12 @@ function getPrototypeElements(): {
     "#copc-sample-select",
   );
   const urlInput = document.querySelector<HTMLInputElement>("#copc-url");
+  const sourceCrsInput = document.querySelector<HTMLInputElement>(
+    "#copc-source-crs",
+  );
+  const sourceDefinitionInput = document.querySelector<HTMLTextAreaElement>(
+    "#copc-source-definition",
+  );
   const nodeSelect = document.querySelector<HTMLSelectElement>("#copc-node-select");
   const suggestionText = document.querySelector<HTMLParagraphElement>("#copc-suggestion");
   const applySuggestionButton = document.querySelector<HTMLButtonElement>(
@@ -611,6 +667,8 @@ function getPrototypeElements(): {
     !form ||
     !sampleSelect ||
     !urlInput ||
+    !sourceCrsInput ||
+    !sourceDefinitionInput ||
     !nodeSelect ||
     !suggestionText ||
     !applySuggestionButton ||
@@ -631,6 +689,8 @@ function getPrototypeElements(): {
     form,
     sampleSelect,
     urlInput,
+    sourceCrsInput,
+    sourceDefinitionInput,
     nodeSelect,
     suggestionText,
     applySuggestionButton,

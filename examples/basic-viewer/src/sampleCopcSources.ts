@@ -17,6 +17,11 @@ export interface SampleCopcSource extends CopcSourceConfig {
   readonly id: string;
 }
 
+export interface CustomCopcProjectionOptions {
+  readonly sourceCrs?: string;
+  readonly sourceDefinition?: string;
+}
+
 export const SAMPLE_COPC_SOURCES = [
   {
     id: "autzen-classified",
@@ -41,7 +46,29 @@ export const SAMPLE_COPC_SOURCES = [
 
 export const DEFAULT_SAMPLE_COPC_SOURCE = SAMPLE_COPC_SOURCES[0];
 
-export function createCustomCopcSource(url: string): CopcSourceConfig {
+export function createCustomCopcSource(
+  url: string,
+  projection: CustomCopcProjectionOptions = {},
+): CopcSourceConfig {
+  const sourceCrs = projection.sourceCrs?.trim();
+  const sourceDefinition = projection.sourceDefinition?.trim();
+
+  if (sourceDefinition && !sourceCrs) {
+    throw new Error("Source CRS is required when a proj4 definition is set.");
+  }
+
+  if (sourceCrs) {
+    return {
+      label: "Custom URL",
+      url,
+      description: `User-provided COPC URL using ${sourceCrs} coordinates.`,
+      coordinateTransforms: createProj4CoordinateTransforms({
+        sourceCrs,
+        sourceDefinition: sourceDefinition || undefined,
+      }),
+    };
+  }
+
   return {
     label: "Custom URL",
     url,

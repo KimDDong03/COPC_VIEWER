@@ -61,14 +61,31 @@ body {
 
 #copc-url,
 #copc-sample-select,
-#copc-node-select {
+#copc-node-select,
+#copc-source-crs,
+#copc-source-definition {
   min-width: 0;
-  height: 36px;
   padding: 0 10px;
   color: #f7f9fc;
   background: rgb(255 255 255 / 9%);
   border: 1px solid rgb(255 255 255 / 24%);
   border-radius: 6px;
+}
+
+#copc-url,
+#copc-sample-select,
+#copc-node-select,
+#copc-source-crs {
+  height: 36px;
+}
+
+#copc-source-definition {
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono",
+    monospace;
+  line-height: 1.35;
 }
 
 #copc-node-select {
@@ -79,16 +96,32 @@ body {
   width: 100%;
 }
 
-#copc-node-select:disabled {
+#copc-source-crs,
+#copc-source-definition {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#copc-node-select:disabled,
+#copc-source-crs:disabled,
+#copc-source-definition:disabled {
   color: #93a3b5;
   cursor: not-allowed;
 }
 
 #copc-url:focus,
 #copc-sample-select:focus,
-#copc-node-select:focus {
+#copc-node-select:focus,
+#copc-source-crs:focus,
+#copc-source-definition:focus {
   outline: 2px solid #75b7ff;
   outline-offset: 1px;
+}
+
+.copc-projection-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 #copc-panel button {
