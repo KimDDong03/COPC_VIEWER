@@ -42,6 +42,7 @@ import { createPointSamplesFromCopc } from "./createPointSamplesFromCopc";
 export interface CopcPointCloudLayerOptions {
   readonly url: string;
   readonly maxPointCountPerNode?: number;
+  readonly maxCachedSampleSets?: number;
   readonly showBounds?: boolean;
   readonly coordinateTransforms?: CopcCoordinateTransformFactory;
 }
@@ -133,7 +134,9 @@ export class CopcPointCloudLayer {
 
   constructor(scene: Scene, options: CopcPointCloudLayerOptions) {
     this.scene = scene;
-    this.source = new CopcSource(options.url);
+    this.source = new CopcSource(options.url, {
+      maxCachedSampleSets: options.maxCachedSampleSets,
+    });
     this.pointRenderer = new CesiumPointRenderer(scene);
     this.boundsRenderer = new CesiumBoundsRenderer(scene);
     this.defaultMaxPointCountPerNode = options.maxPointCountPerNode;
@@ -401,6 +404,11 @@ export class CopcPointCloudLayer {
     this.boundsRenderer.clear();
   }
 
+  clearPointSampleCache(): number {
+    this.assertNotDestroyed();
+    return this.source.clearPointSampleCache();
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;
@@ -411,6 +419,7 @@ export class CopcPointCloudLayer {
     this.loadedHierarchy = undefined;
     this.coordinateTransforms = undefined;
     this.coordinateTransformStatus = undefined;
+    this.source.clearPointSampleCache();
     this.pointRenderer.destroy();
     this.boundsRenderer.destroy();
   }

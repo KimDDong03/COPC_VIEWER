@@ -35,12 +35,18 @@ export interface LoadHierarchyPagesResult {
   readonly loadedPageKeys: readonly string[];
 }
 
+export interface CopcSourceOptions {
+  readonly maxCachedSampleSets?: number;
+}
+
 const DEFAULT_MAX_POINT_COUNT = 5_000;
 const DEFAULT_NODE_KEY = "0-0-0-0";
+const DEFAULT_MAX_CACHED_SAMPLE_SETS = 32;
 
 export class CopcSource {
   readonly url: string;
 
+  private readonly maxCachedSampleSets: number;
   private readonly getter: Getter;
   private readonly copcPromise: Promise<CopcData>;
   private hierarchyPromise: Promise<Hierarchy.Subtree> | undefined;
@@ -56,9 +62,21 @@ export class CopcSource {
   >();
   private pointSampleCacheHitCount = 0;
   private pointSampleCacheMissCount = 0;
+  private pointSampleCacheEvictionCount = 0;
 
-  constructor(url: string) {
+  constructor(url: string, options: CopcSourceOptions = {}) {
+    const maxCachedSampleSets =
+      options.maxCachedSampleSets ?? DEFAULT_MAX_CACHED_SAMPLE_SETS;
+
+    if (
+      !Number.isSafeInteger(maxCachedSampleSets) ||
+      maxCachedSampleSets <= 0
+    ) {
+      throw new Error("maxCachedSampleSets must be a positive integer.");
+    }
+
     this.url = url;
+    this.maxCachedSampleSets = maxCachedSampleSets;
     this.getter = createHttpRangeGetter(url);
     this.copcPromise = Copc.create(this.getter);
   }
@@ -169,21 +187,32 @@ export class CopcSource {
 
     if (cached) {
       this.pointSampleCacheHitCount += 1;
+      this.nodePointSamplePromises.delete(cacheKey);
+      this.nodePointSamplePromises.set(cacheKey, cached);
       return cached;
     }
 
     this.pointSampleCacheMissCount += 1;
     const promise = this.loadNodePointSamplesWithoutCache(nodeKey, maxPointCount);
     this.nodePointSamplePromises.set(cacheKey, promise);
+    this.evictPointSampleCacheIfNeeded();
     return promise;
   }
 
   getPointSampleCacheStats(): CopcPointSampleCacheStats {
     return {
       cachedSampleSetCount: this.nodePointSamplePromises.size,
+      maxCachedSampleSetCount: this.maxCachedSampleSets,
       cacheHitCount: this.pointSampleCacheHitCount,
       cacheMissCount: this.pointSampleCacheMissCount,
+      cacheEvictionCount: this.pointSampleCacheEvictionCount,
     };
+  }
+
+  clearPointSampleCache(): number {
+    const clearedCount = this.nodePointSamplePromises.size;
+    this.nodePointSamplePromises.clear();
+    return clearedCount;
   }
 
   async loadNodesPointSamples(
@@ -245,6 +274,19 @@ export class CopcSource {
     }
 
     return promise;
+  }
+
+  private evictPointSampleCacheIfNeeded(): void {
+    while (this.nodePointSamplePromises.size > this.maxCachedSampleSets) {
+      const oldestCacheKey = this.nodePointSamplePromises.keys().next().value;
+
+      if (!oldestCacheKey) {
+        return;
+      }
+
+      this.nodePointSamplePromises.delete(oldestCacheKey);
+      this.pointSampleCacheEvictionCount += 1;
+    }
   }
 
   private async loadNodePointSamplesWithoutCache(

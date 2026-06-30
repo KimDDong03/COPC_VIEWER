@@ -19,6 +19,7 @@ export type {
 } from "./copc/CopcPointDataSample";
 export {
   CopcSource,
+  type CopcSourceOptions,
   type LoadHierarchyPagesResult,
   type LoadNodePointSamplesOptions,
   type LoadNodesPointSamplesOptions,

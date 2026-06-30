@@ -152,7 +152,11 @@ await writeFile(
   type CopcInspection,
   type CopcPointCloudLayerHierarchyExpansionOptions,
 } from "copc-cesium";
-import { CopcSource, type CopcPointSampleCacheStats } from "copc-cesium/core";
+import {
+  CopcSource,
+  type CopcPointSampleCacheStats,
+  type CopcSourceOptions,
+} from "copc-cesium/core";
 import { CesiumPointRenderer } from "copc-cesium/cesium";
 
 const exportedConstructors = [
@@ -166,6 +170,9 @@ const exportedConstructors = [
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
 const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
+const sourceOptions: CopcSourceOptions = { maxCachedSampleSets: 2 };
+const createSource = (): CopcSource =>
+  new CopcSource("https://example.com/sample.copc.laz", sourceOptions);
 const hierarchyPage: CopcHierarchyPageReference | undefined = undefined;
 const pageSelection: CopcHierarchyPageTargetSelection | undefined = undefined;
 const hierarchyExpansionOptions:
@@ -179,6 +186,8 @@ const app = document.querySelector<HTMLDivElement>("#app");
 if (app) {
   app.textContent = [
     exportedConstructors.map((constructor) => constructor.name).join(", "),
+    String(Boolean(createSource)),
+    String(sourceOptions.maxCachedSampleSets),
     String(Boolean(inspection)),
     String(Boolean(transformStatus)),
     String(Boolean(cacheStats)),

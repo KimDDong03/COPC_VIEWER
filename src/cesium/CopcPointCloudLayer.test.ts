@@ -12,6 +12,19 @@ import type {
 } from "./copcCoordinateTransform";
 
 describe("CopcPointCloudLayer coordinate transforms", () => {
+  it("passes the point sample cache limit to the owned COPC source", () => {
+    const layer = new CopcPointCloudLayer(createSceneStub(), {
+      url: "https://example.com/sample.copc.laz",
+      maxCachedSampleSets: 3,
+    });
+
+    expect(layer.source.getPointSampleCacheStats().maxCachedSampleSetCount).toBe(
+      3,
+    );
+
+    layer.destroy();
+  });
+
   it("reports the default geographic transform status from load", async () => {
     const layer = new CopcPointCloudLayer(createSceneStub(), {
       url: "https://example.com/sample.copc.laz",
