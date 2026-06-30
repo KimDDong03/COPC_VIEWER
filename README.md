@@ -58,6 +58,11 @@ It can suggest the nearest loaded hierarchy node to the current camera position 
 The manual render set can combine multiple hierarchy nodes and render their sampled points together.
 The Auto LOD button selects a few nearby root-hierarchy nodes from the current camera position and viewport height, then renders them through the same multi-node path.
 
+Included example presets:
+
+- Autzen classified: EPSG:2992 sample handled by the default transform.
+- SoFi Stadium: EPSG:32611 sample handled by an example-specific transform.
+
 ## API Sketch
 
 ```ts
