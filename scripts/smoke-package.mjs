@@ -144,10 +144,13 @@ await writeFile(
   CopcPointCloudLayer,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
+  selectHierarchyPagesForTarget,
   type CopcPointCloudLayerCameraSelectionOptions,
   type CopcCoordinateTransformStatus,
   type CopcHierarchyPageReference,
+  type CopcHierarchyPageTargetSelection,
   type CopcInspection,
+  type CopcPointCloudLayerHierarchyExpansionOptions,
 } from "copc-cesium";
 import { CopcSource, type CopcPointSampleCacheStats } from "copc-cesium/core";
 import { CesiumPointRenderer } from "copc-cesium/cesium";
@@ -158,11 +161,16 @@ const exportedConstructors = [
   CesiumPointRenderer,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
+  selectHierarchyPagesForTarget,
 ] as const;
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
 const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
 const hierarchyPage: CopcHierarchyPageReference | undefined = undefined;
+const pageSelection: CopcHierarchyPageTargetSelection | undefined = undefined;
+const hierarchyExpansionOptions:
+  | CopcPointCloudLayerHierarchyExpansionOptions
+  | undefined = undefined;
 const cameraSelectionOptions:
   | CopcPointCloudLayerCameraSelectionOptions
   | undefined = undefined;
@@ -175,6 +183,8 @@ if (app) {
     String(Boolean(transformStatus)),
     String(Boolean(cacheStats)),
     String(Boolean(hierarchyPage)),
+    String(Boolean(pageSelection)),
+    String(Boolean(hierarchyExpansionOptions)),
     String(Boolean(cameraSelectionOptions)),
   ].join(" | ");
 }

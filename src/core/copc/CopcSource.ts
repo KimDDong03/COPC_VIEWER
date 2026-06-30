@@ -30,6 +30,11 @@ export interface LoadNodesPointSamplesOptions {
   readonly maxPointCountPerNode?: number;
 }
 
+export interface LoadHierarchyPagesResult {
+  readonly hierarchy: CopcHierarchySummary;
+  readonly loadedPageKeys: readonly string[];
+}
+
 const DEFAULT_MAX_POINT_COUNT = 5_000;
 const DEFAULT_NODE_KEY = "0-0-0-0";
 
@@ -108,6 +113,34 @@ export class CopcSource {
       copc.info.cube,
       this.loadedHierarchyPageIds.size,
     );
+  }
+
+  async loadHierarchyPages(
+    pageKeys: readonly string[],
+  ): Promise<LoadHierarchyPagesResult> {
+    const loadedPageKeys: string[] = [];
+    let hierarchy: CopcHierarchySummary | undefined;
+
+    for (const pageKey of [...new Set(pageKeys)]) {
+      const before = await this.loadHierarchySummary();
+
+      if (!before.pendingPages.some((page) => page.key === pageKey)) {
+        if (before.nodes.some((node) => node.key === pageKey)) {
+          hierarchy = before;
+          continue;
+        }
+
+        throw new Error(`COPC hierarchy page was not found: ${pageKey}`);
+      }
+
+      hierarchy = await this.loadHierarchyPage(pageKey);
+      loadedPageKeys.push(pageKey);
+    }
+
+    return {
+      hierarchy: hierarchy ?? (await this.loadHierarchySummary()),
+      loadedPageKeys,
+    };
   }
 
   async loadNextHierarchyPage(): Promise<CopcHierarchySummary | undefined> {
@@ -326,7 +359,7 @@ function summarizeHierarchy(
   cube: readonly number[],
   loadedPageCount: number,
 ): CopcHierarchySummary {
-  const pendingPages = summarizePendingPages(hierarchy.pages);
+  const pendingPages = summarizePendingPages(hierarchy.pages, cube);
 
   return {
     nodes: summarizeNodes(hierarchy.nodes, cube),
@@ -339,6 +372,7 @@ function summarizeHierarchy(
 
 function summarizePendingPages(
   pages: Hierarchy.Page.Map,
+  cube: readonly number[],
 ): CopcHierarchyPageReference[] {
   return Object.entries(pages)
     .flatMap(([key, page]) => {
@@ -348,6 +382,7 @@ function summarizePendingPages(
 
       return [
         {
+          ...createPageReferenceSummary(key, cube),
           key,
           pageOffset: page.pageOffset,
           pageLength: page.pageLength,
@@ -355,6 +390,18 @@ function summarizePendingPages(
       ];
     })
     .sort((left, right) => compareNodeKeys(left.key, right.key));
+}
+
+function createPageReferenceSummary(
+  key: string,
+  cube: readonly number[],
+): Pick<CopcHierarchyPageReference, "depth" | "x" | "y" | "z" | "bounds"> {
+  const parsedKey = parseNodeKey(key);
+
+  return {
+    ...parsedKey,
+    bounds: boundsForNode(cube, parsedKey),
+  };
 }
 
 function mergeHierarchy(

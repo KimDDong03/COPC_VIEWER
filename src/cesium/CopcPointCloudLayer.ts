@@ -15,6 +15,10 @@ import type {
 } from "../core/copc/CopcPointDataSample";
 import { CopcSource } from "../core/copc/CopcSource";
 import {
+  selectHierarchyPagesForTarget,
+  type CopcHierarchyPageTargetSelection,
+} from "../core/copc/selectHierarchyPagesForTarget";
+import {
   selectHierarchyNodesForCamera,
   type CopcHierarchyNodeCameraSelection,
   type SelectHierarchyNodesForCameraOptions,
@@ -67,10 +71,20 @@ export interface CopcPointCloudLayerCameraSelectionOptions
   readonly viewportHeightPixels?: number;
 }
 
+export interface CopcPointCloudLayerHierarchyExpansionOptions {
+  readonly camera: Camera;
+  readonly maxPages?: number;
+  readonly minDepth?: number;
+  readonly maxDepth?: number;
+}
+
 export interface CopcPointCloudLayerAutomaticRenderOptions
   extends CopcPointCloudLayerCameraSelectionOptions {
   readonly maxPointCountPerNode?: number;
   readonly showBounds?: boolean;
+  readonly expandHierarchy?: boolean;
+  readonly maxHierarchyPages?: number;
+  readonly maxHierarchyPageDepth?: number;
 }
 
 export interface CopcPointCloudLayerNodeRenderResult {
@@ -90,6 +104,15 @@ export interface CopcPointCloudLayerNodesRenderResult {
 export interface CopcPointCloudLayerAutomaticRenderResult
   extends CopcPointCloudLayerNodesRenderResult {
   readonly cameraSelection: CopcHierarchyNodeCameraSelection;
+  readonly hierarchyExpansion:
+    | CopcPointCloudLayerHierarchyExpansionResult
+    | undefined;
+}
+
+export interface CopcPointCloudLayerHierarchyExpansionResult {
+  readonly hierarchy: CopcHierarchySummary;
+  readonly pageSelection: CopcHierarchyPageTargetSelection;
+  readonly loadedPageKeys: readonly string[];
 }
 
 export class CopcPointCloudLayer {
@@ -174,6 +197,38 @@ export class CopcPointCloudLayer {
     }
 
     return hierarchy;
+  }
+
+  async expandHierarchyForCamera(
+    options: CopcPointCloudLayerHierarchyExpansionOptions,
+  ): Promise<CopcPointCloudLayerHierarchyExpansionResult | undefined> {
+    this.assertNotDestroyed();
+
+    const { camera, ...selectionOptions } = options;
+    const { inspection, hierarchy } = await this.load();
+    const pageSelection = selectHierarchyPagesForTarget(
+      hierarchy.pendingPages,
+      {
+        ...selectionOptions,
+        target: this.cameraPositionToCopc(camera, inspection),
+      },
+    );
+
+    if (!pageSelection) {
+      return undefined;
+    }
+
+    const result = await this.source.loadHierarchyPages(
+      pageSelection.pages.map((page) => page.key),
+    );
+    this.assertNotDestroyed();
+    this.loadedHierarchy = result.hierarchy;
+
+    return {
+      hierarchy: result.hierarchy,
+      pageSelection,
+      loadedPageKeys: result.loadedPageKeys,
+    };
   }
 
   async renderNode(
@@ -271,10 +326,20 @@ export class CopcPointCloudLayer {
     this.assertNotDestroyed();
 
     const {
+      expandHierarchy,
+      maxHierarchyPages,
+      maxHierarchyPageDepth,
       maxPointCountPerNode,
       showBounds,
       ...selectionOptions
     } = options;
+    const hierarchyExpansion = (expandHierarchy ?? false)
+      ? await this.expandHierarchyForCamera({
+          camera: options.camera,
+          maxPages: maxHierarchyPages,
+          maxDepth: maxHierarchyPageDepth,
+        })
+      : undefined;
     const cameraSelection = await this.selectNodesForCamera(selectionOptions);
 
     if (!cameraSelection || cameraSelection.nodes.length === 0) {
@@ -292,6 +357,7 @@ export class CopcPointCloudLayer {
     return {
       ...renderResult,
       cameraSelection,
+      hierarchyExpansion,
     };
   }
 

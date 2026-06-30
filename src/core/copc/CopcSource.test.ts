@@ -97,11 +97,23 @@ describe("CopcSource point sample cache", () => {
     expect(rootHierarchy.pendingPageCount).toBe(1);
     expect(rootHierarchy.pageCount).toBe(1);
     expect(rootHierarchy.pendingPages).toEqual([
-      {
+      expect.objectContaining({
         key: "1-0-0-0",
+        depth: 1,
+        x: 0,
+        y: 0,
+        z: 0,
+        bounds: {
+          minX: 0,
+          minY: 0,
+          minZ: 0,
+          maxX: 4,
+          maxY: 4,
+          maxZ: 4,
+        },
         pageOffset: 30,
         pageLength: 40,
-      },
+      }),
     ]);
 
     const expandedHierarchy = await source.loadHierarchyPage("1-0-0-0");
@@ -115,11 +127,23 @@ describe("CopcSource point sample cache", () => {
     expect(expandedHierarchy.loadedPageCount).toBe(2);
     expect(expandedHierarchy.pendingPageCount).toBe(1);
     expect(expandedHierarchy.pendingPages).toEqual([
-      {
+      expect.objectContaining({
         key: "2-1-0-0",
+        depth: 2,
+        x: 1,
+        y: 0,
+        z: 0,
+        bounds: {
+          minX: 2,
+          minY: 0,
+          minZ: 0,
+          maxX: 4,
+          maxY: 2,
+          maxZ: 2,
+        },
         pageOffset: 70,
         pageLength: 80,
-      },
+      }),
     ]);
   });
 });

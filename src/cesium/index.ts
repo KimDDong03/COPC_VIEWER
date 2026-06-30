@@ -3,6 +3,8 @@ export {
   type CopcPointCloudLayerAutomaticRenderOptions,
   type CopcPointCloudLayerAutomaticRenderResult,
   type CopcPointCloudLayerCameraSelectionOptions,
+  type CopcPointCloudLayerHierarchyExpansionOptions,
+  type CopcPointCloudLayerHierarchyExpansionResult,
   type CopcPointCloudLayerLoadResult,
   type CopcPointCloudLayerNodeRenderResult,
   type CopcPointCloudLayerNodesRenderResult,

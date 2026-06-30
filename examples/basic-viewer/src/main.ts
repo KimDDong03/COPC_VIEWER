@@ -15,6 +15,7 @@ import {
   type CopcInspection,
   type CopcMultiNodePointSampleResult,
   type CopcNodePointSampleResult,
+  type CopcPointCloudLayerHierarchyExpansionResult,
   type CopcPointSampleCacheStats,
   type PointSample,
 } from "copc-cesium";
@@ -30,8 +31,10 @@ import {
 import "./style.css";
 
 const CUSTOM_SAMPLE_OPTION_VALUE = "custom";
+const AUTO_LOD_MAX_HIERARCHY_PAGES = 2;
+const CAMERA_STREAM_MAX_HIERARCHY_PAGES = 1;
 const CAMERA_STREAM_MAX_NODES = 1;
-const CAMERA_STREAM_MAX_DEPTH = 1;
+const CAMERA_STREAM_MAX_DEPTH = 0;
 
 const elements = getPrototypeElements();
 let currentLayer: CopcPointCloudLayer | undefined;
@@ -440,13 +443,16 @@ async function renderAutomaticNodeSet(): Promise<void> {
   try {
     const result = await layer.renderAutomatic({
       camera: viewer.camera,
+      expandHierarchy: true,
       maxNodes: 4,
+      maxHierarchyPages: AUTO_LOD_MAX_HIERARCHY_PAGES,
     });
 
     if (!result || layer !== currentLayer) {
       return;
     }
 
+    const loadedPageKeys = applyHierarchyExpansion(result.hierarchyExpansion);
     renderNodeSet.clear();
     result.nodes.forEach((node) => renderNodeSet.add(node.key));
     renderRenderSetControls();
@@ -461,7 +467,7 @@ async function renderAutomaticNodeSet(): Promise<void> {
       result.pointSamples,
       result.cameraSelection,
     );
-    elements.statusText.textContent = `Auto LOD rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
+    elements.statusText.textContent = `Auto LOD rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
@@ -490,6 +496,20 @@ async function renderAutomaticNodeSetForCameraMove(
   const requestId = (automaticStreamRequestId += 1);
 
   try {
+    const hierarchyExpansion = await layer.expandHierarchyForCamera({
+      camera: viewer.camera,
+      maxPages: CAMERA_STREAM_MAX_HIERARCHY_PAGES,
+    });
+
+    if (
+      layer !== currentLayer ||
+      requestId !== automaticStreamRequestId ||
+      !elements.autoStreamCheckbox.checked
+    ) {
+      return;
+    }
+
+    const loadedPageKeys = applyHierarchyExpansion(hierarchyExpansion);
     const cameraSelection = await layer.selectNodesForCamera({
       camera: viewer.camera,
       maxNodes: CAMERA_STREAM_MAX_NODES,
@@ -536,7 +556,7 @@ async function renderAutomaticNodeSetForCameraMove(
       result.pointSamples,
       cameraSelection,
     );
-    elements.statusText.textContent = `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
+    elements.statusText.textContent = `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
     updateSuggestedNode();
   } catch (error) {
     if (layer !== currentLayer) {
@@ -636,6 +656,20 @@ function renderSuggestionUnavailable(message: string): void {
 function addNodeToRenderSet(nodeKey: string): void {
   renderNodeSet.add(nodeKey);
   renderRenderSetControls();
+}
+
+function applyHierarchyExpansion(
+  expansion: CopcPointCloudLayerHierarchyExpansionResult | undefined,
+): readonly string[] {
+  if (!expansion) {
+    return [];
+  }
+
+  const selectedNodeKey = elements.nodeSelect.value;
+  currentHierarchy = expansion.hierarchy;
+  populateNodeSelect(expansion.hierarchy, selectedNodeKey);
+  renderHierarchyPageControls();
+  return expansion.loadedPageKeys;
 }
 
 function renderHierarchyPageControls(): void {
@@ -953,6 +987,12 @@ function formatPointSampleCacheStats(
 
 function formatHierarchyPageStats(hierarchy: CopcHierarchySummary): string {
   return `${hierarchy.loadedPageCount.toLocaleString()} loaded, ${hierarchy.pendingPageCount.toLocaleString()} pending`;
+}
+
+function formatLoadedHierarchyPages(pageKeys: readonly string[]): string {
+  return pageKeys.length > 0
+    ? ` after loading ${pageKeys.length.toLocaleString()} hierarchy pages`
+    : "";
 }
 
 function formatCameraSelection(

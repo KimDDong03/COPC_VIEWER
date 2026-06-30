@@ -39,6 +39,7 @@ examples/basic-viewer/
 COPC URL
 -> CopcSource
 -> COPC metadata and loaded hierarchy pages
+-> optional camera-targeted hierarchy page expansion
 -> selected hierarchy node keys
 -> range-read point data
 -> sampled source XYZ points
@@ -53,13 +54,15 @@ In this prototype, streaming means loading COPC hierarchy and point-data byte ra
 The current implementation includes:
 
 - `CopcSource.loadHierarchyPage` and `loadNextHierarchyPage` for on-demand COPC hierarchy page range reads.
+- `selectHierarchyPagesForTarget` for choosing nearby pending hierarchy pages from their octree bounds.
 - `CopcSource` point sample caching by node key and sample count.
 - `selectHierarchyNodesForCamera` for simple camera-based node selection.
+- `CopcPointCloudLayer.expandHierarchyForCamera` for camera-targeted hierarchy expansion.
 - `CopcPointCloudLayer.renderAutomatic` for selecting and rendering nodes in one call.
 - `CopcPointCloudLayer.selectNodesForCamera` for selecting nodes without immediately rendering.
-- Example-only `Stream on camera move` behavior that reruns camera selection and reuses cached samples.
+- Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering.
 
-The current streaming behavior is deliberately conservative. It limits the example camera stream to a shallow node selection so the prototype remains stable in a browser smoke test.
+The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.
 
 ## Coordinate Transforms
 
@@ -78,16 +81,16 @@ Camera-based selection requires both directions:
 
 ## Current Limitations
 
-- Hierarchy page expansion is explicit; the prototype does not yet prefetch or prioritize pages automatically.
+- Hierarchy page expansion is camera-targeted but still conservative; it is not yet a full screen-space error or eviction policy.
 - Point rendering uses Cesium point primitives, not a custom optimized WebGL primitive.
 - Cache is in-memory and unbounded.
-- Camera streaming is shallow and prototype-oriented.
+- Camera streaming is prototype-oriented; it expands a small number of hierarchy pages per update while keeping the example's automatic render depth shallow.
 - CRS detection is not complete; projected CRS data should pass explicit transform options.
 
 ## Near-Term Roadmap
 
 1. Expand cache policy with explicit limits and invalidation.
-2. Add a better progressive hierarchy and point loading policy for camera movement.
-3. Add optional hierarchy page prefetch around the current camera target.
+2. Add a better screen-space error policy for progressive hierarchy and point loading.
+3. Add bounded hierarchy and point cache eviction.
 4. Move heavy point decoding/preparation work into Web Workers.
 5. Replace point primitive rendering with a more scalable Cesium-native primitive path when the basic API stabilizes.

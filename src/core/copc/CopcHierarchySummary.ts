@@ -2,6 +2,11 @@ import type { CopcBounds, CopcHierarchyPageSummary } from "./CopcInspection";
 
 export interface CopcHierarchyPageReference extends CopcHierarchyPageSummary {
   readonly key: string;
+  readonly depth: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly bounds: CopcBounds;
 }
 
 export interface CopcHierarchyNodeSummary {
