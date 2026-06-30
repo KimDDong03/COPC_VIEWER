@@ -1,5 +1,7 @@
 # COPC Viewer
 
+[![CI](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/ci.yml/badge.svg)](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/ci.yml)
+
 CesiumJS-native COPC point cloud visualization library prototype.
 
 ## Goal
