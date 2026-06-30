@@ -196,6 +196,13 @@ describe("CopcSource point sample cache", () => {
           maxCachedPointSampleBytes: 0,
         }),
     ).toThrow("maxCachedPointSampleBytes must be a positive integer.");
+
+    expect(
+      () =>
+        new CopcSource("https://example.com/sample.copc.laz", {
+          maxCachedHierarchyPages: 0,
+        }),
+    ).toThrow("maxCachedHierarchyPages must be a positive integer.");
   });
 
   it("loads and merges additional hierarchy pages on demand", async () => {
@@ -242,6 +249,7 @@ describe("CopcSource point sample cache", () => {
     const rootHierarchy = await source.loadHierarchySummary();
 
     expect(rootHierarchy.nodes.map((node) => node.key)).toEqual(["0-0-0-0"]);
+    expect(rootHierarchy.nodes[0]?.sourceHierarchyPageId).toBe("10:20");
     expect(rootHierarchy.loadedPageCount).toBe(1);
     expect(rootHierarchy.pendingPageCount).toBe(1);
     expect(rootHierarchy.pageCount).toBe(1);
@@ -262,8 +270,17 @@ describe("CopcSource point sample cache", () => {
         },
         pageOffset: 30,
         pageLength: 40,
+        sourceHierarchyPageId: "10:20",
       }),
     ]);
+    expect(source.getHierarchyCacheStats()).toEqual({
+      loadedPageCount: 1,
+      maxCachedPageCount: 64,
+      pendingPageCount: 1,
+      trackedNodeCount: 1,
+      trackedPendingPageCount: 1,
+      isOverLimit: false,
+    });
 
     const expandedHierarchy = await source.loadHierarchyPage("1-0-0-0");
 
@@ -272,6 +289,16 @@ describe("CopcSource point sample cache", () => {
       "0-0-0-0",
       "1-0-0-0",
       "2-0-0-0",
+    ]);
+    expect(
+      expandedHierarchy.nodes.map((node) => [
+        node.key,
+        node.sourceHierarchyPageId,
+      ]),
+    ).toEqual([
+      ["0-0-0-0", "10:20"],
+      ["1-0-0-0", "30:40"],
+      ["2-0-0-0", "30:40"],
     ]);
     expect(expandedHierarchy.loadedPageCount).toBe(2);
     expect(expandedHierarchy.pendingPageCount).toBe(1);
@@ -292,8 +319,70 @@ describe("CopcSource point sample cache", () => {
         },
         pageOffset: 70,
         pageLength: 80,
+        sourceHierarchyPageId: "30:40",
       }),
     ]);
+    expect(source.getHierarchyCacheStats()).toEqual({
+      loadedPageCount: 2,
+      maxCachedPageCount: 64,
+      pendingPageCount: 1,
+      trackedNodeCount: 3,
+      trackedPendingPageCount: 1,
+      isOverLimit: false,
+    });
+  });
+
+  it("reports hierarchy page cache over-limit state without evicting loaded nodes", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      maxCachedHierarchyPages: 1,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async (page) => {
+      if (page.pageOffset === 10) {
+        return {
+          nodes: {
+            "0-0-0-0": createNode(100),
+          },
+          pages: {
+            "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+          },
+        };
+      }
+
+      return {
+        nodes: {
+          "1-0-0-0": createNode(50),
+        },
+        pages: {},
+      };
+    };
+
+    const hierarchy = await source.loadHierarchyPage("1-0-0-0");
+
+    expect(hierarchy.nodes.map((node) => node.key)).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+    ]);
+    expect(source.getHierarchyCacheStats()).toEqual({
+      loadedPageCount: 2,
+      maxCachedPageCount: 1,
+      pendingPageCount: 0,
+      trackedNodeCount: 2,
+      trackedPendingPageCount: 0,
+      isOverLimit: true,
+    });
   });
 });
 

@@ -42,6 +42,7 @@ import { createPointSamplesFromCopc } from "./createPointSamplesFromCopc";
 export interface CopcPointCloudLayerOptions {
   readonly url: string;
   readonly maxPointCountPerNode?: number;
+  readonly maxCachedHierarchyPages?: number;
   readonly maxCachedSampleSets?: number;
   readonly maxCachedPointSampleBytes?: number;
   readonly showBounds?: boolean;
@@ -136,6 +137,7 @@ export class CopcPointCloudLayer {
   constructor(scene: Scene, options: CopcPointCloudLayerOptions) {
     this.scene = scene;
     this.source = new CopcSource(options.url, {
+      maxCachedHierarchyPages: options.maxCachedHierarchyPages,
       maxCachedSampleSets: options.maxCachedSampleSets,
       maxCachedPointSampleBytes: options.maxCachedPointSampleBytes,
     });

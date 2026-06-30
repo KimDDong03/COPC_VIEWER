@@ -2,6 +2,7 @@ import type { CopcBounds, CopcHierarchyPageSummary } from "./CopcInspection";
 
 export interface CopcHierarchyPageReference extends CopcHierarchyPageSummary {
   readonly key: string;
+  readonly sourceHierarchyPageId?: string;
   readonly depth: number;
   readonly x: number;
   readonly y: number;
@@ -11,6 +12,7 @@ export interface CopcHierarchyPageReference extends CopcHierarchyPageSummary {
 
 export interface CopcHierarchyNodeSummary {
   readonly key: string;
+  readonly sourceHierarchyPageId?: string;
   readonly depth: number;
   readonly x: number;
   readonly y: number;
@@ -28,4 +30,13 @@ export interface CopcHierarchySummary {
   readonly pageCount: number;
   readonly loadedPageCount: number;
   readonly pendingPageCount: number;
+}
+
+export interface CopcHierarchyCacheStats {
+  readonly loadedPageCount: number;
+  readonly maxCachedPageCount: number;
+  readonly pendingPageCount: number;
+  readonly trackedNodeCount: number;
+  readonly trackedPendingPageCount: number;
+  readonly isOverLimit: boolean;
 }

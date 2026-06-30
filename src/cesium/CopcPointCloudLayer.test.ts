@@ -15,10 +15,16 @@ describe("CopcPointCloudLayer coordinate transforms", () => {
   it("passes the point sample cache limit to the owned COPC source", () => {
     const layer = new CopcPointCloudLayer(createSceneStub(), {
       url: "https://example.com/sample.copc.laz",
+      maxCachedHierarchyPages: 4,
       maxCachedSampleSets: 3,
       maxCachedPointSampleBytes: 1024,
     });
 
+    expect(layer.source.getHierarchyCacheStats()).toEqual(
+      expect.objectContaining({
+        maxCachedPageCount: 4,
+      }),
+    );
     expect(layer.source.getPointSampleCacheStats()).toEqual(
       expect.objectContaining({
         maxCachedSampleSetCount: 3,

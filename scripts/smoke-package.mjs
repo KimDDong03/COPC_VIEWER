@@ -155,6 +155,7 @@ await writeFile(
 } from "copc-cesium";
 import {
   CopcSource,
+  type CopcHierarchyCacheStats,
   type CopcPointSampleCacheStats,
   type CopcSourceOptions,
 } from "copc-cesium/core";
@@ -170,8 +171,10 @@ const exportedConstructors = [
 ] as const;
 const inspection: CopcInspection | undefined = undefined;
 const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
+const hierarchyCacheStats: CopcHierarchyCacheStats | undefined = undefined;
 const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
 const sourceOptions: CopcSourceOptions = {
+  maxCachedHierarchyPages: 3,
   maxCachedSampleSets: 2,
   maxCachedPointSampleBytes: 1024,
 };
@@ -192,11 +195,13 @@ if (app) {
   app.textContent = [
     exportedConstructors.map((constructor) => constructor.name).join(", "),
     String(Boolean(createSource)),
+    String(sourceOptions.maxCachedHierarchyPages),
     String(sourceOptions.maxCachedSampleSets),
     String(sourceOptions.maxCachedPointSampleBytes),
     String(Boolean(depthEstimate)),
     String(Boolean(inspection)),
     String(Boolean(transformStatus)),
+    String(Boolean(hierarchyCacheStats)),
     String(Boolean(cacheStats)),
     String(Boolean(hierarchyPage)),
     String(Boolean(pageSelection)),

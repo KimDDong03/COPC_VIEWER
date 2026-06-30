@@ -8,6 +8,7 @@ import {
   CopcPointCloudLayer,
   type CopcBounds,
   type CopcCoordinateTransformStatus,
+  type CopcHierarchyCacheStats,
   type CopcHierarchyNodeCameraSelection,
   type CopcHierarchyNodeSuggestion,
   type CopcHierarchyNodeSummary,
@@ -37,6 +38,7 @@ const AUTO_LOD_MAX_TOTAL_POINT_DATA_LENGTH = 2_000_000;
 const CAMERA_STREAM_MAX_HIERARCHY_PAGES = 1;
 const CAMERA_STREAM_MAX_NODES = 1;
 const CAMERA_STREAM_MAX_DEPTH = 0;
+const HIERARCHY_PAGE_CACHE_LIMIT = 64;
 const POINT_SAMPLE_CACHE_LIMIT = 32;
 const POINT_SAMPLE_CACHE_BYTE_LIMIT = 32 * 1024 * 1024;
 
@@ -179,6 +181,7 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
   previewRenderer.clear();
   const layer = new CopcPointCloudLayer(viewer.scene, {
     url: activeSource.url,
+    maxCachedHierarchyPages: HIERARCHY_PAGE_CACHE_LIMIT,
     maxCachedSampleSets: POINT_SAMPLE_CACHE_LIMIT,
     maxCachedPointSampleBytes: POINT_SAMPLE_CACHE_BYTE_LIMIT,
     coordinateTransforms: activeSource.coordinateTransforms,
@@ -279,7 +282,12 @@ function renderInspection(
     ),
     metadataRow(
       "Hierarchy pages",
-      currentHierarchy ? formatHierarchyPageStats(currentHierarchy) : "Not loaded",
+      currentHierarchy && currentLayer
+        ? formatHierarchyPageStats(
+            currentHierarchy,
+            currentLayer.source.getHierarchyCacheStats(),
+          )
+        : "Not loaded",
     ),
     metadataRow("GPS time", formatVector(inspection.gpsTimeRange)),
     metadataRow(
@@ -687,7 +695,10 @@ function renderHierarchyPageControls(): void {
     return;
   }
 
-  elements.hierarchyPagesText.textContent = `Hierarchy pages: ${currentHierarchy.loadedPageCount.toLocaleString()} loaded, ${currentHierarchy.pendingPageCount.toLocaleString()} pending.`;
+  elements.hierarchyPagesText.textContent = `Hierarchy pages: ${formatHierarchyPageStats(
+    currentHierarchy,
+    currentLayer?.source.getHierarchyCacheStats(),
+  )}.`;
   elements.loadMoreHierarchyButton.disabled =
     !currentLayer || currentHierarchy.pendingPageCount === 0;
 }
@@ -993,8 +1004,18 @@ function formatPointSampleCacheStats(
   return `${stats.cachedSampleSetCount.toLocaleString()} / ${stats.maxCachedSampleSetCount.toLocaleString()} sample sets, ${formatBytes(stats.cachedPointSampleBytes)} / ${formatBytes(stats.maxCachedPointSampleBytes)}, ${stats.cacheHitCount.toLocaleString()} hits, ${stats.cacheMissCount.toLocaleString()} misses, ${stats.cacheEvictionCount.toLocaleString()} evictions`;
 }
 
-function formatHierarchyPageStats(hierarchy: CopcHierarchySummary): string {
-  return `${hierarchy.loadedPageCount.toLocaleString()} loaded, ${hierarchy.pendingPageCount.toLocaleString()} pending`;
+function formatHierarchyPageStats(
+  hierarchy: CopcHierarchySummary,
+  stats?: CopcHierarchyCacheStats,
+): string {
+  const loadedPageCount = stats?.loadedPageCount ?? hierarchy.loadedPageCount;
+  const pendingPageCount = stats?.pendingPageCount ?? hierarchy.pendingPageCount;
+  const limitSummary = stats
+    ? ` / ${stats.maxCachedPageCount.toLocaleString()} page cache limit, ${stats.trackedNodeCount.toLocaleString()} tracked nodes`
+    : "";
+  const overLimitSummary = stats?.isOverLimit ? ", over limit" : "";
+
+  return `${loadedPageCount.toLocaleString()} loaded${limitSummary}, ${pendingPageCount.toLocaleString()} pending${overLimitSummary}`;
 }
 
 function formatLoadedHierarchyPages(pageKeys: readonly string[]): string {

@@ -3,6 +3,7 @@ import type { Copc as CopcData, Getter, Hierarchy } from "copc";
 import { createHttpRangeGetter } from "./createHttpRangeGetter";
 import { getSharedLazPerf } from "./createLazPerf";
 import type {
+  CopcHierarchyCacheStats,
   CopcHierarchyPageReference,
   CopcHierarchyNodeSummary,
   CopcHierarchySummary,
@@ -36,12 +37,14 @@ export interface LoadHierarchyPagesResult {
 }
 
 export interface CopcSourceOptions {
+  readonly maxCachedHierarchyPages?: number;
   readonly maxCachedSampleSets?: number;
   readonly maxCachedPointSampleBytes?: number;
 }
 
 const DEFAULT_MAX_POINT_COUNT = 5_000;
 const DEFAULT_NODE_KEY = "0-0-0-0";
+const DEFAULT_MAX_CACHED_HIERARCHY_PAGES = 64;
 const DEFAULT_MAX_CACHED_SAMPLE_SETS = 32;
 const DEFAULT_MAX_CACHED_POINT_SAMPLE_BYTES = 32 * 1024 * 1024;
 const POINT_SAMPLE_COORDINATE_BYTES = 3 * 8;
@@ -57,6 +60,7 @@ export class CopcSource {
 
   private readonly maxCachedSampleSets: number;
   private readonly maxCachedPointSampleBytes: number;
+  private readonly maxCachedHierarchyPages: number;
   private readonly getter: Getter;
   private readonly copcPromise: Promise<CopcData>;
   private hierarchyPromise: Promise<Hierarchy.Subtree> | undefined;
@@ -66,6 +70,8 @@ export class CopcSource {
     Promise<Hierarchy.Subtree>
   >();
   private readonly loadedHierarchyPageIds = new Set<string>();
+  private readonly hierarchyNodePageIds = new Map<string, string>();
+  private readonly hierarchyPendingPageIds = new Map<string, string>();
   private readonly nodePointSampleCache = new Map<
     string,
     PointSampleCacheEntry
@@ -76,11 +82,20 @@ export class CopcSource {
   private pointSampleCacheEvictionCount = 0;
 
   constructor(url: string, options: CopcSourceOptions = {}) {
+    const maxCachedHierarchyPages =
+      options.maxCachedHierarchyPages ?? DEFAULT_MAX_CACHED_HIERARCHY_PAGES;
     const maxCachedSampleSets =
       options.maxCachedSampleSets ?? DEFAULT_MAX_CACHED_SAMPLE_SETS;
     const maxCachedPointSampleBytes =
       options.maxCachedPointSampleBytes ??
       DEFAULT_MAX_CACHED_POINT_SAMPLE_BYTES;
+
+    if (
+      !Number.isSafeInteger(maxCachedHierarchyPages) ||
+      maxCachedHierarchyPages <= 0
+    ) {
+      throw new Error("maxCachedHierarchyPages must be a positive integer.");
+    }
 
     if (
       !Number.isSafeInteger(maxCachedSampleSets) ||
@@ -97,6 +112,7 @@ export class CopcSource {
     }
 
     this.url = url;
+    this.maxCachedHierarchyPages = maxCachedHierarchyPages;
     this.maxCachedSampleSets = maxCachedSampleSets;
     this.maxCachedPointSampleBytes = maxCachedPointSampleBytes;
     this.getter = createHttpRangeGetter(url);
@@ -120,6 +136,8 @@ export class CopcSource {
         hierarchy,
         copc.info.cube,
         this.loadedHierarchyPageIds.size,
+        this.hierarchyNodePageIds,
+        this.hierarchyPendingPageIds,
       ),
     );
   }
@@ -137,6 +155,8 @@ export class CopcSource {
           hierarchy,
           copc.info.cube,
           this.loadedHierarchyPageIds.size,
+          this.hierarchyNodePageIds,
+          this.hierarchyPendingPageIds,
         );
       }
 
@@ -146,12 +166,16 @@ export class CopcSource {
     const subtree = await this.loadHierarchyPageData(page);
     this.loadedHierarchyPageIds.add(hierarchyPageId(page));
     delete hierarchy.pages[pageKey];
+    this.hierarchyPendingPageIds.delete(pageKey);
+    this.recordHierarchyProvenance(subtree, page);
     mergeHierarchy(hierarchy, subtree);
 
     return summarizeHierarchy(
       hierarchy,
       copc.info.cube,
       this.loadedHierarchyPageIds.size,
+      this.hierarchyNodePageIds,
+      this.hierarchyPendingPageIds,
     );
   }
 
@@ -192,6 +216,18 @@ export class CopcSource {
     }
 
     return this.loadHierarchyPage(nextPageKey);
+  }
+
+  getHierarchyCacheStats(): CopcHierarchyCacheStats {
+    return {
+      loadedPageCount: this.loadedHierarchyPageIds.size,
+      maxCachedPageCount: this.maxCachedHierarchyPages,
+      pendingPageCount: this.hierarchyPendingPageIds.size,
+      trackedNodeCount: this.hierarchyNodePageIds.size,
+      trackedPendingPageCount: this.hierarchyPendingPageIds.size,
+      isOverLimit:
+        this.loadedHierarchyPageIds.size > this.maxCachedHierarchyPages,
+    };
   }
 
   loadNodePointSamples(
@@ -305,6 +341,7 @@ export class CopcSource {
       const subtree = await this.loadHierarchyPageData(
         copc.info.rootHierarchyPage,
       );
+      this.recordHierarchyProvenance(subtree, copc.info.rootHierarchyPage);
       this.loadedHierarchyPageIds.add(
         hierarchyPageId(copc.info.rootHierarchyPage),
       );
@@ -326,6 +363,25 @@ export class CopcSource {
     }
 
     return promise;
+  }
+
+  private recordHierarchyProvenance(
+    subtree: Hierarchy.Subtree,
+    page: Hierarchy.Page,
+  ): void {
+    const pageId = hierarchyPageId(page);
+
+    for (const [nodeKey, node] of Object.entries(subtree.nodes)) {
+      if (node) {
+        this.hierarchyNodePageIds.set(nodeKey, pageId);
+      }
+    }
+
+    for (const [pageKey, childPage] of Object.entries(subtree.pages)) {
+      if (childPage) {
+        this.hierarchyPendingPageIds.set(pageKey, pageId);
+      }
+    }
   }
 
   private evictPointSampleCacheIfNeeded(): void {
@@ -453,6 +509,7 @@ function summarizeVlrs(copc: CopcData): CopcVlrSummary[] {
 function summarizeNodes(
   nodes: Hierarchy.Node.Map,
   cube: readonly number[],
+  nodePageIds: ReadonlyMap<string, string>,
 ): CopcHierarchyNodeSummary[] {
   return Object.entries(nodes)
     .flatMap(([key, node]) => {
@@ -464,6 +521,7 @@ function summarizeNodes(
         {
           ...createNodeSummary(key, node, cube),
           key,
+          sourceHierarchyPageId: nodePageIds.get(key),
         },
       ];
     })
@@ -474,11 +532,17 @@ function summarizeHierarchy(
   hierarchy: Hierarchy.Subtree,
   cube: readonly number[],
   loadedPageCount: number,
+  nodePageIds: ReadonlyMap<string, string>,
+  pendingPageIds: ReadonlyMap<string, string>,
 ): CopcHierarchySummary {
-  const pendingPages = summarizePendingPages(hierarchy.pages, cube);
+  const pendingPages = summarizePendingPages(
+    hierarchy.pages,
+    cube,
+    pendingPageIds,
+  );
 
   return {
-    nodes: summarizeNodes(hierarchy.nodes, cube),
+    nodes: summarizeNodes(hierarchy.nodes, cube, nodePageIds),
     pendingPages,
     pageCount: pendingPages.length,
     loadedPageCount,
@@ -489,6 +553,7 @@ function summarizeHierarchy(
 function summarizePendingPages(
   pages: Hierarchy.Page.Map,
   cube: readonly number[],
+  pendingPageIds: ReadonlyMap<string, string>,
 ): CopcHierarchyPageReference[] {
   return Object.entries(pages)
     .flatMap(([key, page]) => {
@@ -500,6 +565,7 @@ function summarizePendingPages(
         {
           ...createPageReferenceSummary(key, cube),
           key,
+          sourceHierarchyPageId: pendingPageIds.get(key),
           pageOffset: page.pageOffset,
           pageLength: page.pageLength,
         },

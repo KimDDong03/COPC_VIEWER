@@ -22,7 +22,7 @@ The current prototype is intentionally small:
 3. Read a small set of real XYZ points.
 4. Transform the sample COPC CRS into Cesium-friendly longitude, latitude, and height.
 5. Display sampled COPC hierarchy-node points in CesiumJS.
-6. Load nearby COPC hierarchy pages progressively and reuse a bounded in-memory node sample cache.
+6. Load nearby COPC hierarchy pages progressively, track loaded hierarchy page provenance, and reuse a bounded in-memory node sample cache.
 
 Full LOD, persistent cache management, workers, custom primitives, packaging, and advanced styling come later.
 
@@ -60,7 +60,7 @@ The default example URL loads the public Autzen COPC sample, reads the root hier
 The example keeps sample COPC URLs and their transform factories in a small preset list while still allowing direct custom URL entry.
 For custom URLs, the example can also accept a source CRS and optional proj4 definition before loading the COPC file.
 The hierarchy node selector lists currently loaded nodes and lets the example render one selected node at a time.
-`CopcSource` keeps the opened COPC metadata, loaded hierarchy pages, pending hierarchy page references with bounds, and a bounded LRU cache of sampled node point data in memory for the active URL. The point sample cache is limited by both sample-set count and estimated decoded sample bytes.
+`CopcSource` keeps the opened COPC metadata, loaded hierarchy pages, pending hierarchy page references with bounds and source-page provenance, hierarchy cache stats, and a bounded LRU cache of sampled node point data in memory for the active URL. The point sample cache is limited by both sample-set count and estimated decoded sample bytes. Hierarchy page cache stats report when the active page count exceeds the configured limit; actual hierarchy eviction is intentionally left for the next step.
 The Load next page button range-reads the next pending COPC hierarchy page and refreshes the available node list without converting the file to 3D Tiles.
 The example also computes the selected node bounds and renders a yellow debug bounding box in CesiumJS.
 It can suggest the nearest loaded hierarchy node to the current camera position and apply that suggestion on demand.
@@ -83,6 +83,7 @@ import {
 
 const layer = new CopcPointCloudLayer(viewer.scene, {
   url,
+  maxCachedHierarchyPages: 64,
   maxCachedSampleSets: 32,
   maxCachedPointSampleBytes: 32 * 1024 * 1024,
   coordinateTransforms: createDefaultCopcCoordinateTransforms,
@@ -100,6 +101,7 @@ await layer.renderAutomatic({
   maxTotalPointDataLength: 2_000_000,
 });
 const selection = await layer.selectNodesForCamera({ camera: viewer.camera });
+const hierarchyCacheStats = layer.source.getHierarchyCacheStats();
 const cacheStats = layer.source.getPointSampleCacheStats();
 layer.clearPointSampleCache();
 
