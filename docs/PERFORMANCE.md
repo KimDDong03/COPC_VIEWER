@@ -65,13 +65,13 @@ Measured on 2026-07-01 with:
 ## Current Default
 
 The basic viewer starts in Balanced detail mode: 120,000 max points per node,
-160,000 max Auto LOD points, 80,000 max camera-stream points, and 2 px point
+240,000 max Auto LOD points, 120,000 max camera-stream points, and 2 px point
 primitives. The initial load renders one real COPC node to place the camera,
-then automatically renders a denser camera-selected Auto LOD set. The stream
-input acts as a maximum budget: camera streaming can lower the effective point
-budget after slow visible updates and gradually recover it after repeated fast
-updates. This keeps the demo from staying overloaded on heavier samples or
-slower machines.
+then automatically renders a denser camera-selected coverage LOD set through
+depth 3. The stream input acts as a maximum budget: camera streaming can lower
+the effective point budget after slow visible updates and gradually recover it
+after repeated fast updates. This keeps the demo from staying overloaded on
+heavier samples or slower machines.
 
 Additional targeted diagnostics on the SoFi sample with a 2,500-point stream
 budget originally measured average stream-stage timing at
@@ -107,9 +107,9 @@ Rendering the submitted points was not the dominant cost in these runs. The
 visible camera-stream update is now mostly renderer submission time, while
 hierarchy page expansion happens in the background.
 
-The current demo now prioritizes visual density more aggressively than the
-older smoothness table above: Auto LOD can select up to 24 nodes, camera
-streaming can select up to 16 nodes through depth 3, and Ultra density can
-target up to 400,000 Auto LOD points. The next performance work should rerun
-the smoothness benchmark at the new higher budgets and tune adaptive recovery
-against these denser defaults.
+The current demo now prioritizes visible COPC coverage more aggressively than
+the older smoothness table above: Balanced Auto LOD can select up to 64 coverage
+nodes through depth 3, camera streaming can select up to 48 coverage nodes
+through depth 3, and Ultra density can target up to 1,000,000 Auto LOD points.
+The next performance work should rerun the smoothness benchmark at the new
+higher budgets and tune adaptive recovery against these denser defaults.

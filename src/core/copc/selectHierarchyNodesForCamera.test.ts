@@ -45,6 +45,33 @@ describe("selectHierarchyNodesForCamera", () => {
     ]);
   });
 
+  it("can prioritize screen coverage over nearest-only node selection", () => {
+    const nearestSelection = selectHierarchyNodesForCamera(createNodeGrid(), {
+      target: { x: 62.5, y: 62.5, z: 10 },
+      viewportHeightPixels: 720,
+      maxNodes: 4,
+      targetNodeScreenPixels: 220,
+    });
+    const coverageSelection = selectHierarchyNodesForCamera(createNodeGrid(), {
+      target: { x: 62.5, y: 62.5, z: 10 },
+      viewportHeightPixels: 720,
+      selectionMode: "coverage",
+      maxNodes: 4,
+      targetNodeScreenPixels: 220,
+    });
+
+    expect(coverageSelection?.selectionMode).toBe("coverage");
+    expect(coverageSelection?.selectedDepth).toBe(2);
+    expect(coverageSelection?.nodes).toHaveLength(4);
+    expect(coverageSelection?.nodes.map((node) => node.key)).not.toEqual(
+      nearestSelection?.nodes.map((node) => node.key),
+    );
+    expect(coverageSelection?.nodes.map((node) => node.key)).toContain(
+      "2-0-0-0",
+    );
+    expect(coverageSelection?.reason).toContain("screen-coverage");
+  });
+
   it("uses the nearest available depth when the target depth is missing", () => {
     const selection = selectHierarchyNodesForCamera(createSparseDepthNodes(), {
       target: { x: 150, y: 50, z: 10 },
@@ -199,6 +226,14 @@ describe("selectHierarchyNodesForCamera", () => {
         maxNodes: 0,
       }),
     ).toThrow("maxNodes must be a positive integer.");
+
+    expect(() =>
+      selectHierarchyNodesForCamera(createSparseDepthNodes(), {
+        target: { x: 0, y: 0, z: 0 },
+        viewportHeightPixels: 720,
+        selectionMode: "bad" as never,
+      }),
+    ).toThrow('selectionMode must be "nearest" or "coverage".');
   });
 
   it("rejects invalid resource budgets", () => {

@@ -159,6 +159,7 @@ import {
   CopcSource,
   createCopcPointSampleWorker,
   type CopcHierarchyCacheStats,
+  type CopcHierarchyNodeSelectionMode,
   type LoadNodePointSamplesOptions,
   type CopcPointSampleLoadingMode,
   type CopcPointSampleCacheStats,
@@ -210,6 +211,7 @@ const nodeSampleOptions: LoadNodePointSamplesOptions = {
   signal: new AbortController().signal,
 };
 const viewDirection: CopcTargetVector = { x: 1, y: 0, z: 0 };
+const selectionMode: CopcHierarchyNodeSelectionMode = "coverage";
 const pointRendererFactory: CopcPointCloudRendererFactory = () => ({
   setPoints: () => undefined,
   clear: () => undefined,
@@ -240,7 +242,7 @@ const cameraSelectionOptions:
 const cameraSelectionStats:
   | Pick<
       CopcHierarchyNodeCameraSelection,
-      "skippedByFrustumCount" | "skippedByViewCount"
+      "selectionMode" | "skippedByFrustumCount" | "skippedByViewCount"
     >
   | undefined = undefined;
 const renderStats: CopcPointCloudLayerRenderStats = {
@@ -264,6 +266,7 @@ if (app) {
     String(sourceOptions.maxConcurrentPointSampleWorkerRequests),
     String(Boolean(nodeSampleOptions.signal)),
     String(Boolean(viewDirection)),
+    selectionMode,
     String(Boolean(pointRendererFactory)),
     String(Boolean(depthEstimate)),
     String(Boolean(inspection)),

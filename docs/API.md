@@ -135,8 +135,10 @@ await layer.expandHierarchyForCamera({
 
 const selection = await layer.selectNodesForCamera({
   camera: viewer.camera,
-  maxNodes: 4,
-  maxTotalPointDataLength: 2_000_000,
+  selectionMode: "coverage",
+  maxNodes: 64,
+  targetNodeScreenPixels: 120,
+  maxTotalPointDataLength: 128_000_000,
 });
 
 if (selection) {
@@ -155,14 +157,19 @@ const result = await layer.renderAutomatic({
   camera: viewer.camera,
   expandHierarchy: true,
   maxHierarchyPages: 2,
-  maxNodes: 4,
+  selectionMode: "coverage",
+  maxNodes: 64,
+  targetNodeScreenPixels: 120,
   maxPointCountPerNode: 5_000,
-  maxRenderedPointCount: 20_000,
+  maxRenderedPointCount: 240_000,
 });
 ```
 
 `renderAutomatic()` is a convenience path that can expand nearby hierarchy
 pages, select camera-relevant nodes, and render them in one call.
+Use `selectionMode: "coverage"` when the goal is to fill the current view with
+COPC nodes instead of only rendering the nearest few nodes around the camera
+target.
 
 ### Lifecycle
 

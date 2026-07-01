@@ -26,14 +26,14 @@ export const SAMPLE_COPC_SOURCES = [
   {
     id: "autzen-classified",
     label: "Autzen classified",
-    url: "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz",
+    url: "/copc-samples/autzen-classified.copc.laz",
     description: "Public COPC sample using EPSG:2992 coordinates.",
     coordinateTransforms: createDefaultCopcCoordinateTransforms,
   },
   {
     id: "sofi-stadium",
     label: "SoFi Stadium",
-    url: "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz",
+    url: "/copc-samples/sofi.copc.laz",
     description: "Public COPC sample using WGS84 / UTM zone 11N coordinates.",
     coordinateTransforms: createProj4CoordinateTransforms({
       sourceCrs: EPSG_32611,

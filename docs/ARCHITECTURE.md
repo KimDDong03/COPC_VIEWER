@@ -57,7 +57,7 @@ The current implementation includes:
 - Hierarchy node and pending-page provenance tracking via the source hierarchy page ID, plus bounded hierarchy page eviction that restores evicted non-root leaf pages back to pending page references.
 - `selectHierarchyPagesForTarget` for choosing nearby pending hierarchy pages from their octree bounds.
 - `CopcSource` point sample caching by node key and sample count, with bounded LRU sample-set and estimated decoded-byte limits.
-- `CopcPointCloudLayer.selectNodesForCamera` first culls requested-depth hierarchy node bounds with the Cesium camera frustum, then `selectHierarchyNodesForCamera` applies per-depth nearest-node screen-size estimates, COPC spacing-derived point spacing screen estimates, broad view-direction fallback culling, and optional point-count and point-data byte budgets.
+- `CopcPointCloudLayer.selectNodesForCamera` first culls requested-depth hierarchy node bounds with the Cesium camera frustum, then `selectHierarchyNodesForCamera` applies per-depth nearest-node screen-size estimates, COPC spacing-derived point spacing screen estimates, broad view-direction fallback culling, optional coverage-oriented node ordering, and optional point-count and point-data byte budgets.
 - `CopcPointCloudLayer.expandHierarchyForCamera` for camera-targeted hierarchy expansion.
 - `CopcPointCloudLayer.renderAutomatic` for selecting and rendering nodes in one call.
 - `CopcPointCloudLayer.selectNodesForCamera` for selecting nodes without immediately rendering.
@@ -67,12 +67,12 @@ The current implementation includes:
 - `AbortSignal` support for point-sample loading and Cesium render calls so stale camera-stream worker requests can be canceled and late worker responses ignored.
 - A `CopcPointCloudRenderer` interface with `CesiumPointPrimitiveRenderer` as the default `PointPrimitiveCollection` implementation, plus an experimental `CesiumBufferPointRenderer` backed by Cesium `BufferPointCollection`. `CesiumPointRenderer` remains as a compatibility alias.
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, and estimated coordinate/color payload bytes.
-- Example quality presets for changing `maxPointCountPerNode`, camera-stream point budget, and renderer point size together, plus manual controls for renderer benchmark runs.
+- Example quality presets for changing `maxPointCountPerNode`, Auto LOD coverage budget, camera-stream point budget, and renderer point size together, plus manual controls for renderer benchmark runs.
 - Example controls for changing the camera-stream point budget independently from the initial node sample budget.
 - `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals plus selected depth, hierarchy expansion, hierarchy UI application, node selection, point rendering, and total stream-update timing across multiple samples and stream point budgets.
-- Example-only `Stream on camera move` behavior that renders from the currently loaded hierarchy, selects up to 16 nearby nodes through depth 3, queues one background camera-targeted hierarchy prefetch at a time, and avoids rebuilding the full node dropdown during the stream update.
+- Example-only `Stream on camera move` behavior that renders from the currently loaded hierarchy, selects coverage nodes through depth 3 in Balanced detail mode, queues one background camera-targeted hierarchy prefetch at a time, and avoids rebuilding the full node dropdown during the stream update.
 
-The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.
+The current streaming behavior still limits the number of hierarchy pages opened per camera update, but default node selection now prioritizes filling the visible COPC footprint over selecting only the closest nodes.
 
 ## Coordinate Transforms
 
@@ -91,7 +91,7 @@ Camera-based selection requires both directions:
 
 ## Current Limitations
 
-- Hierarchy page expansion and node selection are camera-targeted but still conservative; node selection now uses COPC spacing-derived screen estimates and Cesium frustum culling, but the screen-space error estimate is not yet calibrated against point-density metrics.
+- Hierarchy page expansion and node selection are camera-targeted; node selection now supports both nearest-node and coverage-oriented ordering, but the screen-space error estimate is not yet calibrated against point-density metrics.
 - Hierarchy page eviction is page-count based and deliberately keeps the root hierarchy page loaded; it is not byte-aware yet.
 - Point rendering defaults to Cesium point primitives. The experimental buffer backend uses Cesium's `BufferPointCollection`, but a fully custom optimized WebGL primitive is not implemented yet.
 - The point renderer boundary exists and has two backends, but the buffer backend still needs larger-dataset validation beyond the repeatable prototype benchmark before it should become the default.
@@ -100,7 +100,7 @@ Camera-based selection requires both directions:
 - Point sample cache byte usage is estimated from decoded sample fields, not from JavaScript object heap size.
 - Worker loading currently targets point data only; hierarchy metadata selection and cache policy remain on the main thread.
 - Worker cancellation is request-level. It prevents stale responses from being applied and drops queued stale work before dispatch, but it does not yet interrupt every in-flight COPC range read inside lower-level dependencies.
-- Camera streaming is prototype-oriented; it prefetches hierarchy pages in the background, selects a bounded set of nearby depth-3-or-shallower nodes, and applies configurable render-point budgets. The smoothness benchmark covers multiple bundled sample paths, but the higher-density defaults still need calibration against larger external COPC samples and repeated frame-time measurements.
+- Camera streaming is prototype-oriented; it prefetches hierarchy pages in the background, selects a bounded coverage set of depth-3-or-shallower nodes by default, and applies configurable render-point budgets. The smoothness benchmark covers multiple bundled sample paths, but the higher-density defaults still need calibration against larger external COPC samples and repeated frame-time measurements.
 - CRS detection is not complete; projected CRS data should pass explicit transform options.
 
 ## Near-Term Roadmap

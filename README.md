@@ -90,9 +90,10 @@ Reusable source entry points are `src/index.ts`, `src/core/index.ts`, and `src/c
 `CopcPointCloudLayer` is the first thin Cesium-facing API: it owns a `CopcSource`, point renderer, bounds renderer, and simple camera-based node rendering helpers.
 The default point renderer is `CesiumPointPrimitiveRenderer`, backed by Cesium `PointPrimitiveCollection`. `CopcPointCloudLayer` also accepts a `createPointRenderer` factory so renderer backends can be swapped without changing COPC loading logic. `CesiumBufferPointRenderer` is an experimental GPU-buffer backend backed by Cesium `BufferPointCollection`; `CesiumPointRenderer` remains as a compatibility alias.
 
-The default example URL loads the public Autzen COPC sample, reads the root hierarchy, renders an initial node to place the camera, then automatically renders a denser camera-selected LOD set.
-Balanced detail mode now targets up to 160,000 Auto LOD points with 2 px point primitives.
+The default example URL loads the public Autzen COPC sample, reads the root hierarchy, renders an initial node to place the camera, then automatically renders a denser camera-selected coverage LOD set.
+Balanced detail mode now targets up to 240,000 Auto LOD points with 2 px point primitives and selects coverage nodes through depth 3 so the visible COPC footprint is filled more like tiles instead of only showing the nearest few nodes.
 The example keeps sample COPC URLs and their transform factories in a small preset list while still allowing direct custom URL entry.
+Bundled sample presets use the Vite `/copc-samples/*` proxy so local dev and preview runs can issue same-origin COPC range requests even when a browser blocks direct S3 requests.
 For custom URLs, the example can also accept a source CRS and optional proj4 definition before loading the COPC file.
 The hierarchy node selector lists currently loaded nodes and lets the example render one selected node at a time.
 The renderer selector can switch between the stable point-primitive renderer and the experimental buffer-backed renderer.
@@ -104,9 +105,9 @@ The Load next page button range-reads the next pending COPC hierarchy page and r
 The example also computes the selected node bounds and renders a yellow debug bounding box in CesiumJS.
 It can suggest the nearest loaded hierarchy node to the current camera position and apply that suggestion on demand.
 The manual render set can combine multiple hierarchy nodes and render their sampled points together.
-The Auto LOD button expands nearby pending hierarchy pages, estimates each available depth's nearest node screen size and COPC spacing-derived point spacing in screen pixels, culls nodes outside the Cesium camera frustum with a view-direction fallback, applies point-data byte budgets, then renders the selected nodes through the same multi-node path.
+The Auto LOD button expands nearby pending hierarchy pages, estimates each available depth's nearest node screen size and COPC spacing-derived point spacing in screen pixels, culls nodes outside the Cesium camera frustum with a view-direction fallback, then uses coverage-oriented node selection so the current view is filled before it renders through the same multi-node path.
 Multi-node rendering accepts `maxRenderedPointCount` so camera-driven paths can cap the total sampled points submitted to Cesium instead of multiplying the per-node sample budget by every selected node.
-The Stream on camera move toggle renders from the currently loaded hierarchy after camera movement, selects up to 16 nearby nodes through depth 3, queues one background camera-targeted hierarchy prefetch at a time, applies an adaptive render-point budget capped by the UI input, then reuses the in-memory COPC point-sample cache for already loaded node/sample-count pairs without rebuilding the full node dropdown on each stream update.
+The Stream on camera move toggle renders from the currently loaded hierarchy after camera movement, selects up to 48 coverage nodes through depth 3 in Balanced detail mode, queues one background camera-targeted hierarchy prefetch at a time, applies an adaptive render-point budget capped by the UI input, then reuses the in-memory COPC point-sample cache for already loaded node/sample-count pairs without rebuilding the full node dropdown on each stream update.
 Render results include `renderStats` with browser CPU-side coordinate transform time, renderer `setPoints` submission time, bounds submission time, total submission time, point count, and an estimated coordinate/color payload byte count. These numbers are meant for prototype renderer comparison, not GPU frame-time profiling.
 The smoothness benchmark adds browser `requestAnimationFrame` interval measurements while the example camera-stream path is active, and also records selected depth, hierarchy expansion, hierarchy UI application, node selection, point rendering, and total stream-update timing so point-budget tuning can be compared with repeatable frame-time data.
 The basic viewer enables `pointSampleLoading: "worker"` so COPC point-data reads and LAZ decoding run in a Web Worker when the browser supports it. If worker creation is unavailable, `CopcSource` falls back to the existing main-thread point sampling path. Worker point sampling uses a small concurrency limit so camera-driven requests do not all dispatch at once. Point sample APIs accept an `AbortSignal`; the basic viewer aborts stale camera-stream point reads when a newer camera request starts.
@@ -147,13 +148,15 @@ await layer.expandHierarchyForCamera({ camera: viewer.camera, maxPages: 2 });
 const abortController = new AbortController();
 await layer.renderAutomatic({
   camera: viewer.camera,
-  maxNodes: 4,
-  maxRenderedPointCount: 20_000,
+  selectionMode: "coverage",
+  maxNodes: 64,
+  targetNodeScreenPixels: 120,
+  maxRenderedPointCount: 240_000,
   signal: abortController.signal,
   maxViewAngleDegrees: 80,
   targetPointSpacingScreenPixels: 4,
-  maxNodePointDataLength: 1_000_000,
-  maxTotalPointDataLength: 2_000_000,
+  maxNodePointDataLength: 2_000_000,
+  maxTotalPointDataLength: 128_000_000,
 });
 const selection = await layer.selectNodesForCamera({ camera: viewer.camera });
 const hierarchyCacheStats = layer.source.getHierarchyCacheStats();

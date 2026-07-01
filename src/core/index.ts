@@ -43,6 +43,7 @@ export {
   selectHierarchyNodesForCamera,
   type CopcHierarchyNodeCameraSelection,
   type CopcHierarchyNodeDepthEstimate,
+  type CopcHierarchyNodeSelectionMode,
   type CopcTargetVector,
   type SelectHierarchyNodesForCameraOptions,
 } from "./copc/selectHierarchyNodesForCamera";

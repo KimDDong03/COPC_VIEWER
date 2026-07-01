@@ -39,12 +39,9 @@ import "./style.css";
 
 const CUSTOM_SAMPLE_OPTION_VALUE = "custom";
 const AUTO_LOD_MAX_HIERARCHY_PAGES = 3;
-const AUTO_LOD_MAX_NODES = 24;
-const AUTO_LOD_MAX_NODE_POINT_DATA_LENGTH = 1_500_000;
-const AUTO_LOD_MAX_TOTAL_POINT_DATA_LENGTH = 12_000_000;
+const AUTO_LOD_MAX_NODE_POINT_DATA_LENGTH = 2_000_000;
+const AUTO_LOD_MAX_TOTAL_POINT_DATA_LENGTH = 128_000_000;
 const CAMERA_STREAM_MAX_HIERARCHY_PAGES = 3;
-const CAMERA_STREAM_MAX_NODES = 16;
-const CAMERA_STREAM_MAX_DEPTH = 3;
 const CAMERA_STREAM_MIN_RENDERED_POINT_COUNT = 10_000;
 const CAMERA_STREAM_SLOW_RENDER_MILLISECONDS = 80;
 const CAMERA_STREAM_SLOW_TOTAL_MILLISECONDS = 140;
@@ -55,28 +52,48 @@ const RENDER_QUALITY_SETTINGS = {
   preview: {
     maxPointCountPerNode: 20_000,
     cameraStreamMaxRenderedPointCount: 10_000,
+    cameraStreamMaxNodes: 12,
+    cameraStreamMaxDepth: 2,
+    cameraStreamTargetNodeScreenPixels: 220,
     autoLodMaxRenderedPointCount: 20_000,
+    autoLodMaxNodes: 24,
+    autoLodTargetNodeScreenPixels: 220,
     pointPixelSize: 3,
     pointOutlineWidth: 0,
   },
   balanced: {
     maxPointCountPerNode: 120_000,
-    cameraStreamMaxRenderedPointCount: 80_000,
-    autoLodMaxRenderedPointCount: 160_000,
+    cameraStreamMaxRenderedPointCount: 120_000,
+    cameraStreamMaxNodes: 48,
+    cameraStreamMaxDepth: 3,
+    cameraStreamTargetNodeScreenPixels: 120,
+    autoLodMaxRenderedPointCount: 240_000,
+    autoLodMaxNodes: 64,
+    autoLodTargetNodeScreenPixels: 120,
     pointPixelSize: 2,
     pointOutlineWidth: 0,
   },
   detail: {
     maxPointCountPerNode: 250_000,
-    cameraStreamMaxRenderedPointCount: 150_000,
-    autoLodMaxRenderedPointCount: 250_000,
+    cameraStreamMaxRenderedPointCount: 180_000,
+    cameraStreamMaxNodes: 96,
+    cameraStreamMaxDepth: 4,
+    cameraStreamTargetNodeScreenPixels: 90,
+    autoLodMaxRenderedPointCount: 500_000,
+    autoLodMaxNodes: 224,
+    autoLodTargetNodeScreenPixels: 90,
     pointPixelSize: 1,
     pointOutlineWidth: 0,
   },
   ultra: {
     maxPointCountPerNode: 500_000,
     cameraStreamMaxRenderedPointCount: 250_000,
-    autoLodMaxRenderedPointCount: 400_000,
+    cameraStreamMaxNodes: 128,
+    cameraStreamMaxDepth: 4,
+    cameraStreamTargetNodeScreenPixels: 70,
+    autoLodMaxRenderedPointCount: 1_000_000,
+    autoLodMaxNodes: 256,
+    autoLodTargetNodeScreenPixels: 70,
     pointPixelSize: 1,
     pointOutlineWidth: 0,
   },
@@ -758,17 +775,19 @@ async function renderAutomaticNodeSet(): Promise<void> {
   }
 
   const layer = currentLayer;
+  const qualitySettings = readRenderQualitySettings();
 
   try {
     const result = await layer.renderAutomatic({
       camera: viewer.camera,
       expandHierarchy: true,
-      maxNodes: AUTO_LOD_MAX_NODES,
+      selectionMode: "coverage",
+      maxNodes: qualitySettings.autoLodMaxNodes,
+      targetNodeScreenPixels: qualitySettings.autoLodTargetNodeScreenPixels,
       maxHierarchyPages: AUTO_LOD_MAX_HIERARCHY_PAGES,
       maxNodePointDataLength: AUTO_LOD_MAX_NODE_POINT_DATA_LENGTH,
       maxTotalPointDataLength: AUTO_LOD_MAX_TOTAL_POINT_DATA_LENGTH,
-      maxRenderedPointCount:
-        readRenderQualitySettings().autoLodMaxRenderedPointCount,
+      maxRenderedPointCount: qualitySettings.autoLodMaxRenderedPointCount,
     });
 
     if (!result || layer !== currentLayer) {
@@ -826,13 +845,16 @@ async function renderAutomaticNodeSetForCameraMove(
   const loadedPageKeys: readonly string[] = [];
   const expandHierarchyMilliseconds = 0;
   const applyHierarchyMilliseconds = 0;
+  const qualitySettings = readRenderQualitySettings();
 
   try {
     const selectNodesStartedAt = performance.now();
     const cameraSelection = await layer.selectNodesForCamera({
       camera: viewer.camera,
-      maxNodes: CAMERA_STREAM_MAX_NODES,
-      maxDepth: CAMERA_STREAM_MAX_DEPTH,
+      selectionMode: "coverage",
+      maxNodes: qualitySettings.cameraStreamMaxNodes,
+      maxDepth: qualitySettings.cameraStreamMaxDepth,
+      targetNodeScreenPixels: qualitySettings.cameraStreamTargetNodeScreenPixels,
       signal,
     });
     const selectNodesMilliseconds = performance.now() - selectNodesStartedAt;
@@ -1680,6 +1702,8 @@ function isAbortError(error: unknown): boolean {
 function formatCameraSelection(
   selection: CopcHierarchyNodeCameraSelection,
 ): string {
+  const modeSummary =
+    selection.selectionMode === "coverage" ? "coverage" : "nearest";
   const budgetSummary =
     selection.skippedByBudgetCount > 0
       ? `, ${selection.skippedByBudgetCount.toLocaleString()} skipped by budget`
@@ -1698,7 +1722,7 @@ function formatCameraSelection(
       ? `, spacing ${selection.estimatedSelectedDepthPointSpacingScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 1 })} px / ${selection.targetPointSpacingScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 1 })} px target`
       : "";
 
-  return `${selection.nodes.length.toLocaleString()} nodes at depth ${selection.selectedDepth.toLocaleString()} (target depth ${selection.targetDepth.toLocaleString()}, selected depth ${selection.estimatedSelectedDepthScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px / ${selection.targetNodeScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px target, root ${selection.estimatedRootScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px${spacingSummary}${frustumSummary}${viewSummary}${budgetSummary})`;
+  return `${selection.nodes.length.toLocaleString()} ${modeSummary} nodes at depth ${selection.selectedDepth.toLocaleString()} (target depth ${selection.targetDepth.toLocaleString()}, selected depth ${selection.estimatedSelectedDepthScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px / ${selection.targetNodeScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px target, root ${selection.estimatedRootScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px${spacingSummary}${frustumSummary}${viewSummary}${budgetSummary})`;
 }
 
 function formatCoordinateTransform(

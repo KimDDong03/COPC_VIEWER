@@ -154,8 +154,8 @@ function createSmokeFlow(baseUrl) {
   });
 
   const expectedStatus = "Auto LOD rendered";
-  const minDefaultAutoLodPointCount = 100_000;
-  const sofiUrl = "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz";
+  const minDefaultAutoLodPointCount = 200_000;
+  const sofiUrl = ${JSON.stringify(`${baseUrl}/copc-samples/sofi.copc.laz`)};
   const sofiDefinition =
     "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs";
   let primitiveRendererTiming = "";
