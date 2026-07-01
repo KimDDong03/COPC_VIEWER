@@ -69,6 +69,15 @@ export interface CopcPointCloudLayerLoadResult {
   readonly coordinateTransform: CopcCoordinateTransformStatus;
 }
 
+export interface CopcPointCloudLayerRenderStats {
+  readonly pointCount: number;
+  readonly estimatedRenderPayloadBytes: number;
+  readonly coordinateTransformMilliseconds: number;
+  readonly rendererSetPointsMilliseconds: number;
+  readonly boundsRenderMilliseconds: number;
+  readonly totalRenderMilliseconds: number;
+}
+
 export interface CopcPointCloudLayerRenderNodeOptions {
   readonly maxPointCount?: number;
   readonly showBounds?: boolean;
@@ -114,6 +123,7 @@ export interface CopcPointCloudLayerNodeRenderResult {
   readonly node: CopcHierarchyNodeSummary;
   readonly pointSamples: CopcNodePointSampleResult;
   readonly points: readonly PointSample[];
+  readonly renderStats: CopcPointCloudLayerRenderStats;
 }
 
 export interface CopcPointCloudLayerNodesRenderResult {
@@ -121,6 +131,7 @@ export interface CopcPointCloudLayerNodesRenderResult {
   readonly nodes: readonly CopcHierarchyNodeSummary[];
   readonly pointSamples: CopcMultiNodePointSampleResult;
   readonly points: readonly PointSample[];
+  readonly renderStats: CopcPointCloudLayerRenderStats;
 }
 
 export interface CopcPointCloudLayerAutomaticRenderResult
@@ -284,29 +295,25 @@ export class CopcPointCloudLayer {
     });
     this.assertNotDestroyed();
 
-    const coordinateTransforms = this.getCoordinateTransforms(inspection);
-    const points = createPointSamplesFromCopc(
+    const { points, renderStats } = this.renderPointSamples(
       pointSamples.points,
       inspection,
-      coordinateTransforms.toCesium,
+      options.showBounds,
+      (coordinateTransforms) => {
+        this.boundsRenderer.setBounds(
+          node.bounds,
+          inspection,
+          coordinateTransforms.toCesium,
+        );
+      },
     );
-
-    this.pointRenderer.setPoints(points);
-    if (this.shouldShowBounds(options.showBounds)) {
-      this.boundsRenderer.setBounds(
-        node.bounds,
-        inspection,
-        coordinateTransforms.toCesium,
-      );
-    } else {
-      this.boundsRenderer.clear();
-    }
 
     return {
       inspection,
       node,
       pointSamples,
       points,
+      renderStats,
     };
   }
 
@@ -332,29 +339,25 @@ export class CopcPointCloudLayer {
     });
     this.assertNotDestroyed();
 
-    const coordinateTransforms = this.getCoordinateTransforms(inspection);
-    const points = createPointSamplesFromCopc(
+    const { points, renderStats } = this.renderPointSamples(
       pointSamples.points,
       inspection,
-      coordinateTransforms.toCesium,
+      options.showBounds,
+      (coordinateTransforms) => {
+        this.boundsRenderer.setBoundsList(
+          nodes.map((node) => node.bounds),
+          inspection,
+          coordinateTransforms.toCesium,
+        );
+      },
     );
-
-    this.pointRenderer.setPoints(points);
-    if (this.shouldShowBounds(options.showBounds)) {
-      this.boundsRenderer.setBoundsList(
-        nodes.map((node) => node.bounds),
-        inspection,
-        coordinateTransforms.toCesium,
-      );
-    } else {
-      this.boundsRenderer.clear();
-    }
 
     return {
       inspection,
       nodes,
       pointSamples,
       points,
+      renderStats,
     };
   }
 
@@ -635,6 +638,57 @@ export class CopcPointCloudLayer {
     return showBounds ?? this.defaultShowBounds;
   }
 
+  private renderPointSamples(
+    sourcePoints: readonly CopcNodePointSampleResult["points"][number][],
+    inspection: CopcInspection,
+    showBounds: boolean | undefined,
+    renderBounds: (coordinateTransforms: CopcCoordinateTransformSet) => void,
+  ): {
+    readonly points: readonly PointSample[];
+    readonly renderStats: CopcPointCloudLayerRenderStats;
+  } {
+    const coordinateTransforms = this.getCoordinateTransforms(inspection);
+    const renderStartedAt = nowMilliseconds();
+    const transformStartedAt = nowMilliseconds();
+    const points = createPointSamplesFromCopc(
+      sourcePoints,
+      inspection,
+      coordinateTransforms.toCesium,
+    );
+    const transformEndedAt = nowMilliseconds();
+
+    this.assertNotDestroyed();
+    const rendererStartedAt = nowMilliseconds();
+    this.pointRenderer.setPoints(points);
+    const rendererEndedAt = nowMilliseconds();
+
+    const boundsStartedAt = nowMilliseconds();
+    if (this.shouldShowBounds(showBounds)) {
+      renderBounds(coordinateTransforms);
+    } else {
+      this.boundsRenderer.clear();
+    }
+    const boundsEndedAt = nowMilliseconds();
+
+    return {
+      points,
+      renderStats: {
+        pointCount: points.length,
+        estimatedRenderPayloadBytes: estimateRenderPayloadBytes(points.length),
+        coordinateTransformMilliseconds: Math.max(
+          0,
+          transformEndedAt - transformStartedAt,
+        ),
+        rendererSetPointsMilliseconds: Math.max(
+          0,
+          rendererEndedAt - rendererStartedAt,
+        ),
+        boundsRenderMilliseconds: Math.max(0, boundsEndedAt - boundsStartedAt),
+        totalRenderMilliseconds: Math.max(0, boundsEndedAt - renderStartedAt),
+      },
+    };
+  }
+
   private requireInspection(): CopcInspection {
     if (!this.loadedInspection) {
       throw new Error("COPC inspection was not loaded.");
@@ -674,6 +728,17 @@ function normalizeCoordinateTransformStatus(
     label: transforms.status?.label ?? "Custom coordinate transform",
     supportsCameraSelection: Boolean(transforms.toCopc),
   };
+}
+
+function nowMilliseconds(): number {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function estimateRenderPayloadBytes(pointCount: number): number {
+  const positionBytes = 3 * Float64Array.BYTES_PER_ELEMENT;
+  const colorBytes = 4 * Uint8Array.BYTES_PER_ELEMENT;
+
+  return pointCount * (positionBytes + colorBytes);
 }
 
 function createCesiumBoundsSphere(

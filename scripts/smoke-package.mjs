@@ -153,6 +153,7 @@ await writeFile(
   type CopcHierarchyPageTargetSelection,
   type CopcInspection,
   type CopcPointCloudLayerHierarchyExpansionOptions,
+  type CopcPointCloudLayerRenderStats,
 } from "copc-cesium";
 import {
   CopcSource,
@@ -232,6 +233,14 @@ const cameraSelectionStats:
       "skippedByFrustumCount" | "skippedByViewCount"
     >
   | undefined = undefined;
+const renderStats: CopcPointCloudLayerRenderStats = {
+  pointCount: 1,
+  estimatedRenderPayloadBytes: 28,
+  coordinateTransformMilliseconds: 0,
+  rendererSetPointsMilliseconds: 0,
+  boundsRenderMilliseconds: 0,
+  totalRenderMilliseconds: 0,
+};
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (app) {
@@ -256,6 +265,7 @@ if (app) {
     String(Boolean(hierarchyExpansionOptions)),
     String(Boolean(cameraSelectionOptions)),
     String(Boolean(cameraSelectionStats)),
+    String(renderStats.estimatedRenderPayloadBytes),
   ].join(" | ");
 }
 `,

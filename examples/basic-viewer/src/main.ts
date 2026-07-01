@@ -18,6 +18,7 @@ import {
   type CopcMultiNodePointSampleResult,
   type CopcNodePointSampleResult,
   type CopcPointCloudLayerHierarchyExpansionResult,
+  type CopcPointCloudLayerRenderStats,
   type CopcPointCloudRendererFactory,
   type CopcPointSampleCacheStats,
   type PointSample,
@@ -284,6 +285,7 @@ function renderInspection(
   selectedNode?: CopcHierarchyNodeSummary,
   nodeSetResult?: CopcMultiNodePointSampleResult,
   cameraSelection?: CopcHierarchyNodeCameraSelection,
+  renderStats?: CopcPointCloudLayerRenderStats,
 ): void {
   elements.statusText.textContent = "COPC metadata loaded.";
   elements.metadataList.replaceChildren(
@@ -291,6 +293,14 @@ function renderInspection(
     metadataRow("Source preset", currentSource.label),
     metadataRow("Source note", currentSource.description),
     metadataRow("Point renderer", POINT_RENDERER_LABELS[currentPointRendererKind]),
+    metadataRow(
+      "Renderer timing",
+      renderStats ? formatRenderStats(renderStats) : "Not rendered yet",
+    ),
+    metadataRow(
+      "Renderer payload",
+      renderStats ? formatRendererPayload(renderStats) : "Not rendered yet",
+    ),
     metadataRow("LAS version", inspection.lasVersion),
     metadataRow(
       "Point format",
@@ -412,7 +422,14 @@ async function renderSelectedHierarchyNode(): Promise<void> {
       destination: cameraTargetForPointCloud(result.points),
       duration: 0,
     });
-    renderInspection(result.inspection, result.pointSamples, result.node);
+    renderInspection(
+      result.inspection,
+      result.pointSamples,
+      result.node,
+      undefined,
+      undefined,
+      result.renderStats,
+    );
     elements.statusText.textContent = `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`;
     updateSuggestedNode();
     renderRenderSetControls();
@@ -510,6 +527,7 @@ async function renderAutomaticNodeSet(): Promise<void> {
       undefined,
       result.pointSamples,
       result.cameraSelection,
+      result.renderStats,
     );
     elements.statusText.textContent = `Auto LOD rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
     updateSuggestedNode();
@@ -608,6 +626,7 @@ async function renderAutomaticNodeSetForCameraMove(
       undefined,
       result.pointSamples,
       cameraSelection,
+      result.renderStats,
     );
     elements.statusText.textContent = `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
     updateSuggestedNode();
@@ -654,6 +673,8 @@ async function renderNodeKeySet(
       undefined,
       undefined,
       result.pointSamples,
+      undefined,
+      result.renderStats,
     );
     elements.statusText.textContent = `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
     updateSuggestedNode();
@@ -1041,6 +1062,10 @@ function formatNumber(value: number): string {
     : value.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
+function formatMilliseconds(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function formatVlrs(inspection: CopcInspection): string {
   return inspection.vlrs
     .map((vlr) => {
@@ -1065,6 +1090,14 @@ function formatPointSampleCacheStats(
   stats: CopcPointSampleCacheStats,
 ): string {
   return `${stats.cachedSampleSetCount.toLocaleString()} / ${stats.maxCachedSampleSetCount.toLocaleString()} sample sets, ${formatBytes(stats.cachedPointSampleBytes)} / ${formatBytes(stats.maxCachedPointSampleBytes)}, ${stats.cacheHitCount.toLocaleString()} hits, ${stats.cacheMissCount.toLocaleString()} misses, ${stats.cacheEvictionCount.toLocaleString()} evictions`;
+}
+
+function formatRenderStats(stats: CopcPointCloudLayerRenderStats): string {
+  return `${stats.pointCount.toLocaleString()} pts, transform ${formatMilliseconds(stats.coordinateTransformMilliseconds)} ms, renderer ${formatMilliseconds(stats.rendererSetPointsMilliseconds)} ms, bounds ${formatMilliseconds(stats.boundsRenderMilliseconds)} ms, total ${formatMilliseconds(stats.totalRenderMilliseconds)} ms`;
+}
+
+function formatRendererPayload(stats: CopcPointCloudLayerRenderStats): string {
+  return `${formatBytes(stats.estimatedRenderPayloadBytes)} estimated coordinate/color payload`;
 }
 
 function formatHierarchyPageStats(

@@ -69,6 +69,7 @@ It can suggest the nearest loaded hierarchy node to the current camera position 
 The manual render set can combine multiple hierarchy nodes and render their sampled points together.
 The Auto LOD button expands a small number of nearby pending hierarchy pages, estimates each available depth's nearest node screen size and COPC spacing-derived point spacing in screen pixels, culls nodes outside the Cesium camera frustum with a view-direction fallback, applies a small point-data byte budget, then renders the selected nodes through the same multi-node path.
 The Stream on camera move toggle reruns camera-based hierarchy expansion and node selection after camera movement, then reuses the in-memory COPC point-sample cache for already loaded node/sample-count pairs.
+Render results include `renderStats` with browser CPU-side coordinate transform time, renderer `setPoints` submission time, bounds submission time, total submission time, point count, and an estimated coordinate/color payload byte count. These numbers are meant for prototype renderer comparison, not GPU frame-time profiling.
 The basic viewer enables `pointSampleLoading: "worker"` so COPC point-data reads and LAZ decoding run in a Web Worker when the browser supports it. If worker creation is unavailable, `CopcSource` falls back to the existing main-thread point sampling path. Worker point sampling uses a small concurrency limit so camera-driven requests do not all dispatch at once. Point sample APIs accept an `AbortSignal`; the basic viewer aborts stale camera-stream point reads when a newer camera request starts.
 
 Included example presets:
@@ -100,7 +101,8 @@ const layer = new CopcPointCloudLayer(viewer.scene, {
 });
 const { hierarchy, coordinateTransform } = await layer.load();
 
-await layer.renderNode(hierarchy.nodes[0].key);
+const nodeResult = await layer.renderNode(hierarchy.nodes[0].key);
+console.log(nodeResult.renderStats.rendererSetPointsMilliseconds);
 await layer.loadNextHierarchyPage();
 await layer.expandHierarchyForCamera({ camera: viewer.camera, maxPages: 2 });
 const abortController = new AbortController();

@@ -157,6 +157,10 @@ function createSmokeFlow(baseUrl) {
   const sofiUrl = "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz";
   const sofiDefinition =
     "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs";
+  let primitiveRendererTiming = "";
+  let primitiveRendererPayload = "";
+  let bufferRendererTiming = "";
+  let bufferRendererPayload = "";
 
   async function metadataValue(label) {
     return page.evaluate((targetLabel) => {
@@ -208,6 +212,16 @@ function createSmokeFlow(baseUrl) {
     async () => (await metadataValue("Point renderer")) === "PointPrimitiveCollection",
     "Default point primitive renderer was not reported.",
   );
+  primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
+  primitiveRendererPayload = (await metadataValue("Renderer payload")) ?? "";
+  await check(
+    async () => primitiveRendererTiming.includes("5,000 pts"),
+    "Default renderer timing did not report the rendered point count.",
+  );
+  await check(
+    async () => primitiveRendererPayload.includes("estimated coordinate/color payload"),
+    "Default renderer payload estimate was not reported.",
+  );
   await check(
     async () => page.locator("#copc-source-crs").isDisabled(),
     "Projection controls should be disabled for sample presets.",
@@ -215,11 +229,21 @@ function createSmokeFlow(baseUrl) {
 
   await page.getByLabel("Renderer").selectOption("buffer");
   await waitForRenderedStatus();
+  bufferRendererTiming = (await metadataValue("Renderer timing")) ?? "";
+  bufferRendererPayload = (await metadataValue("Renderer payload")) ?? "";
   await check(
     async () =>
       (await metadataValue("Point renderer")) ===
       "BufferPointCollection (experimental)",
     "Experimental buffer point renderer was not reported.",
+  );
+  await check(
+    async () => bufferRendererTiming.includes("5,000 pts"),
+    "Buffer renderer timing did not report the rendered point count.",
+  );
+  await check(
+    async () => bufferRendererPayload.includes("estimated coordinate/color payload"),
+    "Buffer renderer payload estimate was not reported.",
   );
 
   await page.getByLabel("Sample").selectOption("sofi-stadium");
@@ -311,6 +335,10 @@ function createSmokeFlow(baseUrl) {
     status: await page.locator("#copc-status").textContent(),
     coordinateTransform: await metadataValue("Coordinate transform"),
     sourcePreset: await metadataValue("Source preset"),
+    primitiveRendererTiming,
+    primitiveRendererPayload,
+    bufferRendererTiming,
+    bufferRendererPayload,
     screenshotPath: ${JSON.stringify(screenshotPath)},
   };
 }

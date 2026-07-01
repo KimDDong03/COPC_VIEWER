@@ -108,6 +108,20 @@ describe("CopcPointCloudLayer coordinate transforms", () => {
       },
     ]);
     expect(pointRendering.points).toEqual(result.points);
+    expect(result.renderStats.pointCount).toBe(1);
+    expect(result.renderStats.estimatedRenderPayloadBytes).toBe(28);
+    expect(result.renderStats.coordinateTransformMilliseconds).toBeGreaterThanOrEqual(
+      0,
+    );
+    expect(result.renderStats.rendererSetPointsMilliseconds).toBeGreaterThanOrEqual(
+      0,
+    );
+    expect(result.renderStats.boundsRenderMilliseconds).toBeGreaterThanOrEqual(
+      0,
+    );
+    expect(result.renderStats.totalRenderMilliseconds).toBeGreaterThanOrEqual(
+      result.renderStats.rendererSetPointsMilliseconds,
+    );
     expect(boundsRendering.boundsCoordinate).toEqual({
       longitudeDegrees: 100,
       latitudeDegrees: 200,

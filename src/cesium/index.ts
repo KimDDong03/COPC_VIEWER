@@ -7,6 +7,7 @@ export {
   type CopcPointCloudLayerHierarchyExpansionResult,
   type CopcPointCloudLayerLoadResult,
   type CopcPointCloudLayerNodeRenderResult,
+  type CopcPointCloudLayerRenderStats,
   type CopcPointCloudLayerNodesRenderResult,
   type CopcPointCloudLayerOptions,
   type CopcPointCloudLayerRenderNodeOptions,
