@@ -111,6 +111,7 @@ let currentPointRendererKind: PointRendererKind = "primitive";
 let lastCameraStreamDiagnostics: CameraStreamDiagnostics | undefined;
 let automaticStreamRequestId = 0;
 let automaticStreamAbortController: AbortController | undefined;
+let automaticStreamPrefetchPromise: Promise<void> | undefined;
 let lastAutomaticStreamNodeKeySignature = "";
 const renderNodeSet = new Set<string>();
 
@@ -231,6 +232,7 @@ elements.autoStreamCheckbox.addEventListener("change", () => {
   if (!elements.autoStreamCheckbox.checked) {
     automaticStreamAbortController?.abort();
     automaticStreamAbortController = undefined;
+    automaticStreamPrefetchPromise = undefined;
     return;
   }
 
@@ -396,6 +398,7 @@ async function inspectSource(source: CopcSourceConfig): Promise<void> {
   currentSource = activeSource;
   currentPointRendererKind = pointRendererKind;
   automaticStreamRequestId += 1;
+  automaticStreamPrefetchPromise = undefined;
   lastAutomaticStreamNodeKeySignature = "";
   elements.urlInput.value = activeSource.url;
   syncSampleSelectWithSource(activeSource);
@@ -749,32 +752,11 @@ async function renderAutomaticNodeSetForCameraMove(
   const { signal } = abortController;
   const requestId = (automaticStreamRequestId += 1);
   const streamStartedAt = performance.now();
+  const loadedPageKeys: readonly string[] = [];
+  const expandHierarchyMilliseconds = 0;
+  const applyHierarchyMilliseconds = 0;
 
   try {
-    const expandHierarchyStartedAt = performance.now();
-    const hierarchyExpansion = await layer.expandHierarchyForCamera({
-      camera: viewer.camera,
-      maxPages: CAMERA_STREAM_MAX_HIERARCHY_PAGES,
-      signal,
-    });
-    const expandHierarchyMilliseconds =
-      performance.now() - expandHierarchyStartedAt;
-
-    if (
-      signal.aborted ||
-      layer !== currentLayer ||
-      requestId !== automaticStreamRequestId ||
-      !elements.autoStreamCheckbox.checked
-    ) {
-      return;
-    }
-
-    const applyHierarchyStartedAt = performance.now();
-    const loadedPageKeys = applyHierarchyExpansion(hierarchyExpansion, {
-      refreshNodeSelect: false,
-    });
-    const applyHierarchyMilliseconds =
-      performance.now() - applyHierarchyStartedAt;
     const selectNodesStartedAt = performance.now();
     const cameraSelection = await layer.selectNodesForCamera({
       camera: viewer.camera,
@@ -799,6 +781,7 @@ async function renderAutomaticNodeSetForCameraMove(
     const nodeKeySignature = nodeKeys.join("|");
 
     if (!forceRender && nodeKeySignature === lastAutomaticStreamNodeKeySignature) {
+      queueCameraHierarchyPrefetch(layer);
       return;
     }
 
@@ -843,6 +826,7 @@ async function renderAutomaticNodeSetForCameraMove(
     );
     elements.statusText.textContent = `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
     updateSuggestedNode();
+    queueCameraHierarchyPrefetch(layer);
   } catch (error) {
     if (isAbortError(error)) {
       return;
@@ -857,6 +841,54 @@ async function renderAutomaticNodeSetForCameraMove(
     if (automaticStreamAbortController === abortController) {
       automaticStreamAbortController = undefined;
     }
+  }
+}
+
+function queueCameraHierarchyPrefetch(layer: CopcPointCloudLayer): void {
+  if (
+    automaticStreamPrefetchPromise ||
+    layer !== currentLayer ||
+    !elements.autoStreamCheckbox.checked
+  ) {
+    return;
+  }
+
+  const prefetchPromise = prefetchCameraHierarchy(layer);
+  automaticStreamPrefetchPromise = prefetchPromise;
+  void prefetchPromise.finally(() => {
+    if (automaticStreamPrefetchPromise === prefetchPromise) {
+      automaticStreamPrefetchPromise = undefined;
+    }
+  });
+}
+
+async function prefetchCameraHierarchy(
+  layer: CopcPointCloudLayer,
+): Promise<void> {
+  try {
+    const hierarchyExpansion = await layer.expandHierarchyForCamera({
+      camera: viewer.camera,
+      maxPages: CAMERA_STREAM_MAX_HIERARCHY_PAGES,
+    });
+
+    if (
+      layer !== currentLayer ||
+      !elements.autoStreamCheckbox.checked ||
+      !hierarchyExpansion
+    ) {
+      return;
+    }
+
+    applyHierarchyExpansion(hierarchyExpansion, {
+      refreshNodeSelect: false,
+    });
+    updateSuggestedNode();
+  } catch (error) {
+    if (layer !== currentLayer || !elements.autoStreamCheckbox.checked) {
+      return;
+    }
+
+    setInspectionError(error);
   }
 }
 
@@ -1017,6 +1049,7 @@ function renderRenderSetControls(): void {
   if (!canUseCameraSelection) {
     elements.autoStreamCheckbox.checked = false;
     lastAutomaticStreamNodeKeySignature = "";
+    automaticStreamPrefetchPromise = undefined;
   }
   elements.renderSetButton.disabled = !hasNodes;
   elements.clearSetButton.disabled = !hasNodes;

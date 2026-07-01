@@ -74,10 +74,17 @@ targeted check measured expand/apply/select/render/total
 `220.2/0.1/0.6/17.1/238.0 ms`, with 60.0 average FPS, 16.80 ms p95 frame time,
 and 0 frames over 50 ms.
 
-Rendering the submitted points was not the dominant cost in these runs. The
-selection and example UI-application phases are now lower, and the remaining
-large cost is hierarchy page expansion.
+After moving camera-targeted hierarchy expansion out of the visible stream
+update and into a single background prefetch queue, the targeted visible-update
+check measured expand/apply/select/render/total
+`0.0/0.0/3.0/30.4/33.5 ms`, with 59.4 average FPS, 16.80 ms p95 frame time, and
+0 frames over 50 ms.
 
-This means the next performance work should focus on camera-stream scheduling
-and hierarchy expansion cost, not simply lowering the render point count. 10,000
-and 20,000 points are currently best treated as stress cases, not defaults.
+Rendering the submitted points was not the dominant cost in these runs. The
+visible camera-stream update is now mostly renderer submission time, while
+hierarchy page expansion happens in the background.
+
+This means the next performance work should focus on how much hierarchy to
+prefetch for visual quality and LOD depth, not simply lowering the render point
+count. 10,000 and 20,000 points are currently best treated as stress cases, not
+defaults.
