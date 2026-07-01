@@ -44,6 +44,9 @@ const CAMERA_STREAM_MAX_NODES = 1;
 const CAMERA_STREAM_MAX_DEPTH = 0;
 const CAMERA_STREAM_MAX_RENDERED_POINT_COUNT = 5_000;
 const DEFAULT_MAX_POINT_COUNT_PER_NODE = 5_000;
+const BENCHMARK_CAMERA_STEP_COUNT = 24;
+const BENCHMARK_CAMERA_DURATION_MILLISECONDS = 2400;
+const BENCHMARK_CAMERA_MOVE_METERS = 25;
 const HIERARCHY_PAGE_CACHE_LIMIT = 64;
 const POINT_SAMPLE_CACHE_LIMIT = 32;
 const POINT_SAMPLE_CACHE_BYTE_LIMIT = 32 * 1024 * 1024;
@@ -53,6 +56,36 @@ const POINT_RENDERER_LABELS = {
 } as const;
 
 type PointRendererKind = keyof typeof POINT_RENDERER_LABELS;
+
+interface BasicViewerBenchmarkCameraOptions {
+  readonly steps?: number;
+  readonly durationMilliseconds?: number;
+  readonly moveMeters?: number;
+}
+
+interface BasicViewerBenchmarkStatus {
+  readonly status: string;
+  readonly pointRenderer?: string;
+  readonly rendererTiming?: string;
+  readonly rendererPayload?: string;
+  readonly hierarchyPages?: string;
+  readonly pointCache?: string;
+  readonly renderSet?: string;
+  readonly autoLod?: string;
+}
+
+interface BasicViewerBenchmarkApi {
+  readonly moveCameraForSmoothness: (
+    options?: BasicViewerBenchmarkCameraOptions,
+  ) => Promise<BasicViewerBenchmarkStatus>;
+  readonly getStatus: () => BasicViewerBenchmarkStatus;
+}
+
+declare global {
+  interface Window {
+    __copcBasicViewerBenchmark?: BasicViewerBenchmarkApi;
+  }
+}
 
 const elements = getPrototypeElements();
 initializeRendererBenchmarkControls();
@@ -198,8 +231,116 @@ viewer.camera.moveEnd.addEventListener(() => {
   void renderAutomaticNodeSetForCameraMove(false);
 });
 
+installBasicViewerBenchmarkApi();
 populateSampleSelect();
 void inspectSource(DEFAULT_SAMPLE_COPC_SOURCE);
+
+function installBasicViewerBenchmarkApi(): void {
+  window.__copcBasicViewerBenchmark = {
+    moveCameraForSmoothness,
+    getStatus: readBenchmarkStatus,
+  };
+}
+
+async function moveCameraForSmoothness(
+  options: BasicViewerBenchmarkCameraOptions = {},
+): Promise<BasicViewerBenchmarkStatus> {
+  const steps = readBenchmarkPositiveInteger(
+    options.steps,
+    BENCHMARK_CAMERA_STEP_COUNT,
+  );
+  const durationMilliseconds = readBenchmarkPositiveNumber(
+    options.durationMilliseconds,
+    BENCHMARK_CAMERA_DURATION_MILLISECONDS,
+  );
+  const moveMeters = readBenchmarkPositiveNumber(
+    options.moveMeters,
+    BENCHMARK_CAMERA_MOVE_METERS,
+  );
+  const waitMilliseconds = durationMilliseconds / steps;
+
+  for (let index = 0; index < steps; index += 1) {
+    moveBenchmarkCamera(index, moveMeters);
+    updateSuggestedNode();
+    void renderAutomaticNodeSetForCameraMove(false);
+    viewer.scene.requestRender();
+    await delayForBenchmark(waitMilliseconds);
+  }
+
+  await renderAutomaticNodeSetForCameraMove(true);
+  await delayForBenchmark(200);
+  return readBenchmarkStatus();
+}
+
+function moveBenchmarkCamera(index: number, moveMeters: number): void {
+  switch (index % 4) {
+    case 0:
+      viewer.camera.moveRight(moveMeters);
+      break;
+    case 1:
+      viewer.camera.moveForward(moveMeters);
+      break;
+    case 2:
+      viewer.camera.moveLeft(moveMeters);
+      break;
+    default:
+      viewer.camera.moveBackward(moveMeters);
+      break;
+  }
+}
+
+function readBenchmarkStatus(): BasicViewerBenchmarkStatus {
+  const metadata = readBenchmarkMetadataRows();
+
+  return {
+    status: elements.statusText.textContent?.trim() ?? "",
+    pointRenderer: metadata["Point renderer"],
+    rendererTiming: metadata["Renderer timing"],
+    rendererPayload: metadata["Renderer payload"],
+    hierarchyPages: metadata["Hierarchy pages"],
+    pointCache: metadata["Point cache"],
+    renderSet: metadata["Render set"],
+    autoLod: metadata["Auto LOD"],
+  };
+}
+
+function readBenchmarkMetadataRows(): Record<string, string> {
+  const rows: Record<string, string> = {};
+
+  elements.metadataList.querySelectorAll("dt").forEach((label) => {
+    const key = label.textContent?.trim();
+
+    if (!key) {
+      return;
+    }
+
+    rows[key] = label.nextElementSibling?.textContent?.trim() ?? "";
+  });
+
+  return rows;
+}
+
+function readBenchmarkPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+): number {
+  return value !== undefined && isPositiveSafeInteger(value) ? value : fallback;
+}
+
+function readBenchmarkPositiveNumber(
+  value: number | undefined,
+  fallback: number,
+): number {
+  return value !== undefined && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function delayForBenchmark(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
 
 async function inspectSource(source: CopcSourceConfig): Promise<void> {
   const activeSource = normalizeSourceConfig(source);

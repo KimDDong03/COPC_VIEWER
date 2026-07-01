@@ -68,6 +68,7 @@ The current implementation includes:
 - A `CopcPointCloudRenderer` interface with `CesiumPointPrimitiveRenderer` as the default `PointPrimitiveCollection` implementation, plus an experimental `CesiumBufferPointRenderer` backed by Cesium `BufferPointCollection`. `CesiumPointRenderer` remains as a compatibility alias.
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, and estimated coordinate/color payload bytes.
 - Example and benchmark controls for changing `maxPointCountPerNode` so renderer paths can be compared above the default 5,000-point sample size.
+- `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals.
 - Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering.
 
 The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.
@@ -93,18 +94,18 @@ Camera-based selection requires both directions:
 - Hierarchy page eviction is page-count based and deliberately keeps the root hierarchy page loaded; it is not byte-aware yet.
 - Point rendering defaults to Cesium point primitives. The experimental buffer backend uses Cesium's `BufferPointCollection`, but a fully custom optimized WebGL primitive is not implemented yet.
 - The point renderer boundary exists and has two backends, but the buffer backend still needs larger-dataset validation beyond the repeatable prototype benchmark before it should become the default.
-- Renderer timing currently measures browser CPU-side submission work, not GPU frame time.
+- Renderer timing currently measures browser CPU-side submission work. The smoothness benchmark measures browser frame intervals during camera movement, but it is still not a full GPU profiler.
 - Renderer payload bytes are an estimated coordinate/color payload size, not full JavaScript heap or GPU memory usage.
 - Point sample cache byte usage is estimated from decoded sample fields, not from JavaScript object heap size.
 - Worker loading currently targets point data only; hierarchy metadata selection and cache policy remain on the main thread.
 - Worker cancellation is request-level. It prevents stale responses from being applied and drops queued stale work before dispatch, but it does not yet interrupt every in-flight COPC range read inside lower-level dependencies.
-- Camera streaming is prototype-oriented; it expands a small number of hierarchy pages per update and now applies conservative render-point budgets, but the budgets still need calibration against larger COPC samples and measured frame time.
+- Camera streaming is prototype-oriented; it expands a small number of hierarchy pages per update and now applies conservative render-point budgets, but the budgets still need calibration against more COPC samples and repeated frame-time measurements.
 - CRS detection is not complete; projected CRS data should pass explicit transform options.
 
 ## Near-Term Roadmap
 
-1. Add browser frame-time and camera-move smoothness benchmarks for larger COPC samples.
-2. Calibrate screen-space error estimates and render-point budgets against measured frame time.
+1. Run the browser smoothness benchmark against larger and varied COPC samples.
+2. Calibrate screen-space error estimates and render-point budgets against the measured frame-time data.
 3. Tune hierarchy cache policy with byte-aware limits and camera-priority hints.
 4. Tune worker concurrency defaults and add worker-pool support if one worker becomes a bottleneck.
 5. Compare repeatable larger-point-count benchmark results across more COPC samples and decide whether a fully custom WebGL primitive is still needed.
