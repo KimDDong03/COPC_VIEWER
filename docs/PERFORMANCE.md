@@ -80,11 +80,16 @@ check measured expand/apply/select/render/total
 `0.0/0.0/3.0/30.4/33.5 ms`, with 59.4 average FPS, 16.80 ms p95 frame time, and
 0 frames over 50 ms.
 
+After allowing camera streaming to select up to two nearby depth-2 nodes, the
+same targeted check measured depth avg `2.0`, expand/apply/select/render/total
+`0.0/0.0/1.5/17.5/19.0 ms`, with 60.0 average FPS, 16.70 ms p95 frame time,
+and 0 frames over 50 ms.
+
 Rendering the submitted points was not the dominant cost in these runs. The
 visible camera-stream update is now mostly renderer submission time, while
 hierarchy page expansion happens in the background.
 
-This means the next performance work should focus on how much hierarchy to
-prefetch for visual quality and LOD depth, not simply lowering the render point
-count. 10,000 and 20,000 points are currently best treated as stress cases, not
-defaults.
+This means the next performance work should validate the depth-2 setting across
+larger external COPC samples, then tune how much hierarchy to prefetch for
+visual quality and deeper LOD. 10,000 and 20,000 points are currently best
+treated as stress cases, not defaults.

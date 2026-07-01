@@ -40,8 +40,8 @@ const AUTO_LOD_MAX_NODE_POINT_DATA_LENGTH = 1_000_000;
 const AUTO_LOD_MAX_TOTAL_POINT_DATA_LENGTH = 2_000_000;
 const AUTO_LOD_MAX_RENDERED_POINT_COUNT = 20_000;
 const CAMERA_STREAM_MAX_HIERARCHY_PAGES = 1;
-const CAMERA_STREAM_MAX_NODES = 1;
-const CAMERA_STREAM_MAX_DEPTH = 0;
+const CAMERA_STREAM_MAX_NODES = 2;
+const CAMERA_STREAM_MAX_DEPTH = 2;
 const DEFAULT_CAMERA_STREAM_MAX_RENDERED_POINT_COUNT = 5_000;
 const DEFAULT_MAX_POINT_COUNT_PER_NODE = 5_000;
 const BENCHMARK_CAMERA_STEP_COUNT = 24;
@@ -91,6 +91,7 @@ interface CameraStreamDiagnostics {
   readonly totalMilliseconds: number;
   readonly loadedHierarchyPageCount: number;
   readonly selectedNodeCount: number;
+  readonly selectedDepth: number;
 }
 
 declare global {
@@ -811,6 +812,7 @@ async function renderAutomaticNodeSetForCameraMove(
       totalMilliseconds: performance.now() - streamStartedAt,
       loadedHierarchyPageCount: loadedPageKeys.length,
       selectedNodeCount: nodeKeys.length,
+      selectedDepth: cameraSelection.selectedDepth,
     };
     lastAutomaticStreamNodeKeySignature = nodeKeySignature;
     renderNodeSet.clear();
@@ -1427,7 +1429,7 @@ function formatRendererPayload(stats: CopcPointCloudLayerRenderStats): string {
 function formatCameraStreamDiagnostics(
   diagnostics: CameraStreamDiagnostics,
 ): string {
-  return `expand ${formatMilliseconds(diagnostics.expandHierarchyMilliseconds)} ms, apply ${formatMilliseconds(diagnostics.applyHierarchyMilliseconds)} ms, select ${formatMilliseconds(diagnostics.selectNodesMilliseconds)} ms, render ${formatMilliseconds(diagnostics.renderNodesMilliseconds)} ms, total ${formatMilliseconds(diagnostics.totalMilliseconds)} ms, ${diagnostics.loadedHierarchyPageCount.toLocaleString()} pages, ${diagnostics.selectedNodeCount.toLocaleString()} nodes`;
+  return `expand ${formatMilliseconds(diagnostics.expandHierarchyMilliseconds)} ms, apply ${formatMilliseconds(diagnostics.applyHierarchyMilliseconds)} ms, select ${formatMilliseconds(diagnostics.selectNodesMilliseconds)} ms, render ${formatMilliseconds(diagnostics.renderNodesMilliseconds)} ms, total ${formatMilliseconds(diagnostics.totalMilliseconds)} ms, ${diagnostics.loadedHierarchyPageCount.toLocaleString()} pages, ${diagnostics.selectedNodeCount.toLocaleString()} nodes, depth ${diagnostics.selectedDepth.toLocaleString()}`;
 }
 
 function formatHierarchyPageStats(

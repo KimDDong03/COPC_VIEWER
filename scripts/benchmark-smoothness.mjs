@@ -578,7 +578,7 @@ function createSmoothnessFlow(
 
   function parseCameraStreamDiagnostics(diagnosticsText) {
     const match = diagnosticsText?.match(
-      /^expand ([\\d,.]+) ms, apply ([\\d,.]+) ms, select ([\\d,.]+) ms, render ([\\d,.]+) ms, total ([\\d,.]+) ms, ([\\d,]+) pages, ([\\d,]+) nodes$/,
+      /^expand ([\\d,.]+) ms, apply ([\\d,.]+) ms, select ([\\d,.]+) ms, render ([\\d,.]+) ms, total ([\\d,.]+) ms, ([\\d,]+) pages, ([\\d,]+) nodes, depth ([\\d,]+)$/,
     );
 
     if (!match) {
@@ -593,6 +593,7 @@ function createSmoothnessFlow(
       totalMilliseconds: Number(match[5].replaceAll(",", "")),
       loadedHierarchyPageCount: Number(match[6].replaceAll(",", "")),
       selectedNodeCount: Number(match[7].replaceAll(",", "")),
+      selectedDepth: Number(match[8].replaceAll(",", "")),
     };
   }
 
@@ -807,6 +808,9 @@ function printBenchmarkSummary(result) {
       const averageTotalStreamMilliseconds = average(
         diagnostics.map((run) => run.totalMilliseconds),
       );
+      const averageSelectedDepth = average(
+        diagnostics.map((run) => run.selectedDepth),
+      );
 
       console.log(
         [
@@ -817,6 +821,7 @@ function printBenchmarkSummary(result) {
           `p95 ${averageP95.toFixed(2)} ms`,
           `max ${maxFrame.toFixed(2)} ms`,
           `${over50.toLocaleString()} frames > 50 ms`,
+          `depth avg ${averageSelectedDepth.toFixed(1)}`,
           `stream avg expand/apply/select/render/total ${averageExpandMilliseconds.toFixed(1)}/${averageApplyMilliseconds.toFixed(1)}/${averageSelectMilliseconds.toFixed(1)}/${averageRenderMilliseconds.toFixed(1)}/${averageTotalStreamMilliseconds.toFixed(1)} ms`,
         ].join(", "),
       );
