@@ -69,7 +69,7 @@ The current implementation includes:
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, and estimated coordinate/color payload bytes.
 - Example and benchmark controls for changing `maxPointCountPerNode` so renderer paths can be compared above the default 5,000-point sample size.
 - Example controls for changing the camera-stream point budget independently from the initial node sample budget.
-- `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals across multiple stream point budgets.
+- `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals across multiple samples and stream point budgets.
 - Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering.
 
 The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.
@@ -100,12 +100,12 @@ Camera-based selection requires both directions:
 - Point sample cache byte usage is estimated from decoded sample fields, not from JavaScript object heap size.
 - Worker loading currently targets point data only; hierarchy metadata selection and cache policy remain on the main thread.
 - Worker cancellation is request-level. It prevents stale responses from being applied and drops queued stale work before dispatch, but it does not yet interrupt every in-flight COPC range read inside lower-level dependencies.
-- Camera streaming is prototype-oriented; it expands a small number of hierarchy pages per update and now applies configurable render-point budgets, but the recommended defaults still need calibration against more COPC samples and repeated frame-time measurements.
+- Camera streaming is prototype-oriented; it expands a small number of hierarchy pages per update and now applies configurable render-point budgets. The smoothness benchmark now covers multiple bundled sample paths, but the recommended defaults still need calibration against larger external COPC samples and repeated frame-time measurements.
 - CRS detection is not complete; projected CRS data should pass explicit transform options.
 
 ## Near-Term Roadmap
 
-1. Run the browser smoothness benchmark against larger and varied COPC samples.
+1. Run the browser smoothness benchmark against larger external COPC samples.
 2. Calibrate screen-space error estimates and default render-point budgets against the measured frame-time data.
 3. Tune hierarchy cache policy with byte-aware limits and camera-priority hints.
 4. Tune worker concurrency defaults and add worker-pool support if one worker becomes a bottleneck.

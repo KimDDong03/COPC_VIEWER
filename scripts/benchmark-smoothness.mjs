@@ -18,6 +18,39 @@ const benchmarkStreamPointBudgets = readPositiveIntegerListEnv(
   "COPC_SMOOTHNESS_POINT_BUDGETS",
   [2_500, 5_000, 10_000, 20_000],
 );
+const smoothnessSampleCaseById = {
+  "autzen-classified": {
+    id: "autzen-classified",
+    label: "Autzen classified",
+    kind: "preset",
+    sampleId: "autzen-classified",
+    expectedSourcePreset: "Autzen classified",
+    expectedCoordinateTransformText: "EPSG:2992",
+  },
+  "sofi-stadium": {
+    id: "sofi-stadium",
+    label: "SoFi Stadium",
+    kind: "preset",
+    sampleId: "sofi-stadium",
+    expectedSourcePreset: "SoFi Stadium",
+    expectedCoordinateTransformText: "EPSG:32611",
+  },
+  "custom-sofi": {
+    id: "custom-sofi",
+    label: "Custom SoFi URL",
+    kind: "custom",
+    url: "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz",
+    sourceCrs: "EPSG:32611",
+    sourceDefinition:
+      "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs",
+    expectedSourcePreset: "Custom URL",
+    expectedCoordinateTransformText: "EPSG:32611 to EPSG:4326",
+  },
+};
+const benchmarkSampleCases = readSampleCasesEnv(
+  "COPC_SMOOTHNESS_SAMPLES",
+  ["autzen-classified", "sofi-stadium", "custom-sofi"],
+);
 const benchmarkMaxPointCountPerNode = readPositiveIntegerEnv(
   "COPC_SMOOTHNESS_POINT_COUNT",
   Math.max(...benchmarkStreamPointBudgets),
@@ -78,6 +111,26 @@ function readPositiveIntegerListEnv(name, fallback) {
   }
 
   return [...new Set(values)];
+}
+
+function readSampleCasesEnv(name, fallbackIds) {
+  const rawValue = process.env[name];
+  const ids = rawValue
+    ? rawValue
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : fallbackIds;
+  const uniqueIds = [...new Set(ids)];
+  const unknownIds = uniqueIds.filter((id) => !(id in smoothnessSampleCaseById));
+
+  if (unknownIds.length > 0) {
+    throw new Error(
+      `${name} contains unknown sample ids: ${unknownIds.join(", ")}`,
+    );
+  }
+
+  return uniqueIds.map((id) => smoothnessSampleCaseById[id]);
 }
 
 function assertInside(parent, target) {
@@ -265,6 +318,7 @@ function createSmoothnessFlow(
   baseUrl,
   maxPointCountPerNode,
   streamPointBudgets,
+  sampleCases,
   repeatCount,
   durationMilliseconds,
   cameraSteps,
@@ -273,6 +327,7 @@ function createSmoothnessFlow(
   return `async (page) => {
   const maxPointCountPerNode = ${JSON.stringify(maxPointCountPerNode)};
   const streamPointBudgets = ${JSON.stringify(streamPointBudgets)};
+  const sampleCases = ${JSON.stringify(sampleCases)};
   const repeatCount = ${JSON.stringify(repeatCount)};
   const durationMilliseconds = ${JSON.stringify(durationMilliseconds)};
   const cameraSteps = ${JSON.stringify(cameraSteps)};
@@ -330,15 +385,36 @@ function createSmoothnessFlow(
     }
   }
 
-  async function prepareViewer(initialStreamPointBudget) {
-    await page.evaluate(({ maxPointCountPerNode, initialStreamPointBudget }) => {
+  async function benchmarkStatus() {
+    return page.evaluate(() => {
+      const benchmark = window.__copcBasicViewerBenchmark;
+
+      if (!benchmark) {
+        throw new Error("Basic viewer benchmark API was not installed.");
+      }
+
+      return benchmark.getStatus();
+    });
+  }
+
+  async function prepareViewer(sampleCase, initialStreamPointBudget) {
+    await page.evaluate(({ maxPointCountPerNode, sampleCase, initialStreamPointBudget }) => {
+      const sampleSelect = document.querySelector("#copc-sample-select");
       const rendererSelect = document.querySelector("#copc-renderer-select");
       const maxPointCountInput = document.querySelector("#copc-max-point-count");
       const streamPointBudgetInput = document.querySelector(
         "#copc-camera-stream-point-budget",
       );
+      const urlInput = document.querySelector("#copc-url");
+      const sourceCrsInput = document.querySelector("#copc-source-crs");
+      const sourceDefinitionInput = document.querySelector("#copc-source-definition");
+      const checkbox = document.querySelector("#copc-auto-stream");
       const form = document.querySelector("#copc-form");
       const status = document.querySelector("#copc-status");
+
+      if (!(sampleSelect instanceof HTMLSelectElement)) {
+        throw new Error("Sample select was not found.");
+      }
 
       if (!(rendererSelect instanceof HTMLSelectElement)) {
         throw new Error("Renderer select was not found.");
@@ -352,8 +428,29 @@ function createSmoothnessFlow(
         throw new Error("Camera stream point budget input was not found.");
       }
 
+      if (!(urlInput instanceof HTMLInputElement)) {
+        throw new Error("COPC URL input was not found.");
+      }
+
+      if (!(sourceCrsInput instanceof HTMLInputElement)) {
+        throw new Error("Source CRS input was not found.");
+      }
+
+      if (!(sourceDefinitionInput instanceof HTMLTextAreaElement)) {
+        throw new Error("Source definition input was not found.");
+      }
+
+      if (!(checkbox instanceof HTMLInputElement)) {
+        throw new Error("Stream on camera move checkbox was not found.");
+      }
+
       if (!(form instanceof HTMLFormElement)) {
         throw new Error("COPC form was not found.");
+      }
+
+      if (checkbox.checked) {
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       }
 
       rendererSelect.value = "primitive";
@@ -364,12 +461,39 @@ function createSmoothnessFlow(
         status.textContent = "Smoothness benchmark render pending...";
       }
 
+      if (sampleCase.kind === "preset") {
+        sampleSelect.value = sampleCase.sampleId;
+        sampleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+
+      sampleSelect.value = "custom";
+      sampleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      urlInput.value = sampleCase.url;
+      sourceCrsInput.value = sampleCase.sourceCrs ?? "";
+      sourceDefinitionInput.value = sampleCase.sourceDefinition ?? "";
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    }, { maxPointCountPerNode, initialStreamPointBudget });
+    }, { maxPointCountPerNode, sampleCase, initialStreamPointBudget });
     await waitForRenderedStatus();
+
+    const loadedSourcePreset = await metadataValue("Source preset");
+    const loadedCoordinateTransform = await metadataValue("Coordinate transform");
+
+    if (loadedSourcePreset !== sampleCase.expectedSourcePreset) {
+      failures.push(
+        \`\${sampleCase.id} loaded unexpected source preset: \${loadedSourcePreset}\`,
+      );
+    }
+
+    if (!loadedCoordinateTransform?.includes(sampleCase.expectedCoordinateTransformText)) {
+      failures.push(
+        \`\${sampleCase.id} loaded unexpected coordinate transform: \${loadedCoordinateTransform}\`,
+      );
+    }
 
     await page.evaluate(() => {
       const checkbox = document.querySelector("#copc-auto-stream");
+      const status = document.querySelector("#copc-status");
 
       if (!(checkbox instanceof HTMLInputElement)) {
         throw new Error("Stream on camera move checkbox was not found.");
@@ -380,22 +504,40 @@ function createSmoothnessFlow(
       }
 
       if (!checkbox.checked) {
+        if (status) {
+          status.textContent = "Smoothness benchmark camera stream pending...";
+        }
+
         checkbox.checked = true;
         checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       }
     });
     await waitForCameraStreamStatus();
+
+    return {
+      sampleId: sampleCase.id,
+      label: sampleCase.label,
+      sourcePreset: loadedSourcePreset,
+      coordinateTransform: loadedCoordinateTransform,
+      pointRenderer: await metadataValue("Point renderer"),
+    };
   }
 
   async function setStreamPointBudget(streamPointBudget) {
     await page.evaluate((streamPointBudget) => {
       const input = document.querySelector("#copc-camera-stream-point-budget");
+      const status = document.querySelector("#copc-status");
 
       if (!(input instanceof HTMLInputElement)) {
         throw new Error("Camera stream point budget input was not found.");
       }
 
       input.value = String(streamPointBudget);
+
+      if (status) {
+        status.textContent = "Smoothness benchmark stream budget pending...";
+      }
+
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }, streamPointBudget);
     await waitForCameraStreamStatus();
@@ -434,7 +576,7 @@ function createSmoothnessFlow(
     return Number(match[1].replaceAll(",", ""));
   }
 
-  async function measureSmoothness(streamPointBudget, runIndex) {
+  async function measureSmoothness(sampleSnapshot, streamPointBudget, runIndex) {
     const measurement = await page.evaluate(
       async ({ durationMilliseconds, cameraSteps, moveMeters }) => {
         const benchmark = window.__copcBasicViewerBenchmark;
@@ -483,6 +625,11 @@ function createSmoothnessFlow(
       { durationMilliseconds, cameraSteps, moveMeters },
     );
 
+    if (!measurement.status.status.includes("Camera stream rendered")) {
+      await waitForCameraStreamStatus();
+      measurement.status = await benchmarkStatus();
+    }
+
     if (measurement.frameDeltas.length < Math.max(10, cameraSteps / 2)) {
       failures.push(
         \`run \${runIndex} collected only \${measurement.frameDeltas.length} frames during camera movement.\`,
@@ -510,6 +657,10 @@ function createSmoothnessFlow(
     }
 
     return {
+      sampleId: sampleSnapshot.sampleId,
+      sampleLabel: sampleSnapshot.label,
+      sourcePreset: sampleSnapshot.sourcePreset,
+      coordinateTransform: sampleSnapshot.coordinateTransform,
       runIndex,
       streamPointBudget,
       renderedPointCount,
@@ -520,13 +671,18 @@ function createSmoothnessFlow(
 
   await page.goto(${JSON.stringify(baseUrl)}, { waitUntil: "domcontentloaded" });
   await waitForRenderedStatus();
-  await prepareViewer(streamPointBudgets[0]);
 
-  for (const streamPointBudget of streamPointBudgets) {
-    await setStreamPointBudget(streamPointBudget);
+  for (const sampleCase of sampleCases) {
+    const sampleSnapshot = await prepareViewer(sampleCase, streamPointBudgets[0]);
 
-    for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
-      results.push(await measureSmoothness(streamPointBudget, runIndex));
+    for (const streamPointBudget of streamPointBudgets) {
+      await setStreamPointBudget(streamPointBudget);
+
+      for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
+        results.push(
+          await measureSmoothness(sampleSnapshot, streamPointBudget, runIndex),
+        );
+      }
     }
   }
 
@@ -546,13 +702,16 @@ function createSmoothnessFlow(
   return {
     maxPointCountPerNode,
     streamPointBudgets,
+    sampleCases: sampleCases.map((sampleCase) => ({
+      id: sampleCase.id,
+      label: sampleCase.label,
+      kind: sampleCase.kind,
+    })),
     repeatCount,
     durationMilliseconds,
     cameraSteps,
     moveMeters,
-    sourcePreset: await metadataValue("Source preset"),
     pointRenderer: await metadataValue("Point renderer"),
-    coordinateTransform: await metadataValue("Coordinate transform"),
     results,
   };
 }
@@ -570,30 +729,50 @@ function printBenchmarkSummary(result) {
     `- ${result.maxPointCountPerNode.toLocaleString()} max points / node, ${result.cameraSteps.toLocaleString()} camera steps`,
   );
 
-  for (const streamPointBudget of result.streamPointBudgets) {
-    const runs = result.results.filter(
-      (run) => run.streamPointBudget === streamPointBudget,
-    );
-    const averageFps = average(runs.map((run) => run.summary.estimatedAverageFps));
-    const averageP95 = average(runs.map((run) => run.summary.p95FrameMilliseconds));
-    const maxFrame = Math.max(...runs.map((run) => run.summary.maxFrameMilliseconds));
-    const over50 = runs.reduce(
-      (sum, run) => sum + run.summary.frameDeltasOver50Milliseconds,
-      0,
-    );
-    const renderedPoints = runs.map((run) => run.renderedPointCount ?? 0);
+  for (const sampleCase of result.sampleCases) {
+    console.log(`- ${sampleCase.label}`);
 
-    console.log(
-      [
-        `- ${streamPointBudget.toLocaleString()} point stream budget`,
-        `${runs.length.toLocaleString()} runs`,
-        `${Math.min(...renderedPoints).toLocaleString()}-${Math.max(...renderedPoints).toLocaleString()} rendered pts`,
-        `avg ${averageFps.toFixed(1)} fps`,
-        `p95 ${averageP95.toFixed(2)} ms`,
-        `max ${maxFrame.toFixed(2)} ms`,
-        `${over50.toLocaleString()} frames > 50 ms`,
-      ].join(", "),
-    );
+    for (const streamPointBudget of result.streamPointBudgets) {
+      const runs = result.results.filter(
+        (run) =>
+          run.sampleId === sampleCase.id &&
+          run.streamPointBudget === streamPointBudget,
+      );
+
+      if (runs.length === 0) {
+        console.log(
+          `  - ${streamPointBudget.toLocaleString()} point stream budget: no runs`,
+        );
+        continue;
+      }
+
+      const averageFps = average(
+        runs.map((run) => run.summary.estimatedAverageFps),
+      );
+      const averageP95 = average(
+        runs.map((run) => run.summary.p95FrameMilliseconds),
+      );
+      const maxFrame = Math.max(
+        ...runs.map((run) => run.summary.maxFrameMilliseconds),
+      );
+      const over50 = runs.reduce(
+        (sum, run) => sum + run.summary.frameDeltasOver50Milliseconds,
+        0,
+      );
+      const renderedPoints = runs.map((run) => run.renderedPointCount ?? 0);
+
+      console.log(
+        [
+          `  - ${streamPointBudget.toLocaleString()} point stream budget`,
+          `${runs.length.toLocaleString()} runs`,
+          `${Math.min(...renderedPoints).toLocaleString()}-${Math.max(...renderedPoints).toLocaleString()} rendered pts`,
+          `avg ${averageFps.toFixed(1)} fps`,
+          `p95 ${averageP95.toFixed(2)} ms`,
+          `max ${maxFrame.toFixed(2)} ms`,
+          `${over50.toLocaleString()} frames > 50 ms`,
+        ].join(", "),
+      );
+    }
   }
 }
 
@@ -648,6 +827,7 @@ try {
       baseUrl,
       benchmarkMaxPointCountPerNode,
       benchmarkStreamPointBudgets,
+      benchmarkSampleCases,
       benchmarkRepeats,
       benchmarkDurationMilliseconds,
       benchmarkCameraSteps,
@@ -662,6 +842,7 @@ try {
       `${benchmarkStreamPointBudgets
         .map((value) => value.toLocaleString())
         .join("/")} stream budgets,`,
+      `${benchmarkSampleCases.map((sample) => sample.id).join("/")} samples,`,
       `${benchmarkRepeats.toLocaleString()} repeats,`,
       `${benchmarkCameraSteps.toLocaleString()} camera steps`,
     ].join(" "),

@@ -11,8 +11,8 @@ Run:
 npm run benchmark:smoothness
 ```
 
-The benchmark builds the basic viewer, opens the Autzen COPC sample in a real
-browser, enables `Stream on camera move`, changes the camera-stream point
+The benchmark builds the basic viewer, opens each configured COPC sample in a
+real browser, enables `Stream on camera move`, changes the camera-stream point
 budget, moves the Cesium camera, and records `requestAnimationFrame` intervals.
 
 The result is written to:
@@ -24,6 +24,7 @@ output/smoothness-benchmark/smoothness.json
 Useful overrides:
 
 ```powershell
+$env:COPC_SMOOTHNESS_SAMPLES="autzen-classified,sofi-stadium"
 $env:COPC_SMOOTHNESS_POINT_BUDGETS="2500,5000,10000"
 $env:COPC_SMOOTHNESS_REPEATS="5"
 npm run benchmark:smoothness
@@ -33,25 +34,33 @@ npm run benchmark:smoothness
 
 Measured on 2026-07-01 with:
 
-- Source: Autzen classified sample
+- Sources: Autzen classified, SoFi Stadium, Custom SoFi URL
 - Renderer: `PointPrimitiveCollection`
 - Max points / node: 20,000
 - Camera steps: 24
 - Repeats: 2 per budget
 
-| Camera stream budget | Rendered points | Avg FPS | p95 frame | Max frame | Frames > 50 ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 2,500 | 2,500 | 60.0 | 16.80 ms | 17.00 ms | 0 |
-| 5,000 | 5,000 | 59.9 | 16.80 ms | 33.40 ms | 0 |
-| 10,000 | 10,000 | 57.7 | 16.90 ms | 83.40 ms | 2 |
-| 20,000 | 20,000 | 50.7 | 33.30 ms | 116.70 ms | 2 |
+| Sample | Camera stream budget | Rendered points | Avg FPS | p95 frame | Max frame | Frames > 50 ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Autzen classified | 2,500 | 2,500 | 59.1 | 16.80 ms | 50.10 ms | 1 |
+| Autzen classified | 5,000 | 5,000 | 58.8 | 16.80 ms | 66.60 ms | 1 |
+| Autzen classified | 10,000 | 10,000 | 53.9 | 33.30 ms | 100.10 ms | 2 |
+| Autzen classified | 20,000 | 20,000 | 44.9 | 33.40 ms | 133.30 ms | 2 |
+| SoFi Stadium | 2,500 | 2,500 | 36.6 | 174.95 ms | 250.00 ms | 26 |
+| SoFi Stadium | 5,000 | 5,000 | 28.9 | 300.00 ms | 433.40 ms | 25 |
+| SoFi Stadium | 10,000 | 10,000 | 19.0 | 441.65 ms | 616.80 ms | 25 |
+| SoFi Stadium | 20,000 | 20,000 | 21.8 | 416.60 ms | 616.70 ms | 23 |
+| Custom SoFi URL | 2,500 | 2,500 | 36.5 | 166.70 ms | 266.70 ms | 25 |
+| Custom SoFi URL | 5,000 | 5,000 | 23.1 | 358.30 ms | 533.30 ms | 26 |
+| Custom SoFi URL | 10,000 | 10,000 | 19.6 | 424.95 ms | 600.00 ms | 27 |
+| Custom SoFi URL | 20,000 | 20,000 | 15.6 | 449.95 ms | 533.40 ms | 34 |
 
 ## Current Default
 
 The basic viewer keeps the camera-stream point budget at 5,000 points by
-default. In the current local benchmark it preserved near-60 FPS behavior
-without frames over 50 ms.
+default. In the current local benchmark it was reasonable for the Autzen sample,
+but SoFi still produced long frames even at 2,500 points.
 
-10,000 points is a useful test budget, but it already showed occasional long
-frames in the same run. 20,000 points is currently best treated as a stress
-case, not a default.
+This means the next performance work should focus on camera-stream scheduling
+and hierarchy expansion cost, not simply lowering the render point count. 10,000
+and 20,000 points are currently best treated as stress cases, not defaults.
