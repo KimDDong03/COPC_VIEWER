@@ -69,9 +69,14 @@ frustum checks to the requested camera selection depth range, a follow-up run
 measured expand/apply/select/render/total
 `240.7/105.1/19.0/10.7/375.5 ms`.
 
-Rendering the submitted points was not the dominant cost in either run. The
-selection phase is now lower, and the remaining large costs are hierarchy page
-expansion and applying the expanded hierarchy to the example UI state.
+After avoiding full node-dropdown rebuilds during camera streaming, the same
+targeted check measured expand/apply/select/render/total
+`220.2/0.1/0.6/17.1/238.0 ms`, with 60.0 average FPS, 16.80 ms p95 frame time,
+and 0 frames over 50 ms.
+
+Rendering the submitted points was not the dominant cost in these runs. The
+selection and example UI-application phases are now lower, and the remaining
+large cost is hierarchy page expansion.
 
 This means the next performance work should focus on camera-stream scheduling
 and hierarchy expansion cost, not simply lowering the render point count. 10,000

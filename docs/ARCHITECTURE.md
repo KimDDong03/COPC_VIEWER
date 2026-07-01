@@ -69,8 +69,8 @@ The current implementation includes:
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, and estimated coordinate/color payload bytes.
 - Example and benchmark controls for changing `maxPointCountPerNode` so renderer paths can be compared above the default 5,000-point sample size.
 - Example controls for changing the camera-stream point budget independently from the initial node sample budget.
-- `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals plus hierarchy expansion, node selection, point rendering, and total stream-update timing across multiple samples and stream point budgets.
-- Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering.
+- `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals plus hierarchy expansion, hierarchy UI application, node selection, point rendering, and total stream-update timing across multiple samples and stream point budgets.
+- Example-only `Stream on camera move` behavior that reruns hierarchy expansion, camera selection, and cached sample rendering without rebuilding the full node dropdown during the stream update.
 
 The current streaming behavior is deliberately conservative. It limits the number of hierarchy pages opened per camera update and keeps example camera-stream rendering shallow so the prototype remains stable in a browser smoke test.
 

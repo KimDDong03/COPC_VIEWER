@@ -770,7 +770,9 @@ async function renderAutomaticNodeSetForCameraMove(
     }
 
     const applyHierarchyStartedAt = performance.now();
-    const loadedPageKeys = applyHierarchyExpansion(hierarchyExpansion);
+    const loadedPageKeys = applyHierarchyExpansion(hierarchyExpansion, {
+      refreshNodeSelect: false,
+    });
     const applyHierarchyMilliseconds =
       performance.now() - applyHierarchyStartedAt;
     const selectNodesStartedAt = performance.now();
@@ -955,14 +957,21 @@ function addNodeToRenderSet(nodeKey: string): void {
 
 function applyHierarchyExpansion(
   expansion: CopcPointCloudLayerHierarchyExpansionResult | undefined,
+  options: {
+    readonly refreshNodeSelect?: boolean;
+  } = {},
 ): readonly string[] {
   if (!expansion) {
     return [];
   }
 
-  const selectedNodeKey = elements.nodeSelect.value;
+  const refreshNodeSelect = options.refreshNodeSelect ?? true;
   currentHierarchy = expansion.hierarchy;
-  populateNodeSelect(expansion.hierarchy, selectedNodeKey);
+
+  if (refreshNodeSelect) {
+    populateNodeSelect(expansion.hierarchy, elements.nodeSelect.value);
+  }
+
   renderHierarchyPageControls();
   return expansion.loadedPageKeys;
 }

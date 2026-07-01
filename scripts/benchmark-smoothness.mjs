@@ -795,6 +795,9 @@ function printBenchmarkSummary(result) {
       const averageExpandMilliseconds = average(
         diagnostics.map((run) => run.expandHierarchyMilliseconds),
       );
+      const averageApplyMilliseconds = average(
+        diagnostics.map((run) => run.applyHierarchyMilliseconds),
+      );
       const averageSelectMilliseconds = average(
         diagnostics.map((run) => run.selectNodesMilliseconds),
       );
@@ -814,7 +817,7 @@ function printBenchmarkSummary(result) {
           `p95 ${averageP95.toFixed(2)} ms`,
           `max ${maxFrame.toFixed(2)} ms`,
           `${over50.toLocaleString()} frames > 50 ms`,
-          `stream avg expand/select/render/total ${averageExpandMilliseconds.toFixed(1)}/${averageSelectMilliseconds.toFixed(1)}/${averageRenderMilliseconds.toFixed(1)}/${averageTotalStreamMilliseconds.toFixed(1)} ms`,
+          `stream avg expand/apply/select/render/total ${averageExpandMilliseconds.toFixed(1)}/${averageApplyMilliseconds.toFixed(1)}/${averageSelectMilliseconds.toFixed(1)}/${averageRenderMilliseconds.toFixed(1)}/${averageTotalStreamMilliseconds.toFixed(1)} ms`,
         ].join(", "),
       );
     }
