@@ -57,7 +57,7 @@ The current implementation includes:
 - Hierarchy node and pending-page provenance tracking via the source hierarchy page ID, plus bounded hierarchy page eviction that restores evicted non-root leaf pages back to pending page references.
 - `selectHierarchyPagesForTarget` for choosing nearby pending hierarchy pages from their octree bounds.
 - `CopcSource` point sample caching by node key and sample count, with bounded LRU sample-set and estimated decoded-byte limits.
-- `CopcPointCloudLayer.selectNodesForCamera` first culls hierarchy node bounds with the Cesium camera frustum, then `selectHierarchyNodesForCamera` applies per-depth nearest-node screen-size estimates, COPC spacing-derived point spacing screen estimates, broad view-direction fallback culling, and optional point-count and point-data byte budgets.
+- `CopcPointCloudLayer.selectNodesForCamera` first culls requested-depth hierarchy node bounds with the Cesium camera frustum, then `selectHierarchyNodesForCamera` applies per-depth nearest-node screen-size estimates, COPC spacing-derived point spacing screen estimates, broad view-direction fallback culling, and optional point-count and point-data byte budgets.
 - `CopcPointCloudLayer.expandHierarchyForCamera` for camera-targeted hierarchy expansion.
 - `CopcPointCloudLayer.renderAutomatic` for selecting and rendering nodes in one call.
 - `CopcPointCloudLayer.selectNodesForCamera` for selecting nodes without immediately rendering.

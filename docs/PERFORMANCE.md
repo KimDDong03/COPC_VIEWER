@@ -13,7 +13,8 @@ npm run benchmark:smoothness
 
 The benchmark builds the basic viewer, opens each configured COPC sample in a
 real browser, enables `Stream on camera move`, changes the camera-stream point
-budget, moves the Cesium camera, and records `requestAnimationFrame` intervals.
+budget, moves the Cesium camera, and records `requestAnimationFrame` intervals
+plus stream-stage timing.
 
 The result is written to:
 
@@ -62,10 +63,15 @@ default. In the current local benchmark it was reasonable for the Autzen sample,
 but SoFi still produced long frames even at 2,500 points.
 
 Additional targeted diagnostics on the SoFi sample with a 2,500-point stream
-budget measured average stream-stage timing at expand/select/render/total
-`234.3/127.2/10.0/470.0 ms`. Rendering the submitted points was not the dominant
-cost in that run; hierarchy expansion, hierarchy application, and node selection
-were the larger sources of delay.
+budget originally measured average stream-stage timing at
+expand/select/render/total `234.3/127.2/10.0/470.0 ms`. After limiting Cesium
+frustum checks to the requested camera selection depth range, a follow-up run
+measured expand/apply/select/render/total
+`240.7/105.1/19.0/10.7/375.5 ms`.
+
+Rendering the submitted points was not the dominant cost in either run. The
+selection phase is now lower, and the remaining large costs are hierarchy page
+expansion and applying the expanded hierarchy to the example UI state.
 
 This means the next performance work should focus on camera-stream scheduling
 and hierarchy expansion cost, not simply lowering the render point count. 10,000

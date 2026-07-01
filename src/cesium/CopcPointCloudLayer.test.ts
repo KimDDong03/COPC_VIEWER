@@ -342,6 +342,52 @@ describe("CopcPointCloudLayer hierarchy loading", () => {
       "Frustum-culled 1 off-screen candidate nodes.",
     );
   });
+
+  it("limits frustum checks to the requested camera selection depth range", async () => {
+    const layer = new CopcPointCloudLayer(createSceneStub(), {
+      url: "https://example.com/sample.copc.laz",
+      coordinateTransforms: () => ({
+        toCesium: (x, y, z) => ({
+          longitudeDegrees: x,
+          latitudeDegrees: y,
+          heightMeters: z,
+        }),
+        toCopc: () => ({
+          x: 0,
+          y: 0,
+          z: 0,
+        }),
+      }),
+    });
+    let frustumCheckCount = 0;
+
+    layer.source.inspect = async () => createInspection();
+    layer.source.loadHierarchySummary = async () =>
+      createHierarchy(
+        [
+          createHierarchyNodeWithBounds("0-0-0-0", 0, 0, 0, 4),
+          createHierarchyNodeWithBounds("1-0-0-0", 1, 0, 0, 2),
+          createHierarchyNodeWithBounds("1-1-0-0", 1, 2, 0, 2),
+          createHierarchyNodeWithBounds("2-0-0-0", 2, 0, 0, 1),
+        ],
+        [],
+      );
+
+    const selection = await layer.selectNodesForCamera({
+      camera: createCountingFrustumCameraStub(() => {
+        frustumCheckCount += 1;
+
+        return Intersect.INSIDE;
+      }),
+      viewportHeightPixels: 720,
+      maxDepth: 0,
+      maxNodes: 4,
+      targetNodeScreenPixels: 10_000,
+    });
+
+    expect(selection?.nodes.map((node) => node.key)).toEqual(["0-0-0-0"]);
+    expect(frustumCheckCount).toBe(1);
+  });
 });
 
 function patchLayerSource(layer: CopcPointCloudLayer): void {
@@ -446,6 +492,21 @@ function createFrustumCameraStub(): Camera {
       computeCullingVolume: () => ({
         computeVisibility: (boundingSphere: { readonly center: Cartesian3 }) =>
           boundingSphere.center.y >= 0 ? Intersect.INSIDE : Intersect.OUTSIDE,
+      }),
+    },
+  } as unknown as Camera;
+}
+
+function createCountingFrustumCameraStub(
+  computeVisibility: () => Intersect,
+): Camera {
+  return {
+    positionWC: Cartesian3.fromDegrees(0, 0, 1_000),
+    directionWC: new Cartesian3(0, 1, 0),
+    upWC: new Cartesian3(0, 0, 1),
+    frustum: {
+      computeCullingVolume: () => ({
+        computeVisibility,
       }),
     },
   } as unknown as Camera;

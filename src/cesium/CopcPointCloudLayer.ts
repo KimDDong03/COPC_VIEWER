@@ -436,6 +436,7 @@ export class CopcPointCloudLayer {
       hierarchy.nodes,
       camera,
       inspection,
+      selectionOptions,
     );
     const selection = selectHierarchyNodesForCamera(frustumFiltered.nodes, {
       ...selectionOptions,
@@ -605,6 +606,7 @@ export class CopcPointCloudLayer {
     nodes: readonly CopcHierarchyNodeSummary[],
     camera: Camera,
     inspection: CopcInspection,
+    selectionDepth: SelectionDepthRange,
   ): {
     readonly nodes: readonly CopcHierarchyNodeSummary[];
     readonly skippedByFrustumCount: number;
@@ -622,20 +624,25 @@ export class CopcPointCloudLayer {
     }
 
     const toCesium = this.getCoordinateTransforms(inspection).toCesium;
+    const { frustumCandidateNodes, retainedNodes } =
+      splitNodesBySelectionDepth(nodes, selectionDepth);
     const cullingVolume = camera.frustum.computeCullingVolume(
       camera.positionWC,
       camera.directionWC,
       camera.upWC,
     );
-    const visibleNodes = nodes.filter((node) => {
+    const visibleNodes = frustumCandidateNodes.filter((node) => {
       const boundingSphere = createCesiumBoundsSphere(node, toCesium);
 
       return cullingVolume.computeVisibility(boundingSphere) !== Intersect.OUTSIDE;
     });
 
     return {
-      nodes: visibleNodes,
-      skippedByFrustumCount: nodes.length - visibleNodes.length,
+      nodes:
+        retainedNodes.length === 0
+          ? visibleNodes
+          : [...retainedNodes, ...visibleNodes],
+      skippedByFrustumCount: frustumCandidateNodes.length - visibleNodes.length,
     };
   }
 
@@ -756,6 +763,42 @@ function createCesiumBoundsSphere(
 }
 
 type CopcToCesiumTransform = CopcCoordinateTransformSet["toCesium"];
+
+interface SelectionDepthRange {
+  readonly minDepth?: number;
+  readonly maxDepth?: number;
+}
+
+function isNodeInsideSelectionDepth(
+  node: CopcHierarchyNodeSummary,
+  range: SelectionDepthRange,
+): boolean {
+  const minDepth = range.minDepth ?? 0;
+  const maxDepth = range.maxDepth ?? Number.POSITIVE_INFINITY;
+
+  return node.depth >= minDepth && node.depth <= maxDepth;
+}
+
+function splitNodesBySelectionDepth(
+  nodes: readonly CopcHierarchyNodeSummary[],
+  range: SelectionDepthRange,
+): {
+  readonly frustumCandidateNodes: readonly CopcHierarchyNodeSummary[];
+  readonly retainedNodes: readonly CopcHierarchyNodeSummary[];
+} {
+  const frustumCandidateNodes: CopcHierarchyNodeSummary[] = [];
+  const retainedNodes: CopcHierarchyNodeSummary[] = [];
+
+  for (const node of nodes) {
+    if (isNodeInsideSelectionDepth(node, range)) {
+      frustumCandidateNodes.push(node);
+    } else {
+      retainedNodes.push(node);
+    }
+  }
+
+  return { frustumCandidateNodes, retainedNodes };
+}
 
 function createCesiumBoundsCorners(
   node: CopcHierarchyNodeSummary,
