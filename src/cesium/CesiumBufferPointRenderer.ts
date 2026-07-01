@@ -10,7 +10,14 @@ import type { PointColor, PointSample } from "../core/PointSample";
 import type { CopcPointCloudRenderer } from "./CopcPointCloudRenderer";
 
 const DEFAULT_POINT_COLOR = Color.CYAN;
-const DEFAULT_POINT_SIZE = 12;
+const DEFAULT_POINT_SIZE = 3;
+const DEFAULT_OUTLINE_WIDTH = 0;
+
+export interface CesiumBufferPointRendererOptions {
+  readonly pointSize?: number;
+  readonly outlineColor?: Color;
+  readonly outlineWidth?: number;
+}
 
 /**
  * Experimental GPU-buffer point renderer backed by Cesium BufferPointCollection.
@@ -21,14 +28,28 @@ const DEFAULT_POINT_SIZE = 12;
  */
 export class CesiumBufferPointRenderer implements CopcPointCloudRenderer {
   private readonly scene: Scene;
+  private readonly pointSize: number;
+  private readonly outlineColor: Color;
+  private readonly outlineWidth: number;
   private readonly pointScratch = new BufferPoint();
   private readonly positionScratch = new Cartesian3();
   private readonly materialCache = new Map<string, BufferPointMaterial>();
   private collection: BufferPointCollection | undefined;
   private destroyed = false;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, options: CesiumBufferPointRendererOptions = {}) {
     this.scene = scene;
+    this.pointSize = readPositiveNumber(
+      options.pointSize,
+      DEFAULT_POINT_SIZE,
+      "pointSize",
+    );
+    this.outlineColor = options.outlineColor ?? Color.BLACK;
+    this.outlineWidth = readNonNegativeNumber(
+      options.outlineWidth,
+      DEFAULT_OUTLINE_WIDTH,
+      "outlineWidth",
+    );
   }
 
   setPoints(points: readonly PointSample[]): void {
@@ -94,9 +115,9 @@ export class CesiumBufferPointRenderer implements CopcPointCloudRenderer {
 
     const material = new BufferPointMaterial({
       color: color ? toCesiumColor(color) : DEFAULT_POINT_COLOR,
-      outlineColor: Color.BLACK,
-      outlineWidth: 1,
-      size: DEFAULT_POINT_SIZE,
+      outlineColor: this.outlineColor,
+      outlineWidth: this.outlineWidth,
+      size: this.pointSize,
     });
     this.materialCache.set(cacheKey, material);
     return material;
@@ -125,4 +146,36 @@ function toCesiumColor(color: PointColor): Color {
     color.blue,
     color.alpha ?? 255,
   );
+}
+
+function readPositiveNumber(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number.`);
+  }
+
+  return value;
+}
+
+function readNonNegativeNumber(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative number.`);
+  }
+
+  return value;
 }

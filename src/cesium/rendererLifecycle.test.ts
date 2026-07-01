@@ -39,6 +39,17 @@ describe("Cesium renderer lifecycle", () => {
     );
   });
 
+  it("rejects invalid point primitive styling options", () => {
+    const { scene } = createSceneStub();
+
+    expect(
+      () => new CesiumPointPrimitiveRenderer(scene, { pixelSize: 0 }),
+    ).toThrow("pixelSize must be a positive number.");
+    expect(
+      () => new CesiumPointPrimitiveRenderer(scene, { outlineWidth: -1 }),
+    ).toThrow("outlineWidth must be a non-negative number.");
+  });
+
   it("rebuilds buffer point collections when points change", () => {
     const { addedPrimitives, removedPrimitives, scene } = createSceneStub();
     const renderer = new CesiumBufferPointRenderer(scene);
@@ -85,6 +96,17 @@ describe("Cesium renderer lifecycle", () => {
     expect(() => renderer.setPoints([])).toThrow(
       "CesiumBufferPointRenderer has been destroyed.",
     );
+  });
+
+  it("rejects invalid buffer point styling options", () => {
+    const { scene } = createSceneStub();
+
+    expect(() => new CesiumBufferPointRenderer(scene, { pointSize: 0 })).toThrow(
+      "pointSize must be a positive number.",
+    );
+    expect(
+      () => new CesiumBufferPointRenderer(scene, { outlineWidth: -1 }),
+    ).toThrow("outlineWidth must be a non-negative number.");
   });
 
   it("removes bounds primitive collections once when destroyed", () => {

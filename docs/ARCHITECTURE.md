@@ -67,7 +67,7 @@ The current implementation includes:
 - `AbortSignal` support for point-sample loading and Cesium render calls so stale camera-stream worker requests can be canceled and late worker responses ignored.
 - A `CopcPointCloudRenderer` interface with `CesiumPointPrimitiveRenderer` as the default `PointPrimitiveCollection` implementation, plus an experimental `CesiumBufferPointRenderer` backed by Cesium `BufferPointCollection`. `CesiumPointRenderer` remains as a compatibility alias.
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, and estimated coordinate/color payload bytes.
-- Example and benchmark controls for changing `maxPointCountPerNode` so renderer paths can be compared above the default 5,000-point sample size.
+- Example quality presets for changing `maxPointCountPerNode`, camera-stream point budget, and renderer point size together, plus manual controls for renderer benchmark runs.
 - Example controls for changing the camera-stream point budget independently from the initial node sample budget.
 - `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals plus selected depth, hierarchy expansion, hierarchy UI application, node selection, point rendering, and total stream-update timing across multiple samples and stream point budgets.
 - Example-only `Stream on camera move` behavior that renders from the currently loaded hierarchy, selects up to two nearby depth-2 nodes, queues one background camera-targeted hierarchy prefetch at a time, and avoids rebuilding the full node dropdown during the stream update.

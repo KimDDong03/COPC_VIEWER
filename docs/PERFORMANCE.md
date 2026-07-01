@@ -64,11 +64,12 @@ Measured on 2026-07-01 with:
 
 ## Current Default
 
-The basic viewer keeps the camera-stream point budget at 5,000 points by
-default. The input now acts as a maximum budget: camera streaming can lower the
-effective point budget after slow visible updates and gradually recover it after
-repeated fast updates. This keeps the demo from staying overloaded on heavier
-samples or slower machines.
+The basic viewer starts in Balanced detail mode: 20,000 max points per node,
+10,000 max camera-stream points, and 3 px point primitives. The stream input
+acts as a maximum budget: camera streaming can lower the effective point budget
+after slow visible updates and gradually recover it after repeated fast updates.
+This keeps the demo from staying overloaded on heavier samples or slower
+machines.
 
 Additional targeted diagnostics on the SoFi sample with a 2,500-point stream
 budget originally measured average stream-stage timing at

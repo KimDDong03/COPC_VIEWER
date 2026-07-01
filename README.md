@@ -90,11 +90,12 @@ Reusable source entry points are `src/index.ts`, `src/core/index.ts`, and `src/c
 `CopcPointCloudLayer` is the first thin Cesium-facing API: it owns a `CopcSource`, point renderer, bounds renderer, and simple camera-based node rendering helpers.
 The default point renderer is `CesiumPointPrimitiveRenderer`, backed by Cesium `PointPrimitiveCollection`. `CopcPointCloudLayer` also accepts a `createPointRenderer` factory so renderer backends can be swapped without changing COPC loading logic. `CesiumBufferPointRenderer` is an experimental GPU-buffer backend backed by Cesium `BufferPointCollection`; `CesiumPointRenderer` remains as a compatibility alias.
 
-The default example URL loads the public Autzen COPC sample, reads the root hierarchy node, samples up to 5,000 points, and renders them in CesiumJS.
+The default example URL loads the public Autzen COPC sample, reads the root hierarchy node, samples up to 20,000 points in Balanced detail mode, and renders them in CesiumJS.
 The example keeps sample COPC URLs and their transform factories in a small preset list while still allowing direct custom URL entry.
 For custom URLs, the example can also accept a source CRS and optional proj4 definition before loading the COPC file.
 The hierarchy node selector lists currently loaded nodes and lets the example render one selected node at a time.
 The renderer selector can switch between the stable point-primitive renderer and the experimental buffer-backed renderer.
+The Quality selector switches between fast preview, balanced detail, and high detail presets. These presets tune the point budget and point pixel size together so the example can show a denser cloud without oversized marker dots.
 The Max points / node input controls the active `CopcPointCloudLayer` sample budget, which makes manual and automated renderer comparison possible without changing source code.
 The Camera stream points input controls the maximum point budget used by `Stream on camera move`; the example can temporarily lower the effective stream budget after slow updates and recover it after repeated fast updates.
 `CopcSource` keeps the opened COPC metadata, loaded hierarchy pages, pending hierarchy page references with bounds and source-page provenance, hierarchy cache stats, and bounded in-memory caches for hierarchy pages and sampled node point data for the active URL. The hierarchy page cache evicts loaded non-root leaf pages back to pending page references when the configured page limit is reached. The point sample cache is limited by both sample-set count and estimated decoded sample bytes.

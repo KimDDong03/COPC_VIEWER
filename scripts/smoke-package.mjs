@@ -169,6 +169,8 @@ import {
   CesiumBufferPointRenderer,
   CesiumPointPrimitiveRenderer,
   CesiumPointRenderer,
+  type CesiumBufferPointRendererOptions,
+  type CesiumPointPrimitiveRendererOptions,
   type CopcPointCloudRendererFactory,
 } from "copc-cesium/cesium";
 
@@ -213,6 +215,14 @@ const pointRendererFactory: CopcPointCloudRendererFactory = () => ({
   clear: () => undefined,
   destroy: () => undefined,
 });
+const primitiveRendererOptions: CesiumPointPrimitiveRendererOptions = {
+  pixelSize: 3,
+  outlineWidth: 0,
+};
+const bufferRendererOptions: CesiumBufferPointRendererOptions = {
+  pointSize: 3,
+  outlineWidth: 0,
+};
 const createSource = (): CopcSource =>
   new CopcSource("https://example.com/sample.copc.laz", sourceOptions);
 const depthEstimate: CopcHierarchyNodeDepthEstimate | undefined = undefined;
@@ -266,6 +276,8 @@ if (app) {
     String(Boolean(cameraSelectionOptions)),
     String(Boolean(cameraSelectionStats)),
     String(renderStats.estimatedRenderPayloadBytes),
+    String(primitiveRendererOptions.pixelSize),
+    String(bufferRendererOptions.pointSize),
   ].join(" | ");
 }
 `,

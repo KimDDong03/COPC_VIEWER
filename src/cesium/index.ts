@@ -18,8 +18,14 @@ export type {
   CopcPointCloudRenderer,
   CopcPointCloudRendererFactory,
 } from "./CopcPointCloudRenderer";
-export { CesiumBufferPointRenderer } from "./CesiumBufferPointRenderer";
-export { CesiumPointPrimitiveRenderer } from "./CesiumPointPrimitiveRenderer";
+export {
+  CesiumBufferPointRenderer,
+  type CesiumBufferPointRendererOptions,
+} from "./CesiumBufferPointRenderer";
+export {
+  CesiumPointPrimitiveRenderer,
+  type CesiumPointPrimitiveRendererOptions,
+} from "./CesiumPointPrimitiveRenderer";
 export { CesiumPointRenderer } from "./CesiumPointRenderer";
 export {
   createDefaultCopcCoordinateTransforms,

@@ -51,8 +51,31 @@ const CAMERA_STREAM_SLOW_TOTAL_MILLISECONDS = 50;
 const CAMERA_STREAM_RECOVERY_TOTAL_MILLISECONDS = 24;
 const CAMERA_STREAM_RECOVERY_RENDER_MILLISECONDS = 18;
 const CAMERA_STREAM_RECOVERY_STREAK = 3;
-const DEFAULT_CAMERA_STREAM_MAX_RENDERED_POINT_COUNT = 5_000;
-const DEFAULT_MAX_POINT_COUNT_PER_NODE = 5_000;
+const RENDER_QUALITY_SETTINGS = {
+  preview: {
+    maxPointCountPerNode: 5_000,
+    cameraStreamMaxRenderedPointCount: 5_000,
+    pointPixelSize: 5,
+    pointOutlineWidth: 0,
+  },
+  balanced: {
+    maxPointCountPerNode: 20_000,
+    cameraStreamMaxRenderedPointCount: 10_000,
+    pointPixelSize: 3,
+    pointOutlineWidth: 0,
+  },
+  detail: {
+    maxPointCountPerNode: 50_000,
+    cameraStreamMaxRenderedPointCount: 25_000,
+    pointPixelSize: 2,
+    pointOutlineWidth: 0,
+  },
+} as const;
+const DEFAULT_RENDER_QUALITY: RenderQuality = "balanced";
+const DEFAULT_CAMERA_STREAM_MAX_RENDERED_POINT_COUNT =
+  RENDER_QUALITY_SETTINGS[DEFAULT_RENDER_QUALITY].cameraStreamMaxRenderedPointCount;
+const DEFAULT_MAX_POINT_COUNT_PER_NODE =
+  RENDER_QUALITY_SETTINGS[DEFAULT_RENDER_QUALITY].maxPointCountPerNode;
 const BENCHMARK_CAMERA_STEP_COUNT = 24;
 const BENCHMARK_CAMERA_DURATION_MILLISECONDS = 2400;
 const BENCHMARK_CAMERA_MOVE_METERS = 25;
@@ -65,6 +88,7 @@ const POINT_RENDERER_LABELS = {
 } as const;
 
 type PointRendererKind = keyof typeof POINT_RENDERER_LABELS;
+type RenderQuality = keyof typeof RENDER_QUALITY_SETTINGS;
 
 interface BasicViewerBenchmarkCameraOptions {
   readonly steps?: number;
@@ -194,6 +218,12 @@ elements.sampleSelect.addEventListener("change", () => {
 });
 
 elements.rendererSelect.addEventListener("change", () => {
+  void inspectSource(createSourceConfigFromForm());
+});
+
+elements.qualitySelect.addEventListener("change", () => {
+  applyRenderQualitySettings(readRenderQuality());
+  resetCameraStreamAdaptiveBudget();
   void inspectSource(createSourceConfigFromForm());
 });
 
@@ -494,6 +524,7 @@ function renderInspection(
     metadataRow("Source preset", currentSource.label),
     metadataRow("Source note", currentSource.description),
     metadataRow("Point renderer", POINT_RENDERER_LABELS[currentPointRendererKind]),
+    metadataRow("Render quality", formatRenderQuality(readRenderQuality())),
     metadataRow("Max points / node", readMaxPointCountPerNode().toLocaleString()),
     metadataRow(
       "Camera stream budget",
@@ -1166,11 +1197,18 @@ function initializeRendererBenchmarkControls(): void {
     elements.rendererSelect.value = renderer;
   }
 
+  const quality = params.get("quality");
+  elements.qualitySelect.value = isRenderQuality(quality)
+    ? quality
+    : DEFAULT_RENDER_QUALITY;
+  const qualitySettings = readRenderQualitySettings();
   const maxPointCountParam =
     params.get("maxPointCountPerNode") ?? params.get("maxPoints");
 
   if (!maxPointCountParam) {
-    elements.maxPointCountInput.value = String(DEFAULT_MAX_POINT_COUNT_PER_NODE);
+    elements.maxPointCountInput.value = String(
+      qualitySettings.maxPointCountPerNode,
+    );
   } else {
     const maxPointCount = Number(maxPointCountParam);
     elements.maxPointCountInput.value = String(
@@ -1185,7 +1223,7 @@ function initializeRendererBenchmarkControls(): void {
 
   if (!streamPointBudgetParam) {
     elements.cameraStreamPointBudgetInput.value = String(
-      DEFAULT_CAMERA_STREAM_MAX_RENDERED_POINT_COUNT,
+      qualitySettings.cameraStreamMaxRenderedPointCount,
     );
   } else {
     const streamPointBudget = Number(streamPointBudgetParam);
@@ -1202,6 +1240,29 @@ function readMaxPointCountPerNode(): number {
   return isPositiveSafeInteger(maxPointCount)
     ? maxPointCount
     : DEFAULT_MAX_POINT_COUNT_PER_NODE;
+}
+
+function readRenderQuality(): RenderQuality {
+  const quality = elements.qualitySelect.value;
+
+  return isRenderQuality(quality) ? quality : DEFAULT_RENDER_QUALITY;
+}
+
+function readRenderQualitySettings(): (typeof RENDER_QUALITY_SETTINGS)[RenderQuality] {
+  return RENDER_QUALITY_SETTINGS[readRenderQuality()];
+}
+
+function applyRenderQualitySettings(quality: RenderQuality): void {
+  const settings = RENDER_QUALITY_SETTINGS[quality];
+  elements.qualitySelect.value = quality;
+  elements.maxPointCountInput.value = String(settings.maxPointCountPerNode);
+  elements.cameraStreamPointBudgetInput.value = String(
+    settings.cameraStreamMaxRenderedPointCount,
+  );
+}
+
+function isRenderQuality(value: string | null): value is RenderQuality {
+  return value !== null && value in RENDER_QUALITY_SETTINGS;
 }
 
 function readCameraStreamMaxRenderedPointCount(): number {
@@ -1279,9 +1340,19 @@ function isPositiveSafeInteger(value: number): boolean {
 function createPointRendererFactory(
   kind: PointRendererKind,
 ): CopcPointCloudRendererFactory {
+  const qualitySettings = readRenderQualitySettings();
+
   return kind === "buffer"
-    ? (scene) => new CesiumBufferPointRenderer(scene)
-    : (scene) => new CesiumPointPrimitiveRenderer(scene);
+    ? (scene) =>
+        new CesiumBufferPointRenderer(scene, {
+          pointSize: qualitySettings.pointPixelSize,
+          outlineWidth: qualitySettings.pointOutlineWidth,
+        })
+    : (scene) =>
+        new CesiumPointPrimitiveRenderer(scene, {
+          pixelSize: qualitySettings.pointPixelSize,
+          outlineWidth: qualitySettings.pointOutlineWidth,
+        });
 }
 
 function syncCustomProjectionControls(): void {
@@ -1323,6 +1394,7 @@ function getPrototypeElements(): {
   readonly form: HTMLFormElement;
   readonly sampleSelect: HTMLSelectElement;
   readonly rendererSelect: HTMLSelectElement;
+  readonly qualitySelect: HTMLSelectElement;
   readonly maxPointCountInput: HTMLInputElement;
   readonly cameraStreamPointBudgetInput: HTMLInputElement;
   readonly urlInput: HTMLInputElement;
@@ -1350,6 +1422,9 @@ function getPrototypeElements(): {
   );
   const rendererSelect = document.querySelector<HTMLSelectElement>(
     "#copc-renderer-select",
+  );
+  const qualitySelect = document.querySelector<HTMLSelectElement>(
+    "#copc-quality-select",
   );
   const maxPointCountInput = document.querySelector<HTMLInputElement>(
     "#copc-max-point-count",
@@ -1398,6 +1473,7 @@ function getPrototypeElements(): {
     !form ||
     !sampleSelect ||
     !rendererSelect ||
+    !qualitySelect ||
     !maxPointCountInput ||
     !cameraStreamPointBudgetInput ||
     !urlInput ||
@@ -1426,6 +1502,7 @@ function getPrototypeElements(): {
     form,
     sampleSelect,
     rendererSelect,
+    qualitySelect,
     maxPointCountInput,
     cameraStreamPointBudgetInput,
     urlInput,
@@ -1514,6 +1591,20 @@ function formatRenderStats(stats: CopcPointCloudLayerRenderStats): string {
 
 function formatRendererPayload(stats: CopcPointCloudLayerRenderStats): string {
   return `${formatBytes(stats.estimatedRenderPayloadBytes)} estimated coordinate/color payload`;
+}
+
+function formatRenderQuality(quality: RenderQuality): string {
+  const settings = RENDER_QUALITY_SETTINGS[quality];
+
+  if (quality === "preview") {
+    return `Fast preview (${settings.maxPointCountPerNode.toLocaleString()} pts/node, ${settings.pointPixelSize}px points)`;
+  }
+
+  if (quality === "detail") {
+    return `High detail (${settings.maxPointCountPerNode.toLocaleString()} pts/node, ${settings.pointPixelSize}px points)`;
+  }
+
+  return `Balanced detail (${settings.maxPointCountPerNode.toLocaleString()} pts/node, ${settings.pointPixelSize}px points)`;
 }
 
 function formatCameraStreamBudget(): string {

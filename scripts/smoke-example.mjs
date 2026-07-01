@@ -153,7 +153,7 @@ function createSmokeFlow(baseUrl) {
     pageErrors.push(error.message);
   });
 
-  const expectedStatus = "Rendered 5,000 real COPC points";
+  const expectedStatus = "Rendered 20,000 real COPC points";
   const sofiUrl = "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz";
   const sofiDefinition =
     "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs";
@@ -215,7 +215,7 @@ function createSmokeFlow(baseUrl) {
   primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
   primitiveRendererPayload = (await metadataValue("Renderer payload")) ?? "";
   await check(
-    async () => primitiveRendererTiming.includes("5,000 pts"),
+    async () => primitiveRendererTiming.includes("20,000 pts"),
     "Default renderer timing did not report the rendered point count.",
   );
   await check(
@@ -238,7 +238,7 @@ function createSmokeFlow(baseUrl) {
     "Experimental buffer point renderer was not reported.",
   );
   await check(
-    async () => bufferRendererTiming.includes("5,000 pts"),
+    async () => bufferRendererTiming.includes("20,000 pts"),
     "Buffer renderer timing did not report the rendered point count.",
   );
   await check(

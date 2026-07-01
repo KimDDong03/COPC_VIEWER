@@ -223,7 +223,11 @@ now.
 ```ts
 new CopcPointCloudLayer(viewer.scene, {
   url,
-  createPointRenderer: (scene) => new CesiumPointPrimitiveRenderer(scene),
+  createPointRenderer: (scene) =>
+    new CesiumPointPrimitiveRenderer(scene, {
+      pixelSize: 3,
+      outlineWidth: 0,
+    }),
 });
 ```
 
@@ -236,7 +240,11 @@ import { CesiumBufferPointRenderer } from "copc-cesium";
 
 new CopcPointCloudLayer(viewer.scene, {
   url,
-  createPointRenderer: (scene) => new CesiumBufferPointRenderer(scene),
+  createPointRenderer: (scene) =>
+    new CesiumBufferPointRenderer(scene, {
+      pointSize: 3,
+      outlineWidth: 0,
+    }),
 });
 ```
 
