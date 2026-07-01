@@ -63,6 +63,7 @@ body {
 #copc-sample-select,
 #copc-node-select,
 #copc-max-point-count,
+#copc-camera-stream-point-budget,
 #copc-source-crs,
 #copc-source-definition {
   min-width: 0;
@@ -77,6 +78,7 @@ body {
 #copc-sample-select,
 #copc-node-select,
 #copc-max-point-count,
+#copc-camera-stream-point-budget,
 #copc-source-crs {
   height: 36px;
 }
@@ -98,7 +100,8 @@ body {
   width: 100%;
 }
 
-#copc-max-point-count {
+#copc-max-point-count,
+#copc-camera-stream-point-budget {
   width: 100%;
   box-sizing: border-box;
 }
@@ -120,6 +123,7 @@ body {
 #copc-sample-select:focus,
 #copc-node-select:focus,
 #copc-max-point-count:focus,
+#copc-camera-stream-point-budget:focus,
 #copc-source-crs:focus,
 #copc-source-definition:focus {
   outline: 2px solid #75b7ff;

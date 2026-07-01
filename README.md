@@ -82,7 +82,7 @@ npm run smoke:package
 `npm run smoke:example` builds the example, starts a temporary preview server, and verifies Autzen, SoFi, and Custom URL + proj4 rendering in a browser. Run `npm run smoke:example:install-browser` once if Playwright reports that Chrome for Testing is missing.
 `npm run smoke:package` packs the local build, installs it into a temporary consumer project, and verifies public imports from `copc-cesium`, `copc-cesium/core`, and `copc-cesium/cesium`.
 `npm run benchmark:renderers` builds the example, starts a temporary preview server, renders the Autzen COPC sample with both point renderers at a larger sample size, repeats each run, and writes browser-measured renderer timing to `output/renderer-benchmark/renderers.json`. The defaults are 10,000 max points per node and 3 repeats. On PowerShell, override them with `$env:COPC_BENCHMARK_POINT_COUNT="20000"; $env:COPC_BENCHMARK_REPEATS="5"; npm run benchmark:renderers`.
-`npm run benchmark:smoothness` builds the example, starts a temporary preview server, enables camera streaming, moves the Cesium camera, records browser frame intervals, and writes the result to `output/smoothness-benchmark/smoothness.json`. The defaults are 10,000 max points per node, 2 repeats, 24 camera steps, and 3 seconds per run. On PowerShell, override them with `$env:COPC_SMOOTHNESS_POINT_COUNT="20000"; $env:COPC_SMOOTHNESS_REPEATS="5"; npm run benchmark:smoothness`.
+`npm run benchmark:smoothness` builds the example, starts a temporary preview server, enables camera streaming, moves the Cesium camera, records browser frame intervals, and writes the result to `output/smoothness-benchmark/smoothness.json`. The defaults are 2,500 / 5,000 / 10,000 / 20,000 camera-stream point budgets, 2 repeats per budget, 24 camera steps, and 3 seconds per run. On PowerShell, override them with `$env:COPC_SMOOTHNESS_POINT_BUDGETS="5000,10000"; $env:COPC_SMOOTHNESS_REPEATS="5"; npm run benchmark:smoothness`.
 The same browser rendering smoke is available as the manual GitHub Actions workflow `Example Browser Smoke`.
 
 The runnable prototype lives in `examples/basic-viewer`. The root `src` folder contains reusable COPC and Cesium integration code used by that example.
@@ -96,6 +96,7 @@ For custom URLs, the example can also accept a source CRS and optional proj4 def
 The hierarchy node selector lists currently loaded nodes and lets the example render one selected node at a time.
 The renderer selector can switch between the stable point-primitive renderer and the experimental buffer-backed renderer.
 The Max points / node input controls the active `CopcPointCloudLayer` sample budget, which makes manual and automated renderer comparison possible without changing source code.
+The Camera stream points input controls the point budget used by `Stream on camera move`, so camera-driven smoothness can be tuned without rebuilding the example.
 `CopcSource` keeps the opened COPC metadata, loaded hierarchy pages, pending hierarchy page references with bounds and source-page provenance, hierarchy cache stats, and bounded in-memory caches for hierarchy pages and sampled node point data for the active URL. The hierarchy page cache evicts loaded non-root leaf pages back to pending page references when the configured page limit is reached. The point sample cache is limited by both sample-set count and estimated decoded sample bytes.
 The Load next page button range-reads the next pending COPC hierarchy page and refreshes the available node list without converting the file to 3D Tiles.
 The example also computes the selected node bounds and renders a yellow debug bounding box in CesiumJS.
@@ -173,6 +174,7 @@ In the basic viewer, custom URLs use the default transform when the Source CRS f
 
 - [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Performance Notes](docs/PERFORMANCE.md)
 - [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)
 

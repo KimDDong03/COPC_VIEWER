@@ -14,9 +14,13 @@ const isWindows = process.platform === "win32";
 const npmCommand = "npm";
 const npxCommand = "npx";
 const playwrightCliPackage = "@playwright/cli@0.1.14";
-const benchmarkPointCount = readPositiveIntegerEnv(
+const benchmarkStreamPointBudgets = readPositiveIntegerListEnv(
+  "COPC_SMOOTHNESS_POINT_BUDGETS",
+  [2_500, 5_000, 10_000, 20_000],
+);
+const benchmarkMaxPointCountPerNode = readPositiveIntegerEnv(
   "COPC_SMOOTHNESS_POINT_COUNT",
-  10_000,
+  Math.max(...benchmarkStreamPointBudgets),
 );
 const benchmarkRepeats = readPositiveIntegerEnv("COPC_SMOOTHNESS_REPEATS", 2);
 const benchmarkDurationMilliseconds = readPositiveIntegerEnv(
@@ -32,6 +36,12 @@ const benchmarkMoveMeters = readPositiveIntegerEnv(
   25,
 );
 
+if (benchmarkMaxPointCountPerNode < Math.max(...benchmarkStreamPointBudgets)) {
+  throw new Error(
+    "COPC_SMOOTHNESS_POINT_COUNT must be greater than or equal to every COPC_SMOOTHNESS_POINT_BUDGETS value.",
+  );
+}
+
 function readPositiveIntegerEnv(name, fallback) {
   const rawValue = process.env[name];
 
@@ -46,6 +56,28 @@ function readPositiveIntegerEnv(name, fallback) {
   }
 
   return value;
+}
+
+function readPositiveIntegerListEnv(name, fallback) {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const values = rawValue
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => value !== 0);
+
+  if (
+    values.length === 0 ||
+    values.some((value) => !Number.isSafeInteger(value) || value <= 0)
+  ) {
+    throw new Error(`${name} must be a comma-separated list of positive integers.`);
+  }
+
+  return [...new Set(values)];
 }
 
 function assertInside(parent, target) {
@@ -231,14 +263,16 @@ function stopServer(serverProcess) {
 
 function createSmoothnessFlow(
   baseUrl,
-  targetPointCount,
+  maxPointCountPerNode,
+  streamPointBudgets,
   repeatCount,
   durationMilliseconds,
   cameraSteps,
   moveMeters,
 ) {
   return `async (page) => {
-  const targetPointCount = ${JSON.stringify(targetPointCount)};
+  const maxPointCountPerNode = ${JSON.stringify(maxPointCountPerNode)};
+  const streamPointBudgets = ${JSON.stringify(streamPointBudgets)};
   const repeatCount = ${JSON.stringify(repeatCount)};
   const durationMilliseconds = ${JSON.stringify(durationMilliseconds)};
   const cameraSteps = ${JSON.stringify(cameraSteps)};
@@ -296,10 +330,13 @@ function createSmoothnessFlow(
     }
   }
 
-  async function prepareViewer() {
-    await page.evaluate((targetPointCount) => {
+  async function prepareViewer(initialStreamPointBudget) {
+    await page.evaluate(({ maxPointCountPerNode, initialStreamPointBudget }) => {
       const rendererSelect = document.querySelector("#copc-renderer-select");
       const maxPointCountInput = document.querySelector("#copc-max-point-count");
+      const streamPointBudgetInput = document.querySelector(
+        "#copc-camera-stream-point-budget",
+      );
       const form = document.querySelector("#copc-form");
       const status = document.querySelector("#copc-status");
 
@@ -311,19 +348,24 @@ function createSmoothnessFlow(
         throw new Error("Max point count input was not found.");
       }
 
+      if (!(streamPointBudgetInput instanceof HTMLInputElement)) {
+        throw new Error("Camera stream point budget input was not found.");
+      }
+
       if (!(form instanceof HTMLFormElement)) {
         throw new Error("COPC form was not found.");
       }
 
       rendererSelect.value = "primitive";
-      maxPointCountInput.value = String(targetPointCount);
+      maxPointCountInput.value = String(maxPointCountPerNode);
+      streamPointBudgetInput.value = String(initialStreamPointBudget);
 
       if (status) {
         status.textContent = "Smoothness benchmark render pending...";
       }
 
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    }, targetPointCount);
+    }, { maxPointCountPerNode, initialStreamPointBudget });
     await waitForRenderedStatus();
 
     await page.evaluate(() => {
@@ -342,6 +384,20 @@ function createSmoothnessFlow(
         checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       }
     });
+    await waitForCameraStreamStatus();
+  }
+
+  async function setStreamPointBudget(streamPointBudget) {
+    await page.evaluate((streamPointBudget) => {
+      const input = document.querySelector("#copc-camera-stream-point-budget");
+
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error("Camera stream point budget input was not found.");
+      }
+
+      input.value = String(streamPointBudget);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, streamPointBudget);
     await waitForCameraStreamStatus();
   }
 
@@ -368,7 +424,17 @@ function createSmoothnessFlow(
     };
   }
 
-  async function measureSmoothness(runIndex) {
+  function parseCameraStreamPointCount(statusText) {
+    const match = statusText.match(/Camera stream rendered ([\\d,]+) points/);
+
+    if (!match) {
+      return undefined;
+    }
+
+    return Number(match[1].replaceAll(",", ""));
+  }
+
+  async function measureSmoothness(streamPointBudget, runIndex) {
     const measurement = await page.evaluate(
       async ({ durationMilliseconds, cameraSteps, moveMeters }) => {
         const benchmark = window.__copcBasicViewerBenchmark;
@@ -433,8 +499,20 @@ function createSmoothnessFlow(
       failures.push(\`run \${runIndex} did not expose renderer timing after camera movement.\`);
     }
 
+    const renderedPointCount = parseCameraStreamPointCount(measurement.status.status);
+
+    if (renderedPointCount === undefined) {
+      failures.push(\`run \${runIndex} did not report a camera stream point count.\`);
+    } else if (renderedPointCount > streamPointBudget) {
+      failures.push(
+        \`run \${runIndex} rendered \${renderedPointCount} points with a \${streamPointBudget} point budget.\`,
+      );
+    }
+
     return {
       runIndex,
+      streamPointBudget,
+      renderedPointCount,
       ...measurement,
       summary: summarizeFrames(measurement.frameDeltas),
     };
@@ -442,10 +520,14 @@ function createSmoothnessFlow(
 
   await page.goto(${JSON.stringify(baseUrl)}, { waitUntil: "domcontentloaded" });
   await waitForRenderedStatus();
-  await prepareViewer();
+  await prepareViewer(streamPointBudgets[0]);
 
-  for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
-    results.push(await measureSmoothness(runIndex));
+  for (const streamPointBudget of streamPointBudgets) {
+    await setStreamPointBudget(streamPointBudget);
+
+    for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
+      results.push(await measureSmoothness(streamPointBudget, runIndex));
+    }
   }
 
   if (consoleProblems.length > 0 || pageErrors.length > 0) {
@@ -462,7 +544,8 @@ function createSmoothnessFlow(
   }
 
   return {
-    targetPointCount,
+    maxPointCountPerNode,
+    streamPointBudgets,
     repeatCount,
     durationMilliseconds,
     cameraSteps,
@@ -483,31 +566,35 @@ function average(values) {
 function printBenchmarkSummary(result) {
   console.log("Smoothness benchmark summary:");
 
-  const averageFps = average(
-    result.results.map((run) => run.summary.estimatedAverageFps),
-  );
-  const averageP95 = average(
-    result.results.map((run) => run.summary.p95FrameMilliseconds),
-  );
-  const maxFrame = Math.max(
-    ...result.results.map((run) => run.summary.maxFrameMilliseconds),
-  );
-  const over50 = result.results.reduce(
-    (sum, run) => sum + run.summary.frameDeltasOver50Milliseconds,
-    0,
+  console.log(
+    `- ${result.maxPointCountPerNode.toLocaleString()} max points / node, ${result.cameraSteps.toLocaleString()} camera steps`,
   );
 
-  console.log(
-    [
-      `- ${result.repeatCount} runs`,
-      `${result.targetPointCount.toLocaleString()} max points / node`,
-      `${result.cameraSteps.toLocaleString()} camera steps`,
-      `avg ${averageFps.toFixed(1)} fps`,
-      `p95 ${averageP95.toFixed(2)} ms`,
-      `max ${maxFrame.toFixed(2)} ms`,
-      `${over50.toLocaleString()} frames > 50 ms`,
-    ].join(", "),
-  );
+  for (const streamPointBudget of result.streamPointBudgets) {
+    const runs = result.results.filter(
+      (run) => run.streamPointBudget === streamPointBudget,
+    );
+    const averageFps = average(runs.map((run) => run.summary.estimatedAverageFps));
+    const averageP95 = average(runs.map((run) => run.summary.p95FrameMilliseconds));
+    const maxFrame = Math.max(...runs.map((run) => run.summary.maxFrameMilliseconds));
+    const over50 = runs.reduce(
+      (sum, run) => sum + run.summary.frameDeltasOver50Milliseconds,
+      0,
+    );
+    const renderedPoints = runs.map((run) => run.renderedPointCount ?? 0);
+
+    console.log(
+      [
+        `- ${streamPointBudget.toLocaleString()} point stream budget`,
+        `${runs.length.toLocaleString()} runs`,
+        `${Math.min(...renderedPoints).toLocaleString()}-${Math.max(...renderedPoints).toLocaleString()} rendered pts`,
+        `avg ${averageFps.toFixed(1)} fps`,
+        `p95 ${averageP95.toFixed(2)} ms`,
+        `max ${maxFrame.toFixed(2)} ms`,
+        `${over50.toLocaleString()} frames > 50 ms`,
+      ].join(", "),
+    );
+  }
 }
 
 await mkdir(outputRoot, { recursive: true });
@@ -559,7 +646,8 @@ try {
     benchmarkFlowPath,
     createSmoothnessFlow(
       baseUrl,
-      benchmarkPointCount,
+      benchmarkMaxPointCountPerNode,
+      benchmarkStreamPointBudgets,
       benchmarkRepeats,
       benchmarkDurationMilliseconds,
       benchmarkCameraSteps,
@@ -570,7 +658,10 @@ try {
   console.log(
     [
       "Running smoothness benchmark:",
-      `${benchmarkPointCount.toLocaleString()} max points / node,`,
+      `${benchmarkMaxPointCountPerNode.toLocaleString()} max points / node,`,
+      `${benchmarkStreamPointBudgets
+        .map((value) => value.toLocaleString())
+        .join("/")} stream budgets,`,
       `${benchmarkRepeats.toLocaleString()} repeats,`,
       `${benchmarkCameraSteps.toLocaleString()} camera steps`,
     ].join(" "),
