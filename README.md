@@ -35,6 +35,35 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Quick API Example
+
+```ts
+import { Viewer } from "cesium";
+import {
+  CesiumPointPrimitiveRenderer,
+  CopcPointCloudLayer,
+} from "copc-cesium";
+
+const viewer = new Viewer("cesium-container");
+const layer = new CopcPointCloudLayer(viewer.scene, {
+  url: "https://example.com/point-cloud.copc.laz",
+  maxPointCountPerNode: 5_000,
+  pointSampleLoading: "worker",
+  createPointRenderer: (scene) => new CesiumPointPrimitiveRenderer(scene),
+});
+
+const { hierarchy } = await layer.load();
+const firstNode = hierarchy.nodes[0];
+
+if (firstNode) {
+  await layer.renderNode(firstNode.key);
+}
+```
+
+See [API](docs/API.md) for the current public surface and
+[examples/minimal-layer.ts](examples/minimal-layer.ts) for a type-checked
+minimal integration slice.
+
 ## Build
 
 ```bash
@@ -137,6 +166,7 @@ In the basic viewer, custom URLs use the default transform when the Source CRS f
 
 ## Project Documents
 
+- [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)

@@ -40,6 +40,8 @@
   },
   "files": [
     "dist/lib",
+    "docs",
+    "examples/minimal-layer.ts",
     "LICENSE",
     "README.md"
   ],
