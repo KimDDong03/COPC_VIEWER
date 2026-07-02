@@ -49,7 +49,8 @@ const CAMERA_STREAM_SLOW_TOTAL_MILLISECONDS = 45_000;
 const CAMERA_STREAM_RECOVERY_TOTAL_MILLISECONDS = 8_000;
 const CAMERA_STREAM_RECOVERY_RENDER_MILLISECONDS = 1_500;
 const CAMERA_STREAM_RECOVERY_STREAK = 3;
-const CAMERA_STREAM_PROGRESSIVE_BATCH_NODE_COUNTS = [4, 8, 16] as const;
+const CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIOS = [0.5] as const;
+const CAMERA_STREAM_MIN_COVERAGE_POINTS_PER_NODE = 512;
 const CAMERA_STREAM_MOVE_DEBOUNCE_MILLISECONDS = 180;
 const DEFAULT_AUTO_STREAM_ON_CAMERA_MOVE = true;
 const CAMERA_STREAM_LOD_LEVELS = [
@@ -208,8 +209,7 @@ interface CameraStreamLodSettings {
   readonly maxHierarchyPages: number;
 }
 
-interface CameraStreamNodeBatch {
-  readonly nodeKeys: readonly string[];
+interface CameraStreamCoveragePass {
   readonly maxRenderedPointCount: number;
 }
 
@@ -1007,25 +1007,24 @@ async function renderAutomaticNodeSetForCameraMove(
       return;
     }
 
-    const streamMaxPointCountPerNode = readMaxPointCountPerNode();
-    const nodeBatches = createCameraStreamNodeBatches(
-      nodeKeys,
+    const coveragePasses = createCameraStreamCoveragePasses(
+      nodeKeys.length,
       streamPointBudget,
-      streamMaxPointCountPerNode,
     );
+    const streamMaxPointCountPerNode = readMaxPointCountPerNode();
     let renderNodesMilliseconds = 0;
 
     elements.statusText.textContent =
-      nodeBatches.length > 1
-        ? `Streaming ${nodeKeys.length.toLocaleString()} COPC nodes for ${cameraLodSettings.label} camera position in ${nodeBatches.length.toLocaleString()} batches...`
+      coveragePasses.length > 1
+        ? `Streaming ${nodeKeys.length.toLocaleString()} COPC nodes covering the current view in ${coveragePasses.length.toLocaleString()} passes...`
         : `Streaming ${nodeKeys.length.toLocaleString()} COPC nodes for ${cameraLodSettings.label} camera position...`;
 
-    for (const [batchIndex, nodeBatch] of nodeBatches.entries()) {
-      const isFinalBatch = batchIndex === nodeBatches.length - 1;
+    for (const [passIndex, coveragePass] of coveragePasses.entries()) {
+      const isFinalPass = passIndex === coveragePasses.length - 1;
       const renderNodesStartedAt = performance.now();
-      const result = await layer.renderNodes(nodeBatch.nodeKeys, {
+      const result = await layer.renderNodes(nodeKeys, {
         maxPointCountPerNode: streamMaxPointCountPerNode,
-        maxRenderedPointCount: nodeBatch.maxRenderedPointCount,
+        maxRenderedPointCount: coveragePass.maxRenderedPointCount,
         signal,
       });
       renderNodesMilliseconds += performance.now() - renderNodesStartedAt;
@@ -1041,11 +1040,11 @@ async function renderAutomaticNodeSetForCameraMove(
         renderNodesMilliseconds,
         totalMilliseconds: performance.now() - streamStartedAt,
         loadedHierarchyPageCount: loadedPageKeys.length,
-        selectedNodeCount: nodeBatch.nodeKeys.length,
+        selectedNodeCount: nodeKeys.length,
         selectedDepth: cameraSelection.selectedDepth,
       };
 
-      if (isFinalBatch) {
+      if (isFinalPass) {
         updateCameraStreamAdaptiveBudget(
           streamPointBudgetLimit,
           diagnostics.totalMilliseconds,
@@ -1059,10 +1058,10 @@ async function renderAutomaticNodeSetForCameraMove(
         cameraSelection,
         cameraLodSettings,
         diagnostics,
-        renderedPointBudget: nodeBatch.maxRenderedPointCount,
-        statusText: isFinalBatch
+        renderedPointBudget: coveragePass.maxRenderedPointCount,
+        statusText: isFinalPass
           ? `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes (${cameraLodSettings.label}, depth ${cameraSelection.selectedDepth.toLocaleString()})${formatLoadedHierarchyPages(loadedPageKeys)}.`
-          : `Camera stream node batch rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} / ${nodeKeys.length.toLocaleString()} COPC nodes (${cameraLodSettings.label}, finalizing detail)${formatLoadedHierarchyPages(loadedPageKeys)}.`,
+          : `Camera stream coverage pass rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points across all ${nodeKeys.length.toLocaleString()} visible COPC nodes (${cameraLodSettings.label}, refining detail)${formatLoadedHierarchyPages(loadedPageKeys)}.`,
       });
     }
     queueCameraHierarchyPrefetch(layer);
@@ -1104,48 +1103,40 @@ function clearQueuedAutomaticStreamRender(): void {
   automaticStreamDebounceTimeout = undefined;
 }
 
-function createCameraStreamNodeBatches(
-  nodeKeys: readonly string[],
-  maxRenderedPointCount: number,
-  maxPointCountPerNode: number,
-): readonly CameraStreamNodeBatch[] {
-  const pointBudgets = allocateCameraStreamNodePointBudgets(
-    nodeKeys.length,
-    maxRenderedPointCount,
-    maxPointCountPerNode,
-  );
-  const batchNodeCounts = [
-    ...new Set([
-      ...CAMERA_STREAM_PROGRESSIVE_BATCH_NODE_COUNTS.filter(
-        (nodeCount) => nodeCount < nodeKeys.length,
-      ),
-      nodeKeys.length,
-    ]),
-  ];
-
-  return batchNodeCounts.map((nodeCount) => ({
-    nodeKeys: nodeKeys.slice(0, nodeCount),
-    maxRenderedPointCount: pointBudgets
-      .slice(0, nodeCount)
-      .reduce((total, pointBudget) => total + pointBudget, 0),
-  }));
-}
-
-function allocateCameraStreamNodePointBudgets(
+function createCameraStreamCoveragePasses(
   nodeCount: number,
   maxRenderedPointCount: number,
-  maxPointCountPerNode: number,
-): readonly number[] {
+): readonly CameraStreamCoveragePass[] {
   if (nodeCount <= 0) {
     return [];
   }
 
-  const baseBudget = Math.floor(maxRenderedPointCount / nodeCount);
-  const remainder = maxRenderedPointCount % nodeCount;
-
-  return Array.from({ length: nodeCount }, (_value, index) =>
-    Math.min(maxPointCountPerNode, baseBudget + (index < remainder ? 1 : 0)),
+  const minimumCoveragePointBudget = Math.min(
+    maxRenderedPointCount,
+    Math.max(
+      CAMERA_STREAM_MIN_RENDERED_POINT_COUNT,
+      nodeCount * CAMERA_STREAM_MIN_COVERAGE_POINTS_PER_NODE,
+    ),
   );
+  const pointBudgets = [
+    ...new Set([
+      ...CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIOS.map((ratio) =>
+        Math.max(
+          nodeCount,
+          minimumCoveragePointBudget,
+          Math.floor(maxRenderedPointCount * ratio),
+        ),
+      ).filter(
+        (pointBudget) =>
+          pointBudget >= nodeCount && pointBudget < maxRenderedPointCount,
+      ),
+      maxRenderedPointCount,
+    ]),
+  ];
+
+  return pointBudgets.map((pointBudget) => ({
+    maxRenderedPointCount: pointBudget,
+  }));
 }
 
 function isCurrentAutomaticStreamRequest(
