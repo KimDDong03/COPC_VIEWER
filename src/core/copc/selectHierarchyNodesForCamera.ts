@@ -192,20 +192,29 @@ export function selectHierarchyNodesForCamera(
     targetNodeScreenPixels,
     targetPointSpacingScreenPixels,
   );
-  const selection = selectBudgetedNodes(
-    candidateNodes.nodes,
-    availableDepths,
-    targetDepth,
-    {
-      target: options.target,
-      selectionMode,
-      maxNodes,
-      maxNodePointCount: options.maxNodePointCount,
-      maxNodePointDataLength: options.maxNodePointDataLength,
-      maxTotalPointCount: options.maxTotalPointCount,
-      maxTotalPointDataLength: options.maxTotalPointDataLength,
-    },
-  );
+  const budgetOptions = {
+    target: options.target,
+    selectionMode,
+    maxNodes,
+    maxNodePointCount: options.maxNodePointCount,
+    maxNodePointDataLength: options.maxNodePointDataLength,
+    maxTotalPointCount: options.maxTotalPointCount,
+    maxTotalPointDataLength: options.maxTotalPointDataLength,
+  };
+  const selection =
+    selectionMode === "coverage"
+      ? selectBudgetedCoverageNodes(
+          candidateNodes.nodes,
+          availableDepths,
+          targetDepth,
+          budgetOptions,
+        )
+      : selectBudgetedNodes(
+          candidateNodes.nodes,
+          availableDepths,
+          targetDepth,
+          budgetOptions,
+        );
 
   if (!selection) {
     return undefined;
@@ -511,6 +520,75 @@ function selectBudgetedNodes(
   }
 
   return undefined;
+}
+
+function selectBudgetedCoverageNodes(
+  nodes: readonly CopcHierarchyNodeSummary[],
+  availableDepths: readonly number[],
+  targetDepth: number,
+  options: SelectBudgetedNodesOptions,
+): BudgetedNodeSelection | undefined {
+  const selectedNodes: CopcHierarchyNodeSummary[] = [];
+  const selectedNodeKeys = new Set<string>();
+  let selectedPointCount = 0;
+  let selectedPointDataLength = 0;
+  let skippedByBudgetCount = 0;
+  let selectedDepth: number | undefined;
+
+  for (const depth of depthsByTargetDistance(availableDepths, targetDepth)) {
+    const candidates = orderNodeCandidates(
+      nodes
+        .filter((node) => node.depth === depth)
+        .map((node) => ({
+          node,
+          distanceToBounds: distanceToBounds3d(options.target, node.bounds),
+        })),
+      "coverage",
+    );
+
+    for (const { node } of candidates) {
+      if (selectedNodes.length >= options.maxNodes) {
+        break;
+      }
+
+      if (selectedNodeKeys.has(node.key)) {
+        continue;
+      }
+
+      if (
+        isNodeOverIndividualBudget(node, options) ||
+        isNodeOverTotalBudget(
+          node,
+          selectedPointCount,
+          selectedPointDataLength,
+          options,
+        )
+      ) {
+        skippedByBudgetCount += 1;
+        continue;
+      }
+
+      selectedNodes.push(node);
+      selectedNodeKeys.add(node.key);
+      selectedPointCount += node.pointCount;
+      selectedPointDataLength += node.pointDataLength;
+      selectedDepth = Math.max(selectedDepth ?? node.depth, node.depth);
+    }
+
+    if (selectedNodes.length >= options.maxNodes) {
+      break;
+    }
+  }
+
+  if (selectedNodes.length === 0 || selectedDepth === undefined) {
+    return undefined;
+  }
+
+  return {
+    nodes: selectedNodes,
+    selectedDepth,
+    skippedByBudgetCount,
+  };
 }
 
 function orderNodeCandidates(

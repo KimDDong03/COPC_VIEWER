@@ -72,6 +72,25 @@ describe("selectHierarchyNodesForCamera", () => {
     expect(coverageSelection?.reason).toContain("screen-coverage");
   });
 
+  it("continues coverage selection at shallower depths when target-depth coverage is sparse", () => {
+    const selection = selectHierarchyNodesForCamera(
+      createSparseCoverageDepthNodes(),
+      {
+        target: { x: 90, y: 90, z: 10 },
+        viewportHeightPixels: 720,
+        selectionMode: "coverage",
+        maxNodes: 5,
+        targetNodeScreenPixels: 220,
+      },
+    );
+
+    expect(selection?.targetDepth).toBe(3);
+    expect(selection?.selectedDepth).toBe(3);
+    expect(selection?.nodes).toHaveLength(5);
+    expect(selection?.nodes.map((node) => node.key)).toContain("3-7-7-0");
+    expect(selection?.nodes.some((node) => node.depth === 1)).toBe(true);
+  });
+
   it("uses the nearest available depth when the target depth is missing", () => {
     const selection = selectHierarchyNodesForCamera(createSparseDepthNodes(), {
       target: { x: 150, y: 50, z: 10 },
@@ -316,6 +335,17 @@ function createSparseDepthNodes(): CopcHierarchyNodeSummary[] {
     createNode("3-6-4-0", 3, 75, 50, 12.5),
     createNode("3-7-3-0", 3, 87.5, 37.5, 12.5),
     createNode("3-7-4-0", 3, 87.5, 50, 12.5),
+  ];
+}
+
+function createSparseCoverageDepthNodes(): CopcHierarchyNodeSummary[] {
+  return [
+    createNode("0-0-0-0", 0, 0, 0, 100),
+    createNode("1-0-0-0", 1, 0, 0, 50),
+    createNode("1-1-0-0", 1, 50, 0, 50),
+    createNode("1-0-1-0", 1, 0, 50, 50),
+    createNode("1-1-1-0", 1, 50, 50, 50),
+    createNode("3-7-7-0", 3, 87.5, 87.5, 12.5),
   ];
 }
 

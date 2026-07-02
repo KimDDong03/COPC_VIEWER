@@ -49,9 +49,11 @@ const CAMERA_STREAM_SLOW_TOTAL_MILLISECONDS = 45_000;
 const CAMERA_STREAM_RECOVERY_TOTAL_MILLISECONDS = 8_000;
 const CAMERA_STREAM_RECOVERY_RENDER_MILLISECONDS = 1_500;
 const CAMERA_STREAM_RECOVERY_STREAK = 3;
-const CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIOS = [0.5] as const;
+const CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIO = 0.25;
 const CAMERA_STREAM_MIN_COVERAGE_POINTS_PER_NODE = 512;
-const CAMERA_STREAM_MIN_FINAL_POINTS_PER_NODE = 8_000;
+const CAMERA_STREAM_MIN_FINAL_POINTS_PER_NODE = 2_000;
+const CAMERA_STREAM_MAX_DETAIL_NODE_COUNT = 24;
+const CAMERA_STREAM_MAX_FINAL_NODE_COUNT = 48;
 const CAMERA_STREAM_MOVE_DEBOUNCE_MILLISECONDS = 180;
 const DEFAULT_AUTO_STREAM_ON_CAMERA_MOVE = true;
 const CAMERA_STREAM_LOD_LEVELS = [
@@ -211,6 +213,8 @@ interface CameraStreamLodSettings {
 }
 
 interface CameraStreamCoveragePass {
+  readonly kind: "coverage" | "detail";
+  readonly nodeKeys: readonly string[];
   readonly maxRenderedPointCount: number;
 }
 
@@ -992,11 +996,24 @@ async function renderAutomaticNodeSetForCameraMove(
       cameraSelection.nodes,
       layer.hierarchy ?? currentHierarchy,
     );
-    const nodeKeySignature = renderNodeKeys.join("|");
+    const coverageNodeKeys = createCameraStreamCoverageNodeKeys(
+      renderNodeKeys,
+      cameraSelection.selectedDepth,
+    );
+    const finalNodeKeys = createCameraStreamFinalNodeKeys(
+      selectedNodeKeys,
+      coverageNodeKeys,
+      renderNodeKeys,
+    );
+    const rendersSelectedDetails = finalNodeKeys === renderNodeKeys;
+    const finalSelectedNodeCount = rendersSelectedDetails
+      ? finalNodeKeys.filter((nodeKey) => selectedNodeKeys.includes(nodeKey)).length
+      : 0;
+    const nodeKeySignature = finalNodeKeys.join("|");
     const streamPointBudgetLimit = Math.max(
       readCameraStreamMaxRenderedPointCount(),
       cameraLodSettings.maxRenderedPointCount,
-      renderNodeKeys.length * CAMERA_STREAM_MIN_FINAL_POINTS_PER_NODE,
+      finalNodeKeys.length * CAMERA_STREAM_MIN_FINAL_POINTS_PER_NODE,
     );
     const streamPointBudget =
       readEffectiveCameraStreamMaxRenderedPointCount(streamPointBudgetLimit);
@@ -1013,24 +1030,25 @@ async function renderAutomaticNodeSetForCameraMove(
       return;
     }
 
-    const coveragePasses = createCameraStreamCoveragePasses(
-      renderNodeKeys.length,
+    const streamPasses = createCameraStreamCoveragePasses(
+      coverageNodeKeys,
+      finalNodeKeys,
       streamPointBudget,
     );
     const streamMaxPointCountPerNode = readMaxPointCountPerNode();
     let renderNodesMilliseconds = 0;
 
     elements.statusText.textContent =
-      coveragePasses.length > 1
-        ? `Streaming ${renderNodeKeys.length.toLocaleString()} COPC nodes covering the current view in ${coveragePasses.length.toLocaleString()} passes...`
-        : `Streaming ${renderNodeKeys.length.toLocaleString()} COPC nodes for ${cameraLodSettings.label} camera position...`;
+      streamPasses.length > 1
+        ? `Streaming the current view in ${streamPasses.length.toLocaleString()} passes: coarse coverage first, then detail...`
+        : `Streaming ${finalNodeKeys.length.toLocaleString()} COPC nodes for ${cameraLodSettings.label} camera position...`;
 
-    for (const [passIndex, coveragePass] of coveragePasses.entries()) {
-      const isFinalPass = passIndex === coveragePasses.length - 1;
+    for (const [passIndex, streamPass] of streamPasses.entries()) {
+      const isFinalPass = passIndex === streamPasses.length - 1;
       const renderNodesStartedAt = performance.now();
-      const result = await layer.renderNodes(renderNodeKeys, {
+      const result = await layer.renderNodes(streamPass.nodeKeys, {
         maxPointCountPerNode: streamMaxPointCountPerNode,
-        maxRenderedPointCount: coveragePass.maxRenderedPointCount,
+        maxRenderedPointCount: streamPass.maxRenderedPointCount,
         showBounds: false,
         signal,
       });
@@ -1047,7 +1065,7 @@ async function renderAutomaticNodeSetForCameraMove(
         renderNodesMilliseconds,
         totalMilliseconds: performance.now() - streamStartedAt,
         loadedHierarchyPageCount: loadedPageKeys.length,
-        selectedNodeCount: renderNodeKeys.length,
+        selectedNodeCount: streamPass.nodeKeys.length,
         selectedDepth: cameraSelection.selectedDepth,
       };
 
@@ -1065,10 +1083,10 @@ async function renderAutomaticNodeSetForCameraMove(
         cameraSelection,
         cameraLodSettings,
         diagnostics,
-        renderedPointBudget: coveragePass.maxRenderedPointCount,
+        renderedPointBudget: streamPass.maxRenderedPointCount,
         statusText: isFinalPass
-          ? `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes (${cameraLodSettings.label}, ${selectedNodeKeys.length.toLocaleString()} selected detail nodes plus coverage ancestors)${formatLoadedHierarchyPages(loadedPageKeys)}.`
-          : `Camera stream coverage pass rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points across ${renderNodeKeys.length.toLocaleString()} visible COPC coverage nodes (${cameraLodSettings.label}, refining detail)${formatLoadedHierarchyPages(loadedPageKeys)}.`,
+          ? `Camera stream rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes (${cameraLodSettings.label}, ${formatFinalNodeMix(finalSelectedNodeCount, finalNodeKeys.length)})${formatLoadedHierarchyPages(loadedPageKeys)}.`
+          : `Camera stream coarse coverage rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} parent COPC nodes for the current view (${cameraLodSettings.label}, loading detail)${formatLoadedHierarchyPages(loadedPageKeys)}.`,
       });
     }
     queueCameraHierarchyPrefetch(layer);
@@ -1135,6 +1153,57 @@ function createCameraStreamRenderNodeKeys(
   return [...renderNodeKeys];
 }
 
+function createCameraStreamCoverageNodeKeys(
+  renderNodeKeys: readonly string[],
+  selectedDepth: number,
+): readonly string[] {
+  const coverageDepthOffset = selectedDepth >= 5 ? 3 : 2;
+  const depthBasedCoverageDepth = selectedDepth - coverageDepthOffset;
+  const maxCoverageDepth = Math.max(0, Math.min(2, depthBasedCoverageDepth));
+  const coverageNodeKeys = renderNodeKeys.filter(
+    (nodeKey) => readNodeKeyDepth(nodeKey) <= maxCoverageDepth,
+  );
+
+  if (coverageNodeKeys.length > 0) {
+    return coverageNodeKeys;
+  }
+
+  return renderNodeKeys;
+}
+
+function createCameraStreamFinalNodeKeys(
+  selectedNodeKeys: readonly string[],
+  coverageNodeKeys: readonly string[],
+  renderNodeKeys: readonly string[],
+): readonly string[] {
+  const shouldRenderSelectedDetails =
+    selectedNodeKeys.length <= CAMERA_STREAM_MAX_DETAIL_NODE_COUNT &&
+    renderNodeKeys.length <= CAMERA_STREAM_MAX_FINAL_NODE_COUNT;
+
+  if (shouldRenderSelectedDetails) {
+    return renderNodeKeys;
+  }
+
+  return coverageNodeKeys.length > 0 ? coverageNodeKeys : renderNodeKeys;
+}
+
+function formatFinalNodeMix(
+  selectedDetailNodeCount: number,
+  finalNodeCount: number,
+): string {
+  if (selectedDetailNodeCount > 0) {
+    return `${selectedDetailNodeCount.toLocaleString()} selected detail nodes plus coverage ancestors`;
+  }
+
+  return `${finalNodeCount.toLocaleString()} coverage nodes for this zoom level`;
+}
+
+function readNodeKeyDepth(nodeKey: string): number {
+  const depth = Number(nodeKey.split("-")[0]);
+
+  return Number.isSafeInteger(depth) && depth >= 0 ? depth : Number.MAX_SAFE_INTEGER;
+}
+
 function createNodeAncestorKeys(nodeKey: string): readonly string[] {
   const [depth, x, y, z] = nodeKey.split("-").map(Number);
 
@@ -1161,10 +1230,11 @@ function createNodeAncestorKeys(nodeKey: string): readonly string[] {
 }
 
 function createCameraStreamCoveragePasses(
-  nodeCount: number,
+  coverageNodeKeys: readonly string[],
+  detailNodeKeys: readonly string[],
   maxRenderedPointCount: number,
 ): readonly CameraStreamCoveragePass[] {
-  if (nodeCount <= 0) {
+  if (detailNodeKeys.length <= 0) {
     return [];
   }
 
@@ -1172,28 +1242,48 @@ function createCameraStreamCoveragePasses(
     maxRenderedPointCount,
     Math.max(
       CAMERA_STREAM_MIN_RENDERED_POINT_COUNT,
-      nodeCount * CAMERA_STREAM_MIN_COVERAGE_POINTS_PER_NODE,
+      coverageNodeKeys.length * CAMERA_STREAM_MIN_COVERAGE_POINTS_PER_NODE,
     ),
   );
-  const pointBudgets = [
-    ...new Set([
-      ...CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIOS.map((ratio) =>
-        Math.max(
-          nodeCount,
-          minimumCoveragePointBudget,
-          Math.floor(maxRenderedPointCount * ratio),
-        ),
-      ).filter(
-        (pointBudget) =>
-          pointBudget >= nodeCount && pointBudget < maxRenderedPointCount,
-      ),
-      maxRenderedPointCount,
-    ]),
-  ];
+  const coarsePointBudget = Math.max(
+    coverageNodeKeys.length,
+    minimumCoveragePointBudget,
+    Math.floor(maxRenderedPointCount * CAMERA_STREAM_COVERAGE_POINT_BUDGET_RATIO),
+  );
+  const passes: CameraStreamCoveragePass[] = [];
+  const rendersCoverageOnly = haveSameNodeKeys(coverageNodeKeys, detailNodeKeys);
 
-  return pointBudgets.map((pointBudget) => ({
-    maxRenderedPointCount: pointBudget,
-  }));
+  if (
+    !rendersCoverageOnly &&
+    coverageNodeKeys.length > 0 &&
+    coarsePointBudget < maxRenderedPointCount
+  ) {
+    passes.push({
+      kind: "coverage",
+      nodeKeys: coverageNodeKeys,
+      maxRenderedPointCount: coarsePointBudget,
+    });
+  }
+
+  passes.push({
+    kind: "detail",
+    nodeKeys: detailNodeKeys,
+    maxRenderedPointCount,
+  });
+
+  return passes;
+}
+
+function haveSameNodeKeys(
+  firstNodeKeys: readonly string[],
+  secondNodeKeys: readonly string[],
+): boolean {
+  if (firstNodeKeys.length !== secondNodeKeys.length) {
+    return false;
+  }
+
+  const firstNodeKeySet = new Set(firstNodeKeys);
+  return secondNodeKeys.every((nodeKey) => firstNodeKeySet.has(nodeKey));
 }
 
 function isCurrentAutomaticStreamRequest(

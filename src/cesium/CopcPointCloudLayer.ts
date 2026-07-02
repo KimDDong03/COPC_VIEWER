@@ -438,11 +438,15 @@ export class CopcPointCloudLayer {
       inspection,
       selectionOptions,
     );
+    const viewDirection =
+      selectionOptions.selectionMode === "coverage"
+        ? undefined
+        : this.cameraDirectionToCopc(camera, inspection, target);
     const selection = selectHierarchyNodesForCamera(frustumFiltered.nodes, {
       ...selectionOptions,
       spacing: spacing ?? inspection.spacing,
       target,
-      viewDirection: this.cameraDirectionToCopc(camera, inspection, target),
+      viewDirection,
       viewportHeightPixels:
         viewportHeightPixels ?? this.scene.canvas.clientHeight,
     });
