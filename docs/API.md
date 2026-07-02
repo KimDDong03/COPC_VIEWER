@@ -223,11 +223,15 @@ number of selected nodes may change as the camera moves.
 
 ## Renderers
 
-`CopcPointCloudLayer` uses `CesiumPointPrimitiveRenderer` by default. It is
-backed by Cesium `PointPrimitiveCollection` and is the stable renderer path for
-now.
+`CopcPointCloudLayer` uses `CesiumBufferPointRenderer` by default. It is backed
+by Cesium `BufferPointCollection`, so the default Cesium submission path is
+GPU-buffer-oriented for the prototype. Cesium currently marks
+`BufferPointCollection` experimental, so `CesiumPointPrimitiveRenderer` remains
+available as a stable fallback.
 
 ```ts
+import { CesiumPointPrimitiveRenderer } from "copc-cesium";
+
 new CopcPointCloudLayer(viewer.scene, {
   url,
   createPointRenderer: (scene) =>
@@ -238,9 +242,8 @@ new CopcPointCloudLayer(viewer.scene, {
 });
 ```
 
-`CesiumBufferPointRenderer` is available for experiments with Cesium
-`BufferPointCollection`, but it should not become the default until larger COPC
-benchmarks show a consistent benefit.
+You can also configure the default GPU buffer renderer explicitly when you need
+to tune point size or outline settings.
 
 ```ts
 import { CesiumBufferPointRenderer } from "copc-cesium";
@@ -321,8 +324,8 @@ This is the boundary that should stay independent of Cesium imports.
 
 ## Current Stability
 
-- Stable default renderer: `CesiumPointPrimitiveRenderer`.
-- Experimental renderer: `CesiumBufferPointRenderer`.
+- Default renderer: experimental `CesiumBufferPointRenderer`.
+- Stable fallback renderer: `CesiumPointPrimitiveRenderer`.
 - Prototype-level camera streaming and Auto LOD.
 - CRS detection is limited. Pass `createProj4CoordinateTransforms` for projected
   COPC files outside the built-in/default cases.

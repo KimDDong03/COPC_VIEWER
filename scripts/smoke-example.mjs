@@ -216,17 +216,19 @@ function createSmokeFlow(baseUrl) {
     "Autzen coordinate transform was not reported.",
   );
   await check(
-    async () => (await metadataValue("Point renderer")) === "PointPrimitiveCollection",
-    "Default point primitive renderer was not reported.",
+    async () =>
+      (await metadataValue("Point renderer")) ===
+      "BufferPointCollection (experimental)",
+    "Default GPU buffer renderer was not reported.",
   );
-  primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
-  primitiveRendererPayload = (await metadataValue("Renderer payload")) ?? "";
+  bufferRendererTiming = (await metadataValue("Renderer timing")) ?? "";
+  bufferRendererPayload = (await metadataValue("Renderer payload")) ?? "";
   await check(
-    async () => parsePointCount(primitiveRendererTiming) >= minDefaultAutoLodPointCount,
+    async () => parsePointCount(bufferRendererTiming) >= minDefaultAutoLodPointCount,
     "Default renderer timing did not report the upgraded Auto LOD point count.",
   );
   await check(
-    async () => primitiveRendererPayload.includes("estimated coordinate/color payload"),
+    async () => bufferRendererPayload.includes("estimated coordinate/color payload"),
     "Default renderer payload estimate was not reported.",
   );
   await check(
@@ -234,23 +236,21 @@ function createSmokeFlow(baseUrl) {
     "Projection controls should be disabled for sample presets.",
   );
 
-  await page.getByLabel("Renderer").selectOption("buffer");
+  await page.getByLabel("Renderer").selectOption("primitive");
   await waitForRenderedStatus();
-  bufferRendererTiming = (await metadataValue("Renderer timing")) ?? "";
-  bufferRendererPayload = (await metadataValue("Renderer payload")) ?? "";
+  primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
+  primitiveRendererPayload = (await metadataValue("Renderer payload")) ?? "";
   await check(
-    async () =>
-      (await metadataValue("Point renderer")) ===
-      "BufferPointCollection (experimental)",
-    "Experimental buffer point renderer was not reported.",
+    async () => (await metadataValue("Point renderer")) === "PointPrimitiveCollection",
+    "Point primitive renderer was not reported after switching renderer.",
   );
   await check(
-    async () => parsePointCount(bufferRendererTiming) >= minDefaultAutoLodPointCount,
-    "Buffer renderer timing did not report the upgraded Auto LOD point count.",
+    async () => parsePointCount(primitiveRendererTiming) >= minDefaultAutoLodPointCount,
+    "Primitive renderer timing did not report the upgraded Auto LOD point count.",
   );
   await check(
-    async () => bufferRendererPayload.includes("estimated coordinate/color payload"),
-    "Buffer renderer payload estimate was not reported.",
+    async () => primitiveRendererPayload.includes("estimated coordinate/color payload"),
+    "Primitive renderer payload estimate was not reported.",
   );
 
   await page.getByLabel("Sample").selectOption("sofi-stadium");

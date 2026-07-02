@@ -88,15 +88,15 @@ The same browser rendering smoke is available as the manual GitHub Actions workf
 The runnable prototype lives in `examples/basic-viewer`. The root `src` folder contains reusable COPC and Cesium integration code used by that example.
 Reusable source entry points are `src/index.ts`, `src/core/index.ts`, and `src/cesium/index.ts`; package exports expose built JS and type declarations as `copc-cesium`, `copc-cesium/core`, and `copc-cesium/cesium`.
 `CopcPointCloudLayer` is the first thin Cesium-facing API: it owns a `CopcSource`, point renderer, bounds renderer, and simple camera-based node rendering helpers.
-The default point renderer is `CesiumPointPrimitiveRenderer`, backed by Cesium `PointPrimitiveCollection`. `CopcPointCloudLayer` also accepts a `createPointRenderer` factory so renderer backends can be swapped without changing COPC loading logic. `CesiumBufferPointRenderer` is an experimental GPU-buffer backend backed by Cesium `BufferPointCollection`; `CesiumPointRenderer` remains as a compatibility alias.
+The default point renderer is now `CesiumBufferPointRenderer`, an experimental GPU-buffer backend backed by Cesium `BufferPointCollection`. `CopcPointCloudLayer` also accepts a `createPointRenderer` factory so renderer backends can be swapped without changing COPC loading logic. `CesiumPointPrimitiveRenderer` remains available as the stable point-primitive fallback, and `CesiumPointRenderer` remains as a compatibility alias.
 
 The default example URL loads the public Autzen COPC sample, reads the root hierarchy, renders an initial node to place the camera, then automatically renders a denser camera-selected coverage LOD set.
-Balanced detail mode now targets up to 240,000 Auto LOD points with 2 px point primitives and selects coverage nodes through depth 3 so the visible COPC footprint is filled more like tiles instead of only showing the nearest few nodes.
+Balanced detail mode now targets up to 240,000 Auto LOD points with 2 px GPU buffer points and selects coverage nodes through depth 3 so the visible COPC footprint is filled more like tiles instead of only showing the nearest few nodes.
 The example keeps sample COPC URLs and their transform factories in a small preset list while still allowing direct custom URL entry.
 Bundled sample presets use the Vite `/copc-samples/*` proxy so local dev and preview runs can issue same-origin COPC range requests even when a browser blocks direct S3 requests.
 For custom URLs, the example can also accept a source CRS and optional proj4 definition before loading the COPC file.
 The hierarchy node selector lists currently loaded nodes and lets the example render one selected node at a time.
-The renderer selector can switch between the stable point-primitive renderer and the experimental buffer-backed renderer.
+The renderer selector starts on the GPU buffer renderer and can switch back to the stable point-primitive renderer for comparison.
 The Quality selector switches between fast preview, balanced detail, high detail, and ultra density presets. These presets tune the point budget and point pixel size together so the example can show a denser cloud without oversized marker dots.
 The Max points / node input controls the active `CopcPointCloudLayer` sample budget, which makes manual and automated renderer comparison possible without changing source code.
 The Camera stream points input controls the maximum point budget used by `Stream on camera move`; the example can temporarily lower the effective stream budget after slow updates and recover it after repeated fast updates.

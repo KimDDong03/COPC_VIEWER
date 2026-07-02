@@ -159,6 +159,7 @@ const POINT_RENDERER_LABELS = {
   primitive: "PointPrimitiveCollection",
   buffer: "BufferPointCollection (experimental)",
 } as const;
+const DEFAULT_POINT_RENDERER_KIND: PointRendererKind = "buffer";
 
 type PointRendererKind = keyof typeof POINT_RENDERER_LABELS;
 type RenderQuality = keyof typeof RENDER_QUALITY_SETTINGS;
@@ -232,7 +233,7 @@ let currentHierarchy: CopcHierarchySummary | undefined;
 let currentCoordinateTransform: CopcCoordinateTransformStatus | undefined;
 let currentSuggestion: CopcHierarchyNodeSuggestion | undefined;
 let currentSource: CopcSourceConfig = DEFAULT_SAMPLE_COPC_SOURCE;
-let currentPointRendererKind: PointRendererKind = "primitive";
+let currentPointRendererKind: PointRendererKind = DEFAULT_POINT_RENDERER_KIND;
 let lastCameraStreamDiagnostics: CameraStreamDiagnostics | undefined;
 let automaticStreamRequestId = 0;
 let automaticStreamAbortController: AbortController | undefined;
@@ -1603,7 +1604,9 @@ function readCustomProjectionOptions(): CustomCopcProjectionOptions {
 }
 
 function readPointRendererKind(): PointRendererKind {
-  return elements.rendererSelect.value === "buffer" ? "buffer" : "primitive";
+  return elements.rendererSelect.value === "primitive"
+    ? "primitive"
+    : DEFAULT_POINT_RENDERER_KIND;
 }
 
 function initializeRendererBenchmarkControls(): void {

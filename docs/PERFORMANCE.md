@@ -39,7 +39,7 @@ that global threshold for local experiments.
 
 ## Current Local Result
 
-Measured on 2026-07-01 with:
+Measured on 2026-07-01 with the previous point-primitive default:
 
 - Sources: Autzen classified, SoFi Stadium, Custom SoFi URL
 - Renderer: `PointPrimitiveCollection`
@@ -62,11 +62,26 @@ Measured on 2026-07-01 with:
 | Custom SoFi URL | 10,000 | 10,000 | 19.6 | 424.95 ms | 600.00 ms | 27 |
 | Custom SoFi URL | 20,000 | 20,000 | 15.6 | 449.95 ms | 533.40 ms | 34 |
 
+## Renderer Benchmark Checkpoint
+
+Measured on 2026-07-02 with `COPC_BENCHMARK_POINT_COUNT=10000` and
+`COPC_BENCHMARK_REPEATS=1`:
+
+| Renderer | Points | Transform | Renderer submit | Total |
+| --- | ---: | ---: | ---: | ---: |
+| `PointPrimitiveCollection` | 10,000 | 56.3 ms | 4.8 ms | 62.1 ms |
+| `BufferPointCollection` | 10,000 | 60.7 ms | 14.9 ms | 76.2 ms |
+
+The current Cesium `BufferPointCollection` path is useful as a GPU-buffer-facing
+prototype default, but this checkpoint does not show a CPU submission-time win
+over point primitives at 10,000 points. The next performance step should avoid
+per-point Cesium object submission entirely with a custom typed-array primitive.
+
 ## Current Default
 
 The basic viewer starts in Balanced detail mode: 120,000 max points per node,
 240,000 max Auto LOD points, 120,000 max camera-stream points, and 2 px point
-primitives. The initial load renders one real COPC node to place the camera,
+GPU buffer points. The initial load renders one real COPC node to place the camera,
 then automatically renders a denser camera-selected coverage LOD set through
 depth 3. The stream input acts as a maximum budget: camera streaming can lower
 the effective point budget after slow visible updates and gradually recover it

@@ -1,7 +1,6 @@
 import { Viewer } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import {
-  CesiumPointPrimitiveRenderer,
   CopcPointCloudLayer,
   createProj4CoordinateTransforms,
   type CopcPointCloudLayerLoadResult,
@@ -44,7 +43,6 @@ export async function mountMinimalCopcLayerExample(
     url: options.url,
     maxPointCountPerNode: options.maxPointCountPerNode ?? 5_000,
     pointSampleLoading: "worker",
-    createPointRenderer: (scene) => new CesiumPointPrimitiveRenderer(scene),
     coordinateTransforms: options.sourceCrs
       ? createProj4CoordinateTransforms({
           sourceCrs: options.sourceCrs,
