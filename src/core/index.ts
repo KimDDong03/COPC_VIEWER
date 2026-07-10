@@ -15,18 +15,32 @@ export type {
   CopcMultiNodePointSampleResult,
   CopcNodePointSampleResult,
   CopcPointColor,
+  CopcPointDataSampleArrays,
   CopcPointDataSample,
   CopcPointSampleCacheStats,
+  CopcPointSampleFormat,
 } from "./copc/CopcPointDataSample";
 export {
   CopcSource,
+  type CopcSourceDescriptor,
+  type CopcSourceInput,
   type CopcPointSampleLoadingMode,
+  type CopcPointSampleWorkerWarmupOptions,
   type CopcSourceOptions,
   type LoadHierarchyPagesResult,
   type LoadNodePointSamplesOptions,
   type LoadNodesPointSamplesOptions,
 } from "./copc/CopcSource";
 export { createCopcPointSampleWorker } from "./copc/createCopcPointSampleWorker";
+export {
+  createCachedRangeGetter,
+  type CopcRangeGetterCacheOptions,
+} from "./copc/createCachedRangeGetter";
+export {
+  createCopcRangeGetter,
+  type CopcRangeGetterOptions,
+} from "./copc/createCopcRangeGetter";
+export { createHttpRangeGetter } from "./copc/createHttpRangeGetter";
 export type {
   CopcPointSampleWorkerRequest,
   CopcPointSampleWorkerResponse,
@@ -41,6 +55,7 @@ export {
 } from "./copc/selectHierarchyPagesForTarget";
 export {
   selectHierarchyNodesForCamera,
+  type CopcHierarchyNodeCoverageMode,
   type CopcHierarchyNodeCameraSelection,
   type CopcHierarchyNodeDepthEstimate,
   type CopcHierarchyNodeSelectionMode,

@@ -1,4 +1,8 @@
 import type { Getter } from "copc";
+import {
+  createCachedRangeGetter,
+  type CopcRangeGetterCacheOptions,
+} from "./createCachedRangeGetter";
 
 const MAX_RANGE_REQUEST_ATTEMPTS = 3;
 const RANGE_REQUEST_RETRY_DELAY_MILLISECONDS = 75;
@@ -10,21 +14,28 @@ class RetriableCopcRangeRequestError extends Error {
   }
 }
 
-export function createHttpRangeGetter(url: string): Getter {
+export function createHttpRangeGetter(
+  url: string,
+  options: CopcRangeGetterCacheOptions = {},
+): Getter {
   const parsedUrl = createHttpUrl(url);
 
-  return async (begin: number, end: number): Promise<Uint8Array> => {
+  return createCachedRangeGetter(async (begin: number, end: number) => {
     if (
       !Number.isSafeInteger(begin) ||
       !Number.isSafeInteger(end) ||
       begin < 0 ||
-      end <= begin
+      end < begin
     ) {
       throw new Error(`Invalid byte range: ${begin}-${end}`);
     }
 
+    if (end === begin) {
+      return new Uint8Array();
+    }
+
     return fetchRangeWithRetries(parsedUrl, begin, end);
-  };
+  }, options);
 }
 
 async function fetchRangeWithRetries(

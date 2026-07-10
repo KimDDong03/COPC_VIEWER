@@ -1,5 +1,9 @@
 import type { Hierarchy } from "copc";
-import type { CopcNodePointSampleResult } from "./CopcPointDataSample";
+import type { CopcSourceDescriptor } from "./createCopcRangeGetter";
+import type {
+  CopcNodePointSampleResult,
+  CopcPointSampleFormat,
+} from "./CopcPointDataSample";
 
 export type CopcPointSampleWorkerRequest =
   | CopcPointSampleWorkerLoadRequest
@@ -8,10 +12,14 @@ export type CopcPointSampleWorkerRequest =
 export interface CopcPointSampleWorkerLoadRequest {
   readonly id: number;
   readonly type: "loadNodePointSamples";
-  readonly url: string;
+  readonly source?: CopcSourceDescriptor;
+  readonly url?: string;
   readonly nodeKey: string;
   readonly node: Hierarchy.Node;
   readonly maxPointCount: number;
+  readonly sampleFormat?: CopcPointSampleFormat;
+  readonly maxDecodedPointDataViews?: number;
+  readonly maxDecodedPointDataViewBytes?: number;
 }
 
 export interface CopcPointSampleWorkerCancelRequest {

@@ -158,12 +158,234 @@ describe("Cesium renderer lifecycle", () => {
     );
   });
 
+  it("reuses typed-array primitive chunks for unchanged node batches", () => {
+    const { addedPrimitives, removedPrimitives, scene } = createSceneStub();
+    const renderer = new CesiumPrimitivePointRenderer(scene, {
+      maxBatchesPerPrimitive: 2,
+    });
+
+    renderer.setPointBatches([
+      {
+        key: "0-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127,
+            latitudeDegrees: 37,
+            heightMeters: 10,
+          },
+        ],
+      },
+      {
+        key: "1-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127.001,
+            latitudeDegrees: 37.001,
+            heightMeters: 15,
+          },
+        ],
+      },
+    ]);
+
+    expect(addedPrimitives).toHaveLength(1);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointBatches([
+      {
+        key: "0-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127,
+            latitudeDegrees: 37,
+            heightMeters: 10,
+          },
+        ],
+      },
+      {
+        key: "1-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127.001,
+            latitudeDegrees: 37.001,
+            heightMeters: 15,
+          },
+        ],
+      },
+    ]);
+
+    expect(addedPrimitives).toHaveLength(1);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointBatches([
+      {
+        key: "0-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127,
+            latitudeDegrees: 37,
+            heightMeters: 10,
+          },
+        ],
+      },
+      {
+        key: "1-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127.001,
+            latitudeDegrees: 37.001,
+            heightMeters: 15,
+          },
+        ],
+      },
+      {
+        key: "2-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127.002,
+            latitudeDegrees: 37.002,
+            heightMeters: 20,
+          },
+        ],
+      },
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointBatches([
+      {
+        key: "0-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127,
+            latitudeDegrees: 37,
+            heightMeters: 10,
+          },
+        ],
+      },
+      {
+        key: "1-0-0-0:1",
+        points: [
+          {
+            longitudeDegrees: 127.001,
+            latitudeDegrees: 37.001,
+            heightMeters: 15,
+          },
+        ],
+      },
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(1);
+
+    renderer.clear();
+    renderer.destroy();
+
+    expect(removedPrimitives).toHaveLength(2);
+  });
+
+  it("reuses primitive chunks for unchanged geometry batches", () => {
+    const { addedPrimitives, removedPrimitives, scene } = createSceneStub();
+    const renderer = new CesiumPrimitivePointRenderer(scene, {
+      maxBatchesPerPrimitive: 2,
+    });
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(1);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(1);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+      createPointGeometryBatch("2-0-0-0:1", 127.002, 37.002, 20),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(1);
+
+    renderer.clear();
+    renderer.destroy();
+
+    expect(removedPrimitives).toHaveLength(2);
+  });
+
+  it("keeps default geometry batches as stable per-node primitives", () => {
+    const { addedPrimitives, removedPrimitives, scene } = createSceneStub();
+    const renderer = new CesiumPrimitivePointRenderer(scene);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(1);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.setPointGeometryBatches([
+      createPointGeometryBatch("0-0-0-0:1", 127, 37, 10),
+      createPointGeometryBatch("1-0-0-0:1", 127.001, 37.001, 15),
+    ]);
+
+    expect(addedPrimitives).toHaveLength(2);
+    expect(removedPrimitives).toHaveLength(0);
+
+    renderer.clear();
+    renderer.destroy();
+
+    expect(removedPrimitives).toHaveLength(2);
+  });
+
   it("rejects invalid typed-array primitive styling options", () => {
     const { scene } = createSceneStub();
 
     expect(
       () => new CesiumPrimitivePointRenderer(scene, { pointSize: 0 }),
     ).toThrow("pointSize must be a positive number.");
+    expect(
+      () =>
+        new CesiumPrimitivePointRenderer(scene, {
+          maxBatchesPerPrimitive: 0,
+        }),
+    ).toThrow("maxBatchesPerPrimitive must be a positive integer.");
+    expect(
+      () =>
+        new CesiumPrimitivePointRenderer(scene, {
+          maxGeometryBatchesPerPrimitive: 0,
+        }),
+    ).toThrow("maxGeometryBatchesPerPrimitive must be a positive integer.");
+    expect(
+      () =>
+        new CesiumPrimitivePointRenderer(scene, {
+          maxPointsPerPrimitive: 0,
+        }),
+    ).toThrow("maxPointsPerPrimitive must be a positive integer.");
   });
 
   it("removes bounds primitive collections once when destroyed", () => {
@@ -204,6 +426,20 @@ function createSceneStub(): {
         },
       },
     } as unknown as Scene,
+  };
+}
+
+function createPointGeometryBatch(
+  key: string,
+  x: number,
+  y: number,
+  z: number,
+) {
+  return {
+    key,
+    pointCount: 1,
+    positions: new Float64Array([x, y, z]),
+    colors: new Uint8Array([1, 2, 3, 255]),
   };
 }
 

@@ -33,7 +33,7 @@
             type="number"
             min="1"
             step="1"
-            value="120000"
+            value="180000"
           />
           <label for="copc-camera-stream-point-budget">Camera stream points</label>
           <input
@@ -42,7 +42,7 @@
             type="number"
             min="1"
             step="1"
-            value="120000"
+            value="360000"
           />
           <label class="copc-url-label" for="copc-url">COPC URL</label>
           <div class="copc-controls">
@@ -53,6 +53,13 @@
             />
             <button type="submit">Inspect</button>
           </div>
+          <label class="copc-file-label" for="copc-file">Local COPC file</label>
+          <input
+            id="copc-file"
+            name="copc-file"
+            type="file"
+            accept=".copc,.laz,.las,.copc.laz"
+          />
           <div class="copc-projection-controls">
             <label for="copc-source-crs">Source CRS</label>
             <input
@@ -74,7 +81,7 @@
         </form>
         <label class="copc-node-label" for="copc-node-select">Hierarchy node</label>
         <select id="copc-node-select" disabled>
-          <option value="">Load a COPC URL first</option>
+          <option value="">Load a COPC source first</option>
         </select>
         <div class="copc-hierarchy-pages">
           <p id="copc-hierarchy-pages">Hierarchy pages: not loaded.</p>

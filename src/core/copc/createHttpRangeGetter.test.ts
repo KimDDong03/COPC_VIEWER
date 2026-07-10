@@ -27,6 +27,34 @@ describe("createHttpRangeGetter", () => {
     );
   });
 
+  it("returns an empty buffer for valid zero-length range reads", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+    const bytes = await getter(0, 0);
+
+    expect([...bytes]).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("caches repeated exact HTTP byte range reads", async () => {
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([7, 8]), {
+      status: 206,
+    }));
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+    const first = await getter(50, 52);
+    first[0] = 99;
+    const second = await getter(50, 52);
+
+    expect([...second]).toEqual([7, 8]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("retries transient browser range fetch failures", async () => {
     const fetchMock = vi
       .fn()

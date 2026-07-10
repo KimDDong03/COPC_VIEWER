@@ -1,10 +1,10 @@
 import type { CopcNodePointSampleResult } from "./CopcPointDataSample";
-import { CopcSource } from "./CopcSource";
+import { CopcSource, type CopcSourceInput } from "./CopcSource";
 import type { LoadNodePointSamplesOptions } from "./CopcSource";
 
 export async function loadNodePointSamples(
-  url: string,
+  input: CopcSourceInput,
   options: LoadNodePointSamplesOptions = {},
 ): Promise<CopcNodePointSampleResult> {
-  return new CopcSource(url).loadNodePointSamples(options);
+  return new CopcSource(input).loadNodePointSamples(options);
 }

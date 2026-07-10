@@ -35,6 +35,8 @@ export interface CopcHierarchySummary {
 export interface CopcHierarchyCacheStats {
   readonly loadedPageCount: number;
   readonly maxCachedPageCount: number;
+  readonly loadedPageBytes: number;
+  readonly maxCachedPageBytes: number;
   readonly pendingPageCount: number;
   readonly trackedNodeCount: number;
   readonly trackedPendingPageCount: number;

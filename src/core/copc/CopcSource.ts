@@ -1,11 +1,16 @@
 import { Copc } from "copc";
 import type { Copc as CopcData, Getter, Hierarchy } from "copc";
-import { createHttpRangeGetter } from "./createHttpRangeGetter";
+import {
+  createCopcRangeGetter,
+  createCopcSourceDescriptor,
+  createCopcSourceLabel,
+  type CopcSourceDescriptor,
+  type CopcSourceInput,
+} from "./createCopcRangeGetter";
 import { createCopcPointSampleWorker } from "./createCopcPointSampleWorker";
 import { loadCopcNodePointSamples } from "./loadCopcNodePointSamples";
 import type {
   CopcPointSampleWorkerLoadRequest,
-  CopcPointSampleWorkerRequest,
   CopcPointSampleWorkerResponse,
 } from "./CopcPointSampleWorkerProtocol";
 import type {
@@ -22,13 +27,19 @@ import type {
 import type {
   CopcMultiNodePointSampleResult,
   CopcNodePointSampleResult,
+  CopcPointDataSampleArrays,
   CopcPointDataSample,
   CopcPointSampleCacheStats,
+  CopcPointSampleFormat,
 } from "./CopcPointDataSample";
+
+export type { CopcSourceDescriptor, CopcSourceInput };
 
 export interface LoadNodePointSamplesOptions {
   readonly nodeKey?: string;
   readonly maxPointCount?: number;
+  readonly sampleFormat?: CopcPointSampleFormat;
+  readonly requestPriority?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -36,6 +47,8 @@ export interface LoadNodesPointSamplesOptions {
   readonly nodeKeys: readonly string[];
   readonly maxPointCountPerNode?: number;
   readonly maxTotalSampledPointCount?: number;
+  readonly sampleFormat?: CopcPointSampleFormat;
+  readonly requestPriority?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -46,11 +59,18 @@ export interface LoadHierarchyPagesResult {
 
 export interface CopcSourceOptions {
   readonly maxCachedHierarchyPages?: number;
+  readonly maxCachedHierarchyPageBytes?: number;
   readonly maxCachedSampleSets?: number;
   readonly maxCachedPointSampleBytes?: number;
+  readonly maxDecodedPointDataViewsPerWorker?: number;
+  readonly maxDecodedPointDataViewBytesPerWorker?: number;
   readonly maxConcurrentPointSampleWorkerRequests?: number;
   readonly pointSampleLoading?: CopcPointSampleLoadingMode;
   readonly createPointSampleWorker?: () => Worker;
+}
+
+export interface CopcPointSampleWorkerWarmupOptions {
+  readonly workerCount?: number;
 }
 
 export type CopcPointSampleLoadingMode = "main-thread" | "worker";
@@ -58,6 +78,7 @@ export type CopcPointSampleLoadingMode = "main-thread" | "worker";
 const DEFAULT_MAX_POINT_COUNT = 5_000;
 const DEFAULT_NODE_KEY = "0-0-0-0";
 const DEFAULT_MAX_CACHED_HIERARCHY_PAGES = 64;
+const DEFAULT_MAX_CACHED_HIERARCHY_PAGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CACHED_SAMPLE_SETS = 32;
 const DEFAULT_MAX_CACHED_POINT_SAMPLE_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_POINT_SAMPLE_WORKER_REQUESTS = 3;
@@ -66,7 +87,16 @@ const POINT_SAMPLE_COLOR_BYTES = 3;
 
 interface PointSampleCacheEntry {
   readonly promise: Promise<CopcNodePointSampleResult>;
+  readonly nodeKey: string;
+  readonly maxPointCount: number;
+  readonly sampleFormat: CopcPointSampleFormat;
+  readonly priority: PointSamplePriorityHandle;
+  state: "pending" | "fulfilled";
   estimatedByteSize: number;
+}
+
+interface PointSamplePriorityHandle {
+  value: number;
 }
 
 interface HierarchyPageCacheEntry {
@@ -77,21 +107,33 @@ interface HierarchyPageCacheEntry {
 }
 
 interface PointSampleWorkerRequestEntry {
-  readonly worker: Worker;
-  readonly request: CopcPointSampleWorkerLoadRequest;
+  worker?: Worker;
+  request: CopcPointSampleWorkerLoadRequest;
+  readonly consumers: PointSampleWorkerRequestConsumer[];
+  priority: number;
+  state: "queued" | "active";
+}
+
+interface PointSampleWorkerRequestConsumer {
   readonly signal?: AbortSignal;
+  readonly maxPointCount: number;
+  priority: number;
   readonly cleanup: () => void;
   readonly resolve: (result: CopcNodePointSampleResult) => void;
   readonly reject: (error: unknown) => void;
-  state: "queued" | "active";
 }
 
 export class CopcSource {
   readonly url: string;
+  readonly input: CopcSourceInput;
+  readonly sourceKey: string;
 
   private readonly maxCachedSampleSets: number;
   private readonly maxCachedPointSampleBytes: number;
   private readonly maxCachedHierarchyPages: number;
+  private readonly maxCachedHierarchyPageBytes: number;
+  private readonly maxDecodedPointDataViewsPerWorker: number | undefined;
+  private readonly maxDecodedPointDataViewBytesPerWorker: number | undefined;
   private readonly maxConcurrentPointSampleWorkerRequests: number;
   private readonly pointSampleLoading: CopcPointSampleLoadingMode;
   private readonly createPointSampleWorker: () => Worker;
@@ -118,19 +160,26 @@ export class CopcSource {
     PointSampleWorkerRequestEntry
   >();
   private readonly pointSampleWorkerQueue: PointSampleWorkerRequestEntry[] = [];
+  private readonly decodedNodePointSampleWorkers = new Map<string, Worker>();
   private cachedPointSampleBytes = 0;
+  private cachedHierarchyPageBytes = 0;
   private hierarchyPageCacheEvictionCount = 0;
   private pointSampleCacheHitCount = 0;
   private pointSampleCacheMissCount = 0;
   private pointSampleCacheEvictionCount = 0;
-  private pointSampleWorker: Worker | undefined;
+  private readonly pointSampleWorkers: Worker[] = [];
+  private readonly activePointSampleWorkers = new Set<Worker>();
   private pointSampleWorkerUnavailable = false;
   private pointSampleWorkerRequestId = 0;
-  private activePointSampleWorkerRequestCount = 0;
 
-  constructor(url: string, options: CopcSourceOptions = {}) {
+  private readonly sourceDescriptor: CopcSourceDescriptor;
+
+  constructor(input: CopcSourceInput, options: CopcSourceOptions = {}) {
     const maxCachedHierarchyPages =
       options.maxCachedHierarchyPages ?? DEFAULT_MAX_CACHED_HIERARCHY_PAGES;
+    const maxCachedHierarchyPageBytes =
+      options.maxCachedHierarchyPageBytes ??
+      DEFAULT_MAX_CACHED_HIERARCHY_PAGE_BYTES;
     const maxCachedSampleSets =
       options.maxCachedSampleSets ?? DEFAULT_MAX_CACHED_SAMPLE_SETS;
     const maxCachedPointSampleBytes =
@@ -145,6 +194,15 @@ export class CopcSource {
       maxCachedHierarchyPages <= 0
     ) {
       throw new Error("maxCachedHierarchyPages must be a positive integer.");
+    }
+
+    if (
+      !Number.isSafeInteger(maxCachedHierarchyPageBytes) ||
+      maxCachedHierarchyPageBytes <= 0
+    ) {
+      throw new Error(
+        "maxCachedHierarchyPageBytes must be a positive integer.",
+      );
     }
 
     if (
@@ -170,6 +228,14 @@ export class CopcSource {
       );
     }
 
+    this.maxDecodedPointDataViewsPerWorker = readOptionalPositiveInteger(
+      "maxDecodedPointDataViewsPerWorker",
+      options.maxDecodedPointDataViewsPerWorker,
+    );
+    this.maxDecodedPointDataViewBytesPerWorker = readOptionalPositiveInteger(
+      "maxDecodedPointDataViewBytesPerWorker",
+      options.maxDecodedPointDataViewBytesPerWorker,
+    );
     if (
       options.pointSampleLoading !== undefined &&
       options.pointSampleLoading !== "main-thread" &&
@@ -180,8 +246,12 @@ export class CopcSource {
       );
     }
 
-    this.url = url;
+    this.input = input;
+    this.sourceDescriptor = createCopcSourceDescriptor(input);
+    this.sourceKey = this.sourceDescriptor.key;
+    this.url = createCopcSourceLabel(input);
     this.maxCachedHierarchyPages = maxCachedHierarchyPages;
+    this.maxCachedHierarchyPageBytes = maxCachedHierarchyPageBytes;
     this.maxCachedSampleSets = maxCachedSampleSets;
     this.maxCachedPointSampleBytes = maxCachedPointSampleBytes;
     this.maxConcurrentPointSampleWorkerRequests =
@@ -191,7 +261,11 @@ export class CopcSource {
       (options.createPointSampleWorker ? "worker" : "main-thread");
     this.createPointSampleWorker =
       options.createPointSampleWorker ?? createCopcPointSampleWorker;
-    this.getter = createHttpRangeGetter(url);
+    this.getter = createCopcRangeGetter(input);
+  }
+
+  getDescriptor(): CopcSourceDescriptor {
+    return this.sourceDescriptor;
   }
 
   inspect(): Promise<CopcInspection> {
@@ -304,12 +378,15 @@ export class CopcSource {
     return {
       loadedPageCount: this.loadedHierarchyPages.size,
       maxCachedPageCount: this.maxCachedHierarchyPages,
+      loadedPageBytes: this.cachedHierarchyPageBytes,
+      maxCachedPageBytes: this.maxCachedHierarchyPageBytes,
       pendingPageCount: this.hierarchyPendingPageIds.size,
       trackedNodeCount: this.hierarchyNodePageIds.size,
       trackedPendingPageCount: this.hierarchyPendingPageIds.size,
       cacheEvictionCount: this.hierarchyPageCacheEvictionCount,
       isOverLimit:
-        this.loadedHierarchyPages.size > this.maxCachedHierarchyPages,
+        this.loadedHierarchyPages.size > this.maxCachedHierarchyPages ||
+        this.cachedHierarchyPageBytes > this.maxCachedHierarchyPageBytes,
     };
   }
 
@@ -320,26 +397,55 @@ export class CopcSource {
 
     const maxPointCount = options.maxPointCount ?? DEFAULT_MAX_POINT_COUNT;
     const nodeKey = options.nodeKey ?? DEFAULT_NODE_KEY;
+    const sampleFormat = options.sampleFormat ?? "objects";
+    const requestPriority = readOptionalFiniteNumber(
+      "requestPriority",
+      options.requestPriority,
+      0,
+    );
 
     if (!Number.isSafeInteger(maxPointCount) || maxPointCount <= 0) {
       throw new Error("maxPointCount must be a positive integer.");
     }
 
-    const cacheKey = `${nodeKey}:${maxPointCount}`;
+    const cacheKey = `${nodeKey}:${maxPointCount}:${sampleFormat}`;
     const cached = this.nodePointSampleCache.get(cacheKey);
 
     if (cached) {
-      this.pointSampleCacheHitCount += 1;
-      this.nodePointSampleCache.delete(cacheKey);
-      this.nodePointSampleCache.set(cacheKey, cached);
-      return withAbortSignal(cached.promise, options.signal);
+      return this.returnCachedPointSample(
+        cacheKey,
+        cached,
+        maxPointCount,
+        requestPriority,
+        options.signal,
+      );
+    }
+
+    const reusableCached = this.findReusablePointSampleCacheEntry(
+      nodeKey,
+      maxPointCount,
+      sampleFormat,
+      requestPriority,
+    );
+
+    if (reusableCached) {
+      return this.returnCachedPointSample(
+        reusableCached.cacheKey,
+        reusableCached.entry,
+        maxPointCount,
+        requestPriority,
+        options.signal,
+      );
     }
 
     this.pointSampleCacheMissCount += 1;
     let entry: PointSampleCacheEntry;
+    const priority: PointSamplePriorityHandle = { value: requestPriority };
     const promise = this.loadNodePointSamplesWithoutCache(
       nodeKey,
       maxPointCount,
+      sampleFormat,
+      priority,
       options.signal,
     )
       .then((result) => {
@@ -347,6 +453,7 @@ export class CopcSource {
           return result;
         }
 
+        entry.state = "fulfilled";
         const estimatedByteSize = estimatePointSampleResultByteSize(result);
         this.cachedPointSampleBytes +=
           estimatedByteSize - entry.estimatedByteSize;
@@ -363,11 +470,97 @@ export class CopcSource {
       });
     entry = {
       promise,
+      nodeKey,
+      maxPointCount,
+      sampleFormat,
+      priority,
+      state: "pending",
       estimatedByteSize: 0,
     };
     this.nodePointSampleCache.set(cacheKey, entry);
     this.evictPointSampleCacheIfNeeded();
     return promise;
+  }
+
+  private findReusablePointSampleCacheEntry(
+    nodeKey: string,
+    maxPointCount: number,
+    sampleFormat: CopcPointSampleFormat,
+    requestPriority: number,
+  ): { readonly cacheKey: string; readonly entry: PointSampleCacheEntry } | undefined {
+    return [...this.nodePointSampleCache.entries()]
+      .filter(
+        ([, entry]) =>
+          entry.nodeKey === nodeKey &&
+          entry.sampleFormat === sampleFormat &&
+          entry.maxPointCount >= maxPointCount &&
+          !(
+            entry.state === "pending" &&
+            entry.maxPointCount > maxPointCount &&
+            entry.priority.value < requestPriority
+          ),
+      )
+      .sort(([, first], [, second]) => first.maxPointCount - second.maxPointCount)
+      .map(([cacheKey, entry]) => ({ cacheKey, entry }))[0];
+  }
+
+  private returnCachedPointSample(
+    cacheKey: string,
+    entry: PointSampleCacheEntry,
+    maxPointCount: number,
+    requestPriority: number,
+    signal: AbortSignal | undefined,
+  ): Promise<CopcNodePointSampleResult> {
+    this.pointSampleCacheHitCount += 1;
+    this.raisePointSampleCacheEntryPriority(entry, requestPriority);
+    this.nodePointSampleCache.delete(cacheKey);
+    this.nodePointSampleCache.set(cacheKey, entry);
+
+    return withAbortSignal(
+      entry.promise.then((result) =>
+        downsamplePointSampleResult(result, maxPointCount),
+      ),
+      signal,
+    );
+  }
+
+  private raisePointSampleCacheEntryPriority(
+    entry: PointSampleCacheEntry,
+    requestPriority: number,
+  ): void {
+    if (requestPriority <= entry.priority.value) {
+      return;
+    }
+
+    entry.priority.value = requestPriority;
+    this.raisePendingPointSampleWorkerRequestPriority(
+      entry.nodeKey,
+      entry.maxPointCount,
+      entry.sampleFormat,
+      requestPriority,
+    );
+  }
+
+  private raisePendingPointSampleWorkerRequestPriority(
+    nodeKey: string,
+    maxPointCount: number,
+    sampleFormat: CopcPointSampleFormat,
+    requestPriority: number,
+  ): void {
+    for (const request of this.pointSampleWorkerRequests.values()) {
+      if (
+        request.request.nodeKey !== nodeKey ||
+        request.request.sampleFormat !== sampleFormat ||
+        request.request.maxPointCount < maxPointCount
+      ) {
+        continue;
+      }
+
+      request.priority = Math.max(request.priority, requestPriority);
+      for (const consumer of request.consumers) {
+        consumer.priority = Math.max(consumer.priority, requestPriority);
+      }
+    }
   }
 
   getPointSampleCacheStats(): CopcPointSampleCacheStats {
@@ -387,6 +580,43 @@ export class CopcSource {
     this.nodePointSampleCache.clear();
     this.cachedPointSampleBytes = 0;
     return clearedCount;
+  }
+
+  warmUpPointSampleWorkers(
+    options: CopcPointSampleWorkerWarmupOptions = {},
+  ): number {
+    if (this.pointSampleLoading !== "worker" || this.pointSampleWorkerUnavailable) {
+      return this.pointSampleWorkers.length;
+    }
+
+    const requestedWorkerCount = readOptionalPositiveInteger(
+      "workerCount",
+      options.workerCount,
+    );
+    const targetWorkerCount = Math.min(
+      requestedWorkerCount ?? this.maxConcurrentPointSampleWorkerRequests,
+      this.maxConcurrentPointSampleWorkerRequests,
+    );
+
+    while (this.pointSampleWorkers.length < targetWorkerCount) {
+      const worker = this.createAndRegisterPointSampleWorker();
+
+      if (!worker) {
+        break;
+      }
+
+      this.pointSampleWorkers.push(worker);
+    }
+
+    return this.pointSampleWorkers.length;
+  }
+
+  resetPointSampleWorkers(): number {
+    const workerCount = this.pointSampleWorkers.length;
+    this.terminatePointSampleWorker(
+      new Error("COPC point sample worker was reset."),
+    );
+    return workerCount;
   }
 
   destroy(): void {
@@ -416,6 +646,8 @@ export class CopcSource {
         this.loadNodePointSamples({
           nodeKey,
           maxPointCount: maxPointCounts?.[index] ?? options.maxPointCountPerNode,
+          sampleFormat: options.sampleFormat,
+          requestPriority: options.requestPriority,
           signal: options.signal,
         }),
       ),
@@ -499,6 +731,13 @@ export class CopcSource {
     } = {},
   ): void {
     const pageId = hierarchyPageId(page);
+    const previousEntry = this.loadedHierarchyPages.get(pageId);
+
+    if (previousEntry) {
+      this.cachedHierarchyPageBytes -= estimateHierarchyPageByteSize(
+        previousEntry.page,
+      );
+    }
 
     this.loadedHierarchyPages.delete(pageId);
     this.loadedHierarchyPages.set(pageId, {
@@ -507,6 +746,7 @@ export class CopcSource {
       parentPageId: options.parentPageId,
       isRoot: options.isRoot ?? false,
     });
+    this.cachedHierarchyPageBytes += estimateHierarchyPageByteSize(page);
   }
 
   private touchLoadedHierarchyPage(pageId: string | undefined): void {
@@ -525,7 +765,10 @@ export class CopcSource {
   }
 
   private evictHierarchyPagesIfNeeded(hierarchy: Hierarchy.Subtree): void {
-    while (this.loadedHierarchyPages.size > this.maxCachedHierarchyPages) {
+    while (
+      this.loadedHierarchyPages.size > this.maxCachedHierarchyPages ||
+      this.cachedHierarchyPageBytes > this.maxCachedHierarchyPageBytes
+    ) {
       const pageId = this.findEvictableHierarchyPageId();
 
       if (!pageId) {
@@ -569,6 +812,7 @@ export class CopcSource {
     }
 
     this.loadedHierarchyPages.delete(pageId);
+    this.cachedHierarchyPageBytes -= estimateHierarchyPageByteSize(entry.page);
     this.hierarchyPagePromises.delete(pageId);
 
     for (const [nodeKey, sourcePageId] of [
@@ -596,15 +840,65 @@ export class CopcSource {
     this.hierarchyPageCacheEvictionCount += 1;
   }
 
-  private getPointSampleWorker(): Worker | undefined {
+  private canUsePointSampleWorker(): boolean {
+    if (this.pointSampleLoading !== "worker" || this.pointSampleWorkerUnavailable) {
+      return false;
+    }
+
+    if (this.pointSampleWorkers.length === 0) {
+      const worker = this.createAndRegisterPointSampleWorker();
+
+      if (worker) {
+        this.pointSampleWorkers.push(worker);
+      } else {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private getIdlePointSampleWorker(
+    request: CopcPointSampleWorkerLoadRequest,
+  ): Worker | undefined {
     if (this.pointSampleLoading !== "worker" || this.pointSampleWorkerUnavailable) {
       return undefined;
     }
 
-    if (this.pointSampleWorker) {
-      return this.pointSampleWorker;
+    const preferredWorker = this.decodedNodePointSampleWorkers.get(
+      request.nodeKey,
+    );
+
+    if (preferredWorker && this.pointSampleWorkers.includes(preferredWorker)) {
+      return this.activePointSampleWorkers.has(preferredWorker)
+        ? undefined
+        : preferredWorker;
     }
 
+    const idleWorker = this.pointSampleWorkers.find(
+      (worker) => !this.activePointSampleWorkers.has(worker),
+    );
+
+    if (idleWorker) {
+      return idleWorker;
+    }
+
+    if (
+      this.pointSampleWorkers.length <
+      this.maxConcurrentPointSampleWorkerRequests
+    ) {
+      const worker = this.createAndRegisterPointSampleWorker();
+
+      if (worker) {
+        this.pointSampleWorkers.push(worker);
+        return worker;
+      }
+    }
+
+    return undefined;
+  }
+
+  private createAndRegisterPointSampleWorker(): Worker | undefined {
     try {
       const worker = this.createPointSampleWorker();
       worker.addEventListener("message", (event) => {
@@ -620,10 +914,11 @@ export class CopcSource {
             : new Error("COPC point sample worker failed."),
         );
       });
-      this.pointSampleWorker = worker;
       return worker;
     } catch {
-      this.pointSampleWorkerUnavailable = true;
+      if (this.pointSampleWorkers.length === 0) {
+        this.pointSampleWorkerUnavailable = true;
+      }
       return undefined;
     }
   }
@@ -632,29 +927,27 @@ export class CopcSource {
     nodeKey: string,
     node: Hierarchy.Node,
     maxPointCount: number,
+    sampleFormat: CopcPointSampleFormat,
+    priority: number,
     signal: AbortSignal | undefined,
   ): Promise<CopcNodePointSampleResult> | undefined {
-    const worker = this.getPointSampleWorker();
-
-    if (!worker) {
+    if (!this.canUsePointSampleWorker()) {
       return undefined;
     }
 
     throwIfAborted(signal);
 
-    const id = ++this.pointSampleWorkerRequestId;
-    const request: CopcPointSampleWorkerLoadRequest = {
-      id,
-      type: "loadNodePointSamples",
-      url: this.url,
-      nodeKey,
-      node,
-      maxPointCount,
-    };
-
     return new Promise((resolve, reject) => {
+      let entry: PointSampleWorkerRequestEntry | undefined;
+      let consumer: PointSampleWorkerRequestConsumer;
       const abort = (): void => {
-        this.cancelPointSampleWorkerRequest(id, createAbortError(signal));
+        if (entry) {
+          this.cancelPointSampleWorkerConsumer(
+            entry,
+            consumer,
+            createAbortError(signal),
+          );
+        }
       };
       const cleanup = (): void => {
         signal?.removeEventListener("abort", abort);
@@ -665,10 +958,10 @@ export class CopcSource {
         return;
       }
 
-      const entry: PointSampleWorkerRequestEntry = {
-        worker,
-        request,
+      consumer = {
         signal,
+        maxPointCount,
+        priority,
         cleanup,
         resolve: (result) => {
           cleanup();
@@ -678,6 +971,43 @@ export class CopcSource {
           cleanup();
           reject(error);
         },
+      };
+
+      const existingEntry = this.findReusablePointSampleWorkerRequest(
+        nodeKey,
+        maxPointCount,
+        sampleFormat,
+        priority,
+      );
+
+      if (existingEntry) {
+        entry = existingEntry;
+        this.addPointSampleWorkerConsumer(existingEntry, consumer, {
+          node,
+          maxPointCount,
+        });
+        signal?.addEventListener("abort", abort, { once: true });
+        return;
+      }
+
+      const id = ++this.pointSampleWorkerRequestId;
+      const request: CopcPointSampleWorkerLoadRequest = {
+        id,
+        type: "loadNodePointSamples",
+        source: this.sourceDescriptor,
+        nodeKey,
+        node,
+        maxPointCount,
+        sampleFormat,
+        maxDecodedPointDataViews: this.maxDecodedPointDataViewsPerWorker,
+        maxDecodedPointDataViewBytes:
+          this.maxDecodedPointDataViewBytesPerWorker,
+      };
+
+      entry = {
+        request,
+        consumers: [consumer],
+        priority,
         state: "queued",
       };
       this.pointSampleWorkerRequests.set(id, entry);
@@ -701,62 +1031,101 @@ export class CopcSource {
     this.finishPointSampleWorkerRequest(request);
 
     if (response.type === "loadNodePointSamples:success") {
-      request.resolve(response.result);
+      this.resolvePointSampleWorkerConsumers(request, response.result);
       return;
     }
 
-    request.reject(createErrorFromWorkerResponse(response.error));
+    this.rejectPointSampleWorkerConsumers(
+      request,
+      createErrorFromWorkerResponse(response.error),
+    );
   }
 
   private drainPointSampleWorkerQueue(): void {
-    while (
-      this.activePointSampleWorkerRequestCount <
-        this.maxConcurrentPointSampleWorkerRequests &&
-      this.pointSampleWorkerQueue.length > 0
-    ) {
-      const request = this.pointSampleWorkerQueue.shift();
+    while (this.pointSampleWorkerQueue.length > 0) {
+      const dispatchableEntry = this.findDispatchablePointSampleWorkerRequest();
 
-      if (
-        !request ||
-        this.pointSampleWorkerRequests.get(request.request.id) !== request
-      ) {
-        continue;
+      if (!dispatchableEntry) {
+        return;
       }
 
-      if (request.signal?.aborted) {
+      const { request, worker } = dispatchableEntry;
+      this.removeQueuedPointSampleWorkerRequest(request);
+
+      this.removeAbortedPointSampleWorkerConsumers(request);
+
+      if (request.consumers.length === 0) {
         this.pointSampleWorkerRequests.delete(request.request.id);
-        request.cleanup();
-        request.reject(createAbortError(request.signal));
         continue;
       }
 
+      request.worker = worker;
       request.state = "active";
-      this.activePointSampleWorkerRequestCount += 1;
-      request.worker.postMessage(request.request);
+      this.activePointSampleWorkers.add(worker);
+      this.decodedNodePointSampleWorkers.set(request.request.nodeKey, worker);
+      worker.postMessage(request.request);
     }
   }
 
-  private cancelPointSampleWorkerRequest(id: number, error: Error): void {
-    const request = this.pointSampleWorkerRequests.get(id);
+  private findDispatchablePointSampleWorkerRequest():
+    | {
+        readonly request: PointSampleWorkerRequestEntry;
+        readonly worker: Worker;
+      }
+    | undefined {
+    while (this.pointSampleWorkerQueue.length > 0) {
+      let sawValidQueuedRequest = false;
+      let dispatchableEntry:
+        | {
+            readonly request: PointSampleWorkerRequestEntry;
+            readonly worker: Worker;
+          }
+        | undefined;
 
-    if (!request) {
-      return;
+      for (
+        let index = 0;
+        index < this.pointSampleWorkerQueue.length;
+        index += 1
+      ) {
+        const request = this.pointSampleWorkerQueue[index];
+
+        if (this.pointSampleWorkerRequests.get(request.request.id) !== request) {
+          this.pointSampleWorkerQueue.splice(index, 1);
+          index -= 1;
+          continue;
+        }
+
+        sawValidQueuedRequest = true;
+        const worker = this.getIdlePointSampleWorker(request.request);
+
+        if (worker) {
+          const nextEntry = {
+            request,
+            worker,
+          };
+
+          if (
+            !dispatchableEntry ||
+            comparePointSampleWorkerRequestPriority(
+              nextEntry.request,
+              dispatchableEntry.request,
+            ) < 0
+          ) {
+            dispatchableEntry = nextEntry;
+          }
+        }
+      }
+
+      if (dispatchableEntry) {
+        return dispatchableEntry;
+      }
+
+      if (sawValidQueuedRequest) {
+        return undefined;
+      }
     }
 
-    this.pointSampleWorkerRequests.delete(id);
-    if (request.state === "queued") {
-      this.removeQueuedPointSampleWorkerRequest(request);
-    } else {
-      request.worker.postMessage({
-        id,
-        type: "cancel",
-      } satisfies CopcPointSampleWorkerRequest);
-      this.finishActivePointSampleWorkerRequest();
-    }
-
-    request.cleanup();
-    request.reject(error);
-    this.drainPointSampleWorkerQueue();
+    return undefined;
   }
 
   private removeQueuedPointSampleWorkerRequest(
@@ -772,36 +1141,241 @@ export class CopcSource {
   private finishPointSampleWorkerRequest(
     request: PointSampleWorkerRequestEntry,
   ): void {
-    request.cleanup();
-
     if (request.state === "active") {
-      this.finishActivePointSampleWorkerRequest();
+      this.finishActivePointSampleWorkerRequest(request);
       this.drainPointSampleWorkerQueue();
     }
   }
 
-  private finishActivePointSampleWorkerRequest(): void {
-    this.activePointSampleWorkerRequestCount = Math.max(
-      0,
-      this.activePointSampleWorkerRequestCount - 1,
+  private finishActivePointSampleWorkerRequest(
+    request: PointSampleWorkerRequestEntry,
+  ): void {
+    if (request.worker) {
+      this.activePointSampleWorkers.delete(request.worker);
+      request.worker = undefined;
+    }
+  }
+
+  private terminateActivePointSampleWorkerRequest(
+    request: PointSampleWorkerRequestEntry,
+  ): void {
+    const worker = request.worker;
+
+    if (!worker) {
+      return;
+    }
+
+    this.activePointSampleWorkers.delete(worker);
+    request.worker = undefined;
+    this.removeDecodedNodePointSampleWorkerAffinities(worker);
+
+    const workerIndex = this.pointSampleWorkers.indexOf(worker);
+    if (workerIndex !== -1) {
+      this.pointSampleWorkers.splice(workerIndex, 1);
+    }
+
+    worker.terminate();
+  }
+
+  private findReusablePointSampleWorkerRequest(
+    nodeKey: string,
+    maxPointCount: number,
+    sampleFormat: CopcPointSampleFormat,
+    priority: number,
+  ): PointSampleWorkerRequestEntry | undefined {
+    const sameNodeRequests = [...this.pointSampleWorkerRequests.values()].filter(
+      (request) =>
+        request.request.nodeKey === nodeKey &&
+        request.request.sampleFormat === sampleFormat,
     );
+    const sufficientRequest = sameNodeRequests
+      .filter(
+        (request) =>
+          (request.state === "queued" || request.state === "active") &&
+          request.request.maxPointCount >= maxPointCount &&
+          canReusePointSampleWorkerRequestForPriority(request, priority),
+      )
+      .sort(
+        (left, right) =>
+          left.request.maxPointCount - right.request.maxPointCount ||
+          left.request.id - right.request.id,
+      )[0];
+
+    if (sufficientRequest) {
+      return sufficientRequest;
+    }
+
+    return sameNodeRequests
+      .filter(
+        (request) =>
+          request.state === "queued" &&
+          request.request.maxPointCount < maxPointCount &&
+          request.priority <= priority,
+      )
+      .sort(
+        (left, right) =>
+          right.request.maxPointCount - left.request.maxPointCount ||
+          left.request.id - right.request.id,
+      )[0];
+  }
+
+  private addPointSampleWorkerConsumer(
+    request: PointSampleWorkerRequestEntry,
+    consumer: PointSampleWorkerRequestConsumer,
+    options: {
+      readonly node: Hierarchy.Node;
+      readonly maxPointCount: number;
+    },
+  ): void {
+    request.consumers.push(consumer);
+    request.priority = Math.max(request.priority, consumer.priority);
+
+    if (
+      request.state === "queued" &&
+      request.request.maxPointCount < options.maxPointCount
+    ) {
+      this.updateQueuedPointSampleWorkerRequestPointCount(
+        request,
+        options.maxPointCount,
+        options.node,
+      );
+    }
+  }
+
+  private cancelPointSampleWorkerConsumer(
+    request: PointSampleWorkerRequestEntry,
+    consumer: PointSampleWorkerRequestConsumer,
+    error: Error,
+  ): void {
+    const consumerIndex = request.consumers.indexOf(consumer);
+
+    if (consumerIndex === -1) {
+      return;
+    }
+
+    request.consumers.splice(consumerIndex, 1);
+    consumer.reject(error);
+
+    if (request.consumers.length > 0) {
+      request.priority = Math.max(
+        ...request.consumers.map((remaining) => remaining.priority),
+      );
+      this.resizeQueuedPointSampleWorkerRequestForConsumers(request);
+      return;
+    }
+
+    this.pointSampleWorkerRequests.delete(request.request.id);
+    if (request.state === "queued") {
+      this.removeQueuedPointSampleWorkerRequest(request);
+    } else {
+      this.terminateActivePointSampleWorkerRequest(request);
+    }
+
+    this.drainPointSampleWorkerQueue();
+  }
+
+  private removeAbortedPointSampleWorkerConsumers(
+    request: PointSampleWorkerRequestEntry,
+  ): void {
+    for (let index = 0; index < request.consumers.length; index += 1) {
+      const consumer = request.consumers[index];
+
+      if (!consumer.signal?.aborted) {
+        continue;
+      }
+
+      request.consumers.splice(index, 1);
+      index -= 1;
+      consumer.reject(createAbortError(consumer.signal));
+    }
+
+    if (request.consumers.length > 0) {
+      request.priority = Math.max(
+        ...request.consumers.map((remaining) => remaining.priority),
+      );
+    }
+    this.resizeQueuedPointSampleWorkerRequestForConsumers(request);
+  }
+
+  private resizeQueuedPointSampleWorkerRequestForConsumers(
+    request: PointSampleWorkerRequestEntry,
+  ): void {
+    if (request.state !== "queued" || request.consumers.length === 0) {
+      return;
+    }
+
+    const maxPointCount = Math.max(
+      ...request.consumers.map((consumer) => consumer.maxPointCount),
+    );
+
+    if (maxPointCount !== request.request.maxPointCount) {
+      this.updateQueuedPointSampleWorkerRequestPointCount(
+        request,
+        maxPointCount,
+        request.request.node,
+      );
+    }
+  }
+
+  private updateQueuedPointSampleWorkerRequestPointCount(
+    request: PointSampleWorkerRequestEntry,
+    maxPointCount: number,
+    node: Hierarchy.Node,
+  ): void {
+    request.request = {
+      ...request.request,
+      node,
+      maxPointCount,
+    };
+  }
+
+  private resolvePointSampleWorkerConsumers(
+    request: PointSampleWorkerRequestEntry,
+    result: CopcNodePointSampleResult,
+  ): void {
+    const consumers = request.consumers.splice(0);
+
+    for (const consumer of consumers) {
+      consumer.resolve(
+        downsamplePointSampleResult(result, consumer.maxPointCount),
+      );
+    }
+  }
+
+  private rejectPointSampleWorkerConsumers(
+    request: PointSampleWorkerRequestEntry,
+    error: unknown,
+  ): void {
+    const consumers = request.consumers.splice(0);
+
+    for (const consumer of consumers) {
+      consumer.reject(error);
+    }
   }
 
   private terminatePointSampleWorker(error: Error): void {
-    const worker = this.pointSampleWorker;
-    this.pointSampleWorker = undefined;
+    const workers = [...this.pointSampleWorkers];
+    this.pointSampleWorkers.length = 0;
 
-    if (worker) {
+    for (const worker of workers) {
       worker.terminate();
     }
 
     for (const request of this.pointSampleWorkerRequests.values()) {
-      request.cleanup();
-      request.reject(error);
+      this.rejectPointSampleWorkerConsumers(request, error);
     }
     this.pointSampleWorkerRequests.clear();
     this.pointSampleWorkerQueue.length = 0;
-    this.activePointSampleWorkerRequestCount = 0;
+    this.activePointSampleWorkers.clear();
+    this.decodedNodePointSampleWorkers.clear();
+  }
+
+  private removeDecodedNodePointSampleWorkerAffinities(worker: Worker): void {
+    for (const [nodeKey, decodedWorker] of this.decodedNodePointSampleWorkers) {
+      if (decodedWorker === worker) {
+        this.decodedNodePointSampleWorkers.delete(nodeKey);
+      }
+    }
   }
 
   private evictPointSampleCacheIfNeeded(): void {
@@ -842,6 +1416,8 @@ export class CopcSource {
   private async loadNodePointSamplesWithoutCache(
     nodeKey: string,
     maxPointCount: number,
+    sampleFormat: CopcPointSampleFormat,
+    requestPriority: PointSamplePriorityHandle,
     signal: AbortSignal | undefined,
   ): Promise<CopcNodePointSampleResult> {
     throwIfAborted(signal);
@@ -870,6 +1446,8 @@ export class CopcSource {
       nodeKey,
       node,
       maxPointCount,
+      sampleFormat,
+      requestPriority.value,
       signal,
     );
 
@@ -883,6 +1461,7 @@ export class CopcSource {
       nodeKey,
       node,
       maxPointCount,
+      sampleFormat,
     });
 
     throwIfAborted(signal);
@@ -899,6 +1478,21 @@ function createErrorFromWorkerResponse(error: {
   restoredError.name = error.name ?? "Error";
   restoredError.stack = error.stack;
   return restoredError;
+}
+
+function readOptionalPositiveInteger(
+  name: string,
+  value: number | undefined,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return value;
 }
 
 function withAbortSignal<T>(
@@ -1185,6 +1779,36 @@ function compareNodes(
   return compareParsedNodeKeys(left, right);
 }
 
+function comparePointSampleWorkerRequestPriority(
+  left: PointSampleWorkerRequestEntry,
+  right: PointSampleWorkerRequestEntry,
+): number {
+  return right.priority - left.priority || left.request.id - right.request.id;
+}
+
+function canReusePointSampleWorkerRequestForPriority(
+  request: PointSampleWorkerRequestEntry,
+  priority: number,
+): boolean {
+  return request.state === "active" || request.priority >= priority;
+}
+
+function readOptionalFiniteNumber(
+  name: string,
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number.`);
+  }
+
+  return value;
+}
+
 function compareNodeKeys(leftKey: string, rightKey: string): number {
   return compareParsedNodeKeys(parseNodeKey(leftKey), parseNodeKey(rightKey));
 }
@@ -1219,10 +1843,18 @@ function boundsFromTuple(bounds: readonly number[]): CopcBounds {
 function estimatePointSampleResultByteSize(
   result: CopcNodePointSampleResult,
 ): number {
-  return result.points.reduce(
+  const objectPointBytes = result.points.reduce(
     (total, point) => total + estimatePointSampleByteSize(point),
     0,
   );
+
+  return objectPointBytes + estimatePointDataSampleArraysByteSize(result.pointData);
+}
+
+function estimateHierarchyPageByteSize(page: Hierarchy.Page): number {
+  return Number.isSafeInteger(page.pageLength) && page.pageLength > 0
+    ? page.pageLength
+    : 0;
 }
 
 function estimatePointSampleByteSize(point: CopcPointDataSample): number {
@@ -1230,6 +1862,117 @@ function estimatePointSampleByteSize(point: CopcPointDataSample): number {
     POINT_SAMPLE_COORDINATE_BYTES +
     (point.color ? POINT_SAMPLE_COLOR_BYTES : 0)
   );
+}
+
+function downsamplePointSampleResult(
+  result: CopcNodePointSampleResult,
+  maxPointCount: number,
+): CopcNodePointSampleResult {
+  const sampledPointCount = Math.min(
+    result.sampledPointCount,
+    result.nodePointCount,
+    maxPointCount,
+  );
+
+  if (sampledPointCount >= result.sampledPointCount) {
+    return result;
+  }
+
+  const step = result.sampledPointCount / sampledPointCount;
+  const points: CopcPointDataSample[] = [];
+
+  const pointData = result.pointData
+    ? createDownsampledPointDataSampleArrays(result.pointData, {
+        sourcePointCount: result.sampledPointCount,
+        sampledPointCount,
+        step,
+      })
+    : undefined;
+
+  for (let sampleIndex = 0; sampleIndex < sampledPointCount; sampleIndex += 1) {
+    const pointIndex = Math.min(
+      result.sampledPointCount - 1,
+      Math.floor(sampleIndex * step),
+    );
+    const point = result.points[pointIndex];
+
+    if (point) {
+      points.push(point);
+    }
+  }
+
+  return {
+    nodeKey: result.nodeKey,
+    nodePointCount: result.nodePointCount,
+    sampledPointCount: result.pointData ? sampledPointCount : points.length,
+    points,
+    pointData,
+  };
+}
+
+function estimatePointDataSampleArraysByteSize(
+  pointData: CopcPointDataSampleArrays | undefined,
+): number {
+  if (!pointData) {
+    return 0;
+  }
+
+  return (
+    pointData.x.byteLength +
+    pointData.y.byteLength +
+    pointData.z.byteLength +
+    (pointData.red?.byteLength ?? 0) +
+    (pointData.green?.byteLength ?? 0) +
+    (pointData.blue?.byteLength ?? 0)
+  );
+}
+
+function createDownsampledPointDataSampleArrays(
+  pointData: CopcPointDataSampleArrays,
+  options: {
+    readonly sourcePointCount: number;
+    readonly sampledPointCount: number;
+    readonly step: number;
+  },
+): CopcPointDataSampleArrays {
+  const downsampled: CopcPointDataSampleArrays = {
+    x: new Float64Array(options.sampledPointCount),
+    y: new Float64Array(options.sampledPointCount),
+    z: new Float64Array(options.sampledPointCount),
+    red: pointData.red ? new Uint8Array(options.sampledPointCount) : undefined,
+    green: pointData.green
+      ? new Uint8Array(options.sampledPointCount)
+      : undefined,
+    blue: pointData.blue ? new Uint8Array(options.sampledPointCount) : undefined,
+  };
+
+  for (
+    let sampleIndex = 0;
+    sampleIndex < options.sampledPointCount;
+    sampleIndex += 1
+  ) {
+    const pointIndex = Math.min(
+      options.sourcePointCount - 1,
+      Math.floor(sampleIndex * options.step),
+    );
+    downsampled.x[sampleIndex] = pointData.x[pointIndex] ?? 0;
+    downsampled.y[sampleIndex] = pointData.y[pointIndex] ?? 0;
+    downsampled.z[sampleIndex] = pointData.z[pointIndex] ?? 0;
+
+    if (downsampled.red && pointData.red) {
+      downsampled.red[sampleIndex] = pointData.red[pointIndex] ?? 0;
+    }
+
+    if (downsampled.green && pointData.green) {
+      downsampled.green[sampleIndex] = pointData.green[pointIndex] ?? 0;
+    }
+
+    if (downsampled.blue && pointData.blue) {
+      downsampled.blue[sampleIndex] = pointData.blue[pointIndex] ?? 0;
+    }
+  }
+
+  return downsampled;
 }
 
 function hierarchyPageId(page: Hierarchy.Page): string {

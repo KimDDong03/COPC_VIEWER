@@ -53,6 +53,10 @@ body {
   margin-top: 12px;
 }
 
+.copc-file-label {
+  margin-top: 12px;
+}
+
 .copc-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -65,6 +69,7 @@ body {
 #copc-node-select,
 #copc-max-point-count,
 #copc-camera-stream-point-budget,
+#copc-file,
 #copc-source-crs,
 #copc-source-definition {
   min-width: 0;
@@ -81,6 +86,7 @@ body {
 #copc-node-select,
 #copc-max-point-count,
 #copc-camera-stream-point-budget,
+#copc-file,
 #copc-source-crs {
   height: 36px;
 }
@@ -112,6 +118,12 @@ body {
   box-sizing: border-box;
 }
 
+#copc-file {
+  width: 100%;
+  box-sizing: border-box;
+  padding-top: 7px;
+}
+
 #copc-source-crs,
 #copc-source-definition {
   width: 100%;
@@ -131,6 +143,7 @@ body {
 #copc-node-select:focus,
 #copc-max-point-count:focus,
 #copc-camera-stream-point-budget:focus,
+#copc-file:focus,
 #copc-source-crs:focus,
 #copc-source-definition:focus {
   outline: 2px solid #75b7ff;

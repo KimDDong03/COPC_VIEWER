@@ -142,9 +142,56 @@ await writeFile(
   path.join(consumerRoot, "src", "main.ts"),
   `import {
   CopcPointCloudLayer,
+  CopcCameraStreamNodeSampleCache,
+  CopcCameraStreamPrefetchController,
+  CopcCameraStreamRequestController,
+  createCopcCameraStreamEffectiveBudget,
+  createCopcWorkerPoolSettings,
+  createCopcCameraStreamCoverageNodeKeys,
+  createCopcCameraStreamFinalNodeKeys,
+  createCopcCameraStreamDetailProgressState,
+  createCopcCameraStreamLodSettings,
+  createCopcCameraStreamPrefetchPlan,
+  createCopcCameraStreamPrefetchNodeKeys,
+  createCopcCameraStreamPrefetchSelectionPlan,
+  createCopcCameraStreamPreviewNodeKeys,
+  createCopcCameraStreamPrefetchSettings,
+  createCopcCameraStreamRenderPlan,
+  createCopcCameraStreamRenderNodeKeys,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
+  estimateCopcNodeFamilyOverlapRatio,
+  formatCopcCameraStreamBudgetSummary,
+  formatCopcCameraStreamDiagnostics,
+  formatCopcCameraStreamDetailProgress,
+  formatCopcCameraStreamFinalNodeMix,
+  formatCopcCameraStreamLodSummary,
+  formatCopcHierarchyNodeCameraSelection,
+  formatCopcLoadedHierarchyPages,
+  hasFreshCopcCameraStreamNodeSamples,
+  maxCopcNodeKeyDepth,
+  mergeCopcCameraStreamNodeSamples,
+  orderCopcCameraStreamNodeKeysForProgressiveCoverage,
+  selectCopcCameraStreamDetailProgressPolicy,
+  selectCopcCameraStreamDetailWarmupPolicy,
+  selectCopcCameraStreamRequestPriorityOffsets,
   selectHierarchyPagesForTarget,
+  shouldCompleteCopcCameraStreamDetailProgress,
+  shouldReuseCopcCameraStreamNodeKeys,
+  summarizeCopcCameraStreamSourceNodes,
+  updateCopcCameraStreamAdaptiveBudget,
+  type CopcCameraStreamAdaptiveBudgetState,
+  type CopcCameraStreamBudgetLimits,
+  type CopcCameraStreamDetailProgressPolicy,
+  type CopcCameraStreamDetailWarmupPolicy,
+  type CopcCameraStreamDiagnostics,
+  type CopcCameraStreamLodQualitySettings,
+  type CopcCameraStreamLodSettings,
+  type CopcCameraStreamNodeSampleLike,
+  type CopcCameraStreamNodeSummaryLike,
+  type CopcCameraStreamPrefetchSettings,
+  type CopcCameraStreamTimeoutScheduler,
+  type CopcWorkerPoolSettings,
   type CopcHierarchyNodeCameraSelection,
   type CopcHierarchyNodeDepthEstimate,
   type CopcPointCloudLayerCameraSelectionOptions,
@@ -152,6 +199,7 @@ await writeFile(
   type CopcHierarchyPageReference,
   type CopcHierarchyPageTargetSelection,
   type CopcInspection,
+  type CopcPointCloudLayerOptions,
   type CopcPointCloudLayerHierarchyExpansionOptions,
   type CopcPointCloudLayerRenderStats,
 } from "copc-cesium";
@@ -164,6 +212,7 @@ import {
   type CopcPointSampleLoadingMode,
   type CopcPointSampleCacheStats,
   type CopcTargetVector,
+  type CopcSourceInput,
   type CopcSourceOptions,
 } from "copc-cesium/core";
 import {
@@ -179,6 +228,10 @@ import {
 
 const exportedConstructors = [
   CopcPointCloudLayer,
+  CopcCameraStreamNodeSampleCache,
+  CopcCameraStreamPrefetchController,
+  CopcCameraStreamRequestController,
+  createCopcWorkerPoolSettings,
   CopcSource,
   CesiumBufferPointRenderer,
   CesiumPointRenderer,
@@ -186,8 +239,37 @@ const exportedConstructors = [
   CesiumPrimitivePointRenderer,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
+  createCopcCameraStreamEffectiveBudget,
+  createCopcCameraStreamCoverageNodeKeys,
+  createCopcCameraStreamDetailProgressState,
+  createCopcCameraStreamFinalNodeKeys,
+  createCopcCameraStreamLodSettings,
+  createCopcCameraStreamPrefetchPlan,
+  createCopcCameraStreamPrefetchNodeKeys,
+  createCopcCameraStreamPrefetchSelectionPlan,
+  createCopcCameraStreamRenderPlan,
+  createCopcCameraStreamPreviewNodeKeys,
+  createCopcCameraStreamPrefetchSettings,
+  createCopcCameraStreamRenderNodeKeys,
+  estimateCopcNodeFamilyOverlapRatio,
+  formatCopcCameraStreamBudgetSummary,
+  formatCopcCameraStreamDiagnostics,
+  formatCopcCameraStreamDetailProgress,
+  formatCopcCameraStreamFinalNodeMix,
+  formatCopcCameraStreamLodSummary,
+  formatCopcHierarchyNodeCameraSelection,
+  formatCopcLoadedHierarchyPages,
+  maxCopcNodeKeyDepth,
+  orderCopcCameraStreamNodeKeysForProgressiveCoverage,
+  selectCopcCameraStreamDetailProgressPolicy,
+  selectCopcCameraStreamDetailWarmupPolicy,
+  selectCopcCameraStreamRequestPriorityOffsets,
+  shouldCompleteCopcCameraStreamDetailProgress,
+  summarizeCopcCameraStreamSourceNodes,
+  updateCopcCameraStreamAdaptiveBudget,
   createCopcPointSampleWorker,
   selectHierarchyPagesForTarget,
+  shouldReuseCopcCameraStreamNodeKeys,
 ] as const;
 const pointSampleLoadingMode: CopcPointSampleLoadingMode = "worker";
 const inspection: CopcInspection | undefined = undefined;
@@ -195,6 +277,8 @@ const transformStatus: CopcCoordinateTransformStatus | undefined = undefined;
 const hierarchyCacheStats: CopcHierarchyCacheStats = {
   loadedPageCount: 1,
   maxCachedPageCount: 3,
+  loadedPageBytes: 512,
+  maxCachedPageBytes: 1024,
   pendingPageCount: 0,
   trackedNodeCount: 1,
   trackedPendingPageCount: 0,
@@ -204,6 +288,7 @@ const hierarchyCacheStats: CopcHierarchyCacheStats = {
 const cacheStats: CopcPointSampleCacheStats | undefined = undefined;
 const sourceOptions: CopcSourceOptions = {
   maxCachedHierarchyPages: 3,
+  maxCachedHierarchyPageBytes: 1024,
   maxCachedSampleSets: 2,
   maxCachedPointSampleBytes: 1024,
   maxConcurrentPointSampleWorkerRequests: 2,
@@ -231,8 +316,288 @@ const bufferRendererOptions: CesiumBufferPointRendererOptions = {
 const primitiveTypedArrayRendererOptions: CesiumPrimitivePointRendererOptions = {
   pointSize: 3,
 };
+const streamQualitySettings: CopcCameraStreamLodQualitySettings = {
+  cameraStreamMaxRenderedPointCount: 360_000,
+  cameraStreamMaxSourcePointCount: 900_000,
+  cameraStreamMaxNodePointCount: 80_000,
+  cameraStreamMaxPointDataLength: 16 * 1024 * 1024,
+  cameraStreamMaxNodePointDataLength: 2 * 1024 * 1024,
+  cameraStreamMaxNodes: 96,
+  cameraStreamMaxDepth: 5,
+  cameraStreamTargetNodeScreenPixels: 80,
+  cameraStreamTargetPointSpacingScreenPixels: 4,
+};
+const streamLodSettings: CopcCameraStreamLodSettings =
+  createCopcCameraStreamLodSettings({
+    cameraHeightMeters: 300,
+    qualitySettings: streamQualitySettings,
+  });
+const streamBudgetLimits: CopcCameraStreamBudgetLimits = {
+  maxRenderedPointCount: streamLodSettings.maxRenderedPointCount,
+  maxSourcePointCount: streamLodSettings.maxSourcePointCount,
+  maxNodePointCount: streamLodSettings.maxNodePointCount,
+  maxPointDataLength: streamLodSettings.maxPointDataLength,
+  maxNodePointDataLength: streamLodSettings.maxNodePointDataLength,
+};
+let streamAdaptiveBudgetState: CopcCameraStreamAdaptiveBudgetState = {};
+const streamEffectiveBudget = createCopcCameraStreamEffectiveBudget({
+  limits: streamBudgetLimits,
+  state: streamAdaptiveBudgetState,
+});
+const streamAdaptiveBudgetUpdate = updateCopcCameraStreamAdaptiveBudget({
+  limits: streamBudgetLimits,
+  state: streamAdaptiveBudgetState,
+  timings: {
+    totalMilliseconds: 1_000,
+    renderMilliseconds: 3_000,
+  },
+});
+streamAdaptiveBudgetState = streamAdaptiveBudgetUpdate.state;
+const streamPrefetchSettings: CopcCameraStreamPrefetchSettings =
+  createCopcCameraStreamPrefetchSettings({
+    nodeCount: 24,
+    basePointCountPerNode: 2_000,
+    baseMaxRenderedPointCount: 96_000,
+    minPointCountPerNode: 2_500,
+    minRenderedPointCount: 24 * 2_500,
+    lodSettings: streamLodSettings,
+  });
+const streamPrefetchSelectionPlan =
+  createCopcCameraStreamPrefetchSelectionPlan({
+    lodSettings: streamLodSettings,
+    maxNodeCount: 24,
+    maxNodePointCount: streamLodSettings.maxNodePointCount,
+    maxNodePointDataLength: streamLodSettings.maxNodePointDataLength,
+    maxTotalPointCount: streamLodSettings.maxSourcePointCount,
+    maxTotalPointDataLength: streamLodSettings.maxPointDataLength,
+  });
+const streamNodes: readonly CopcCameraStreamNodeSummaryLike[] = [
+  { key: "2-0-0-0", pointDataLength: 4_000 },
+  { key: "2-1-0-0", pointDataLength: 4_000 },
+];
+const streamRenderNodeKeys = createCopcCameraStreamRenderNodeKeys(streamNodes, {
+  nodes: [{ key: "0-0-0-0", pointDataLength: 1_000 }, ...streamNodes],
+});
+const streamCoverageNodeKeys = createCopcCameraStreamCoverageNodeKeys(
+  streamRenderNodeKeys,
+  2,
+);
+const streamFinalNodeKeys = createCopcCameraStreamFinalNodeKeys(
+  streamNodes.map((node) => node.key),
+  streamCoverageNodeKeys,
+);
+const streamPreviewNodeKeys = createCopcCameraStreamPreviewNodeKeys(
+  streamCoverageNodeKeys,
+  { nodes: streamNodes },
+  { maxNodeCount: 2, maxPointDataLength: 8_000 },
+);
+const streamRenderPlan = createCopcCameraStreamRenderPlan({
+  cameraSelection: {
+    nodes: streamNodes.map((node) => ({
+      ...node,
+      depth: 2,
+      x: 0,
+      y: 0,
+      z: 0,
+      bounds: { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+      pointCount: 10_000,
+      pointDensity: 10_000,
+      pointDataOffset: 0,
+    })),
+    selectedDepth: 2,
+  },
+  configuredMaxPointCountPerNode: 20_000,
+  effectiveNodePointDataLengthBudget: 2 * 1024 * 1024,
+  effectivePointDataLengthBudget: 16 * 1024 * 1024,
+  effectiveSourcePointBudget: 900_000,
+  hierarchy: { nodes: streamNodes },
+  lodSettings: streamLodSettings,
+  previewMaxNodeCount: 2,
+  previewMaxPointDataLength: 8_000,
+  renderedPointBudget: 20_000,
+});
+const streamOrderedNodeKeys =
+  orderCopcCameraStreamNodeKeysForProgressiveCoverage(streamFinalNodeKeys);
+const streamNodeFamilyOverlapRatio = estimateCopcNodeFamilyOverlapRatio(
+  streamRenderNodeKeys,
+  streamFinalNodeKeys,
+);
+const canReuseStreamNodeKeys = shouldReuseCopcCameraStreamNodeKeys(
+  streamRenderNodeKeys,
+  streamFinalNodeKeys,
+  0.25,
+);
+const streamMaxDepth = maxCopcNodeKeyDepth(streamFinalNodeKeys);
+const streamScheduler: CopcCameraStreamTimeoutScheduler = {
+  setTimeout: (callback) => {
+    callback();
+    return 1;
+  },
+  clearTimeout: () => undefined,
+};
+const streamRequestController = new CopcCameraStreamRequestController({
+  maxReusedBackgroundRequests: 2,
+  minNodeFamilyOverlapRatio: 0.25,
+  scheduler: streamScheduler,
+});
+const streamRequest = streamRequestController.startRequest();
+streamRequestController.setActiveNodeKeys(streamFinalNodeKeys);
+const streamPrefetchController = new CopcCameraStreamPrefetchController();
+const didStartPrefetch = streamPrefetchController.start(async () => undefined);
+streamPrefetchController.cancel();
+const streamPrefetchNodeKeys = createCopcCameraStreamPrefetchNodeKeys({
+  selectedNodeKeys: streamFinalNodeKeys,
+  coverageNodeKeys: streamCoverageNodeKeys,
+  hasUsableNodeSample: (nodeKey) => nodeKey === "2-0-0-0",
+  maxNodeCount: 2,
+});
+const streamPrefetchPlan = createCopcCameraStreamPrefetchPlan({
+  selectedNodeKeys: streamFinalNodeKeys,
+  coverageNodeKeys: streamCoverageNodeKeys,
+  maxNodeCount: 2,
+  basePointCountPerNode: 2_000,
+  baseMaxRenderedPointCount: 96_000,
+  minPointCountPerNode: streamRenderPlan.maxPointCountPerNode,
+  lodSettings: streamLodSettings,
+  hasUsableNodeSample: (nodeKey, maxPointCountPerNode) =>
+    nodeKey === "2-0-0-0" && maxPointCountPerNode <= 8_000,
+});
+interface ConsumerNodeSample extends CopcCameraStreamNodeSampleLike {
+  readonly source: "consumer";
+}
+const streamNodeSampleCache =
+  new CopcCameraStreamNodeSampleCache<ConsumerNodeSample>({
+    maxSampleSetCount: 4,
+  });
+const streamNodeSamples: readonly ConsumerNodeSample[] = [
+  {
+    nodeKey: "2-0-0-0",
+    nodePointCount: 10_000,
+    sampledPointCount: 2_000,
+    source: "consumer",
+  },
+];
+streamNodeSampleCache.remember(streamNodeSamples);
+const hasFreshStreamNodeSamples = hasFreshCopcCameraStreamNodeSamples(
+  ["2-0-0-0"],
+  streamNodeSamples,
+  2_000,
+);
+const mergedStreamNodeSamples = mergeCopcCameraStreamNodeSamples(
+  streamNodeSamples,
+  [
+    {
+      nodeKey: "2-0-0-0",
+      nodePointCount: 10_000,
+      sampledPointCount: 4_000,
+      source: "consumer",
+    },
+  ],
+);
+const streamRequestPriorityOffsets = selectCopcCameraStreamRequestPriorityOffsets();
+const streamDetailProgressPolicy: CopcCameraStreamDetailProgressPolicy =
+  selectCopcCameraStreamDetailProgressPolicy({
+    finalNodeKeys: streamFinalNodeKeys,
+    initialNodeResults: streamNodeSamples,
+    rendererKind: "typed",
+    fastRendererProgressBatchNodeCount: 1,
+    pointPrimitiveProgressBatchNodeCount: 4,
+    minInitialPointCount: 2_000,
+  });
+const streamDetailWarmupPolicy: CopcCameraStreamDetailWarmupPolicy =
+  selectCopcCameraStreamDetailWarmupPolicy({
+    finalNodeKeys: streamFinalNodeKeys,
+    initialNodeResults: streamNodeSamples,
+    detailMaxPointCountPerNode: 6_000,
+    warmupPointCountPerNode: 2_000,
+  });
+const didCompleteStreamDetailProgress =
+  shouldCompleteCopcCameraStreamDetailProgress({
+    finalNodeCount: streamFinalNodeKeys.length,
+    renderedFinalNodeCount: streamFinalNodeKeys.length - 1,
+    renderedPointBudget: 20_000,
+    renderedPointCount: 18_000,
+  });
+const streamDetailProgress = createCopcCameraStreamDetailProgressState({
+  finalNodeKeys: streamFinalNodeKeys,
+  renderedNodeKeys: streamFinalNodeKeys.slice(0, -1),
+  renderedPointBudget: 20_000,
+  renderedPointCount: 18_000,
+});
+const streamDetailProgressSummary =
+  formatCopcCameraStreamDetailProgress(streamDetailProgress);
+const streamBudgetSummary = formatCopcCameraStreamBudgetSummary({
+  configuredRenderedPointBudget: 20_000,
+  effectiveRenderedPointBudget: 20_000,
+  effectiveSourcePointBudget: 900_000,
+  maxSourcePointBudget: 900_000,
+  effectiveNodePointBudget: 80_000,
+  maxNodePointBudget: 80_000,
+  effectivePointDataLengthBudget: 16 * 1024 * 1024,
+  maxPointDataLengthBudget: 16 * 1024 * 1024,
+  effectiveNodePointDataLengthBudget: 2 * 1024 * 1024,
+  maxNodePointDataLengthBudget: 2 * 1024 * 1024,
+  lastRenderedPointBudget: 19_892,
+  formatBytes: (byteCount) => \`\${byteCount.toLocaleString()} B\`,
+});
+const workerPoolSettings: CopcWorkerPoolSettings =
+  createCopcWorkerPoolSettings({
+    hardwareConcurrency: 8,
+  });
+const streamDiagnostics: CopcCameraStreamDiagnostics = {
+  expandHierarchyMilliseconds: 0,
+  applyHierarchyMilliseconds: 0,
+  selectNodesMilliseconds: 1,
+  renderNodesMilliseconds: 2,
+  totalMilliseconds: 3,
+  loadedHierarchyPageCount: 1,
+  selectedNodeCount: 2,
+  selectedDepth: 2,
+  selectedSourcePointCount: 3_000,
+  selectedPointDataLength: 4_000,
+};
+const streamDiagnosticsText =
+  formatCopcCameraStreamDiagnostics(streamDiagnostics);
+const streamLodText = formatCopcCameraStreamLodSummary({
+  lodSettings: streamLodSettings,
+  effectiveSourcePointBudget: streamLodSettings.maxSourcePointCount,
+  effectiveNodePointBudget: streamLodSettings.maxNodePointCount,
+  effectivePointDataLengthBudget: streamLodSettings.maxPointDataLength,
+  effectiveNodePointDataLengthBudget: streamLodSettings.maxNodePointDataLength,
+});
+const streamPageText = formatCopcLoadedHierarchyPages(["0"]);
+const streamNodeMixText = formatCopcCameraStreamFinalNodeMix(1, 2);
+const streamCameraSelectionText = formatCopcHierarchyNodeCameraSelection({
+  nodes: [],
+  targetDepth: 2,
+  selectedDepth: 1,
+  selectionMode: "coverage",
+  coverageMode: "progressive",
+  estimatedRootScreenPixels: 100,
+  estimatedSelectedDepthScreenPixels: 50,
+  targetNodeScreenPixels: 80,
+  estimatedSelectedDepthPointSpacingScreenPixels: undefined,
+  targetPointSpacingScreenPixels: undefined,
+  maxViewAngleDegrees: undefined,
+  spacing: undefined,
+  depthEstimates: [],
+  skippedByFrustumCount: 0,
+  skippedByViewCount: 0,
+  skippedByBudgetCount: 0,
+  reason: "consumer",
+});
+const streamSourceSummary = summarizeCopcCameraStreamSourceNodes([]);
 const createSource = (): CopcSource =>
   new CopcSource("https://example.com/sample.copc.laz", sourceOptions);
+const blobSourceInput: CopcSourceInput = new Blob([
+  new Uint8Array([1, 2, 3, 4]),
+]);
+const createBlobSource = (): CopcSource =>
+  new CopcSource(blobSourceInput, sourceOptions);
+const layerOptionsWithBlobSource: CopcPointCloudLayerOptions = {
+  source: blobSourceInput,
+  createPointRenderer: pointRendererFactory,
+};
 const depthEstimate: CopcHierarchyNodeDepthEstimate | undefined = undefined;
 const hierarchyPage: CopcHierarchyPageReference | undefined = undefined;
 const pageSelection: CopcHierarchyPageTargetSelection | undefined = undefined;
@@ -265,8 +630,11 @@ if (app) {
   app.textContent = [
     exportedConstructors.map((constructor) => constructor.name).join(", "),
     String(Boolean(createSource)),
+    String(Boolean(createBlobSource)),
+    String(Boolean(layerOptionsWithBlobSource.source)),
     pointSampleLoadingMode,
     String(sourceOptions.maxCachedHierarchyPages),
+    String(sourceOptions.maxCachedHierarchyPageBytes),
     String(sourceOptions.maxCachedSampleSets),
     String(sourceOptions.maxCachedPointSampleBytes),
     String(sourceOptions.maxConcurrentPointSampleWorkerRequests),
@@ -278,6 +646,7 @@ if (app) {
     String(Boolean(inspection)),
     String(Boolean(transformStatus)),
     String(hierarchyCacheStats.cacheEvictionCount),
+    String(hierarchyCacheStats.loadedPageBytes),
     String(Boolean(cacheStats)),
     String(Boolean(hierarchyPage)),
     String(Boolean(pageSelection)),
@@ -288,6 +657,44 @@ if (app) {
     String(primitiveRendererOptions.pixelSize),
     String(bufferRendererOptions.pointSize),
     String(primitiveTypedArrayRendererOptions.pointSize),
+    streamLodSettings.label,
+    String(streamEffectiveBudget.renderedPointCount),
+    streamAdaptiveBudgetUpdate.action,
+    String(streamAdaptiveBudgetState.renderedPointBudget),
+    String(streamPrefetchSettings.maxPointCountPerNode),
+    String(streamPrefetchSettings.maxRenderedPointCount),
+    String(streamPrefetchSelectionPlan.maxDepth),
+    String(streamPrefetchSelectionPlan.targetPointSpacingScreenPixels),
+    streamRenderNodeKeys.join(","),
+    streamCoverageNodeKeys.join(","),
+    streamFinalNodeKeys.join(","),
+    streamPreviewNodeKeys.join(","),
+    streamRenderPlan.renderSignature,
+    streamOrderedNodeKeys.join(","),
+    String(streamNodeFamilyOverlapRatio),
+    String(canReuseStreamNodeKeys),
+    String(streamMaxDepth),
+    String(streamRequest.requestId),
+    String(didStartPrefetch),
+    streamPrefetchNodeKeys.join(","),
+    String(streamPrefetchPlan.shouldPrefetch),
+    String(streamPrefetchPlan.maxPointCountPerNode),
+    String(streamNodeSampleCache.size),
+    String(hasFreshStreamNodeSamples),
+    String(mergedStreamNodeSamples[0]?.sampledPointCount),
+    String(streamRequestPriorityOffsets.preview),
+    String(streamDetailProgressPolicy.progressBatchNodeCount),
+    String(streamDetailWarmupPolicy.maxRenderedPointCount),
+    String(didCompleteStreamDetailProgress),
+    streamDetailProgressSummary,
+    streamBudgetSummary,
+    String(workerPoolSettings.pointGeometryWorkerConcurrency),
+    streamDiagnosticsText,
+    streamLodText,
+    streamPageText,
+    streamNodeMixText,
+    streamCameraSelectionText,
+    String(streamSourceSummary.selectedSourcePointCount),
   ].join(" | ");
 }
 `,

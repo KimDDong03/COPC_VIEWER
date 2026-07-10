@@ -1,20 +1,33 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const outputRoot = path.join(repoRoot, "output");
 const smokeRoot = path.join(outputRoot, "example-smoke");
+const localFileSampleRoot = path.join(outputRoot, "local-copc-samples");
 const screenshotDir = path.join(outputRoot, "playwright");
 const smokeFlowPath = path.join(smokeRoot, "smoke-example-flow.mjs");
 const screenshotPath = path.join(screenshotDir, "smoke-example.png");
+const localFileSampleUrl =
+  "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz";
+const localFileSamplePath = path.join(
+  localFileSampleRoot,
+  "autzen-classified.copc.laz",
+);
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
 const npxCommand = "npx";
 const playwrightCliPackage = "@playwright/cli@0.1.14";
+const shouldRunLocalFileSmoke =
+  process.argv.includes("--local-file") ||
+  process.env.COPC_SMOKE_LOCAL_FILE === "1";
 
 function assertInside(parent, target) {
   const relative = path.relative(parent, target);
@@ -139,6 +152,10 @@ function stopServer(serverProcess) {
 }
 
 function createSmokeFlow(baseUrl) {
+  const localFilePath = shouldRunLocalFileSmoke
+    ? JSON.stringify(localFileSamplePath)
+    : "undefined";
+
   return `async (page) => {
   const failures = [];
   const consoleProblems = [];
@@ -153,15 +170,24 @@ function createSmokeFlow(baseUrl) {
     pageErrors.push(error.message);
   });
 
-  const expectedStatus = "Auto LOD rendered";
-  const minDefaultAutoLodPointCount = 200_000;
+  const expectedRenderedStatuses = [
+    "Camera stream rendered",
+    "Camera stream previewed",
+    "Camera stream partial render",
+    "Auto LOD rendered",
+  ];
+  const minDefaultInteractivePointCount = 4_000;
   const sofiUrl = ${JSON.stringify(`${baseUrl}/copc-samples/sofi.copc.laz`)};
   const sofiDefinition =
     "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs";
+  const localFilePath = ${localFilePath};
   let primitiveRendererTiming = "";
   let primitiveRendererPayload = "";
   let typedRendererTiming = "";
   let typedRendererPayload = "";
+  let typedPointGeometryTiming = "";
+  let typedPointGeometryCache = "";
+  let localFileRendererTiming = "";
 
   async function metadataValue(label) {
     return page.evaluate((targetLabel) => {
@@ -172,29 +198,75 @@ function createSmokeFlow(baseUrl) {
   }
 
   async function waitForRenderedStatus() {
-    await waitForStatusIncludes(expectedStatus);
+    try {
+      await page.waitForFunction(
+        (statusTexts) => {
+          const currentStatus =
+            document.querySelector("#copc-status")?.textContent ?? "";
+          return statusTexts.some((statusText) =>
+            currentStatus.includes(statusText),
+          );
+        },
+        expectedRenderedStatuses,
+        { timeout: 60_000 },
+      );
+    } catch (error) {
+      const currentStatus = await page.locator("#copc-status").textContent();
+      throw new Error(
+        "Timed out waiting for a rendered status. Current status: " +
+          '"' +
+          currentStatus +
+          '". ' +
+          error.message,
+      );
+    }
+  }
+
+  async function waitForInteractivePointCount(minPointCount) {
+    try {
+      await page.waitForFunction(
+        ({ minPointCount, statusTexts }) => {
+          const currentStatus =
+            document.querySelector("#copc-status")?.textContent ?? "";
+          const rows = [...document.querySelectorAll("#copc-metadata dt")];
+          const rendererTiming =
+            rows.find((row) => row.textContent === "Renderer timing")
+              ?.nextElementSibling?.textContent ?? "";
+          const pointCountText = currentStatus + " " + rendererTiming;
+          const match = pointCountText.match(
+            /(?:rendered\\s+|previewed\\s+)?([\\d,]+)\\s+(?:pts|points)/i,
+          );
+          const pointCount = match
+            ? Number(match[1].replaceAll(",", ""))
+            : 0;
+
+          return (
+            statusTexts.some((statusText) => currentStatus.includes(statusText)) &&
+            pointCount >= minPointCount
+          );
+        },
+        { minPointCount, statusTexts: expectedRenderedStatuses },
+        { timeout: 120_000 },
+      );
+    } catch (error) {
+      const currentStatus = await page.locator("#copc-status").textContent();
+      const rendererTiming = await metadataValue("Renderer timing");
+      throw new Error(
+        \`Timed out waiting for the example to display at least \${minPointCount.toLocaleString()} interactive points. Current status: "\${currentStatus}". Renderer timing: "\${rendererTiming}". \${error.message}\`,
+      );
+    }
+  }
+
+  function isRenderedStatus(statusText) {
+    return expectedRenderedStatuses.some((expectedStatus) =>
+      statusText.includes(expectedStatus),
+    );
   }
 
   function parsePointCount(text) {
     const match = text.match(/(?:rendered\\s+)?([\\d,]+)\\s+(?:pts|points)/i);
 
     return match ? Number(match[1].replaceAll(",", "")) : 0;
-  }
-
-  async function waitForStatusIncludes(statusText) {
-    try {
-      await page.waitForFunction(
-        (statusText) =>
-          document.querySelector("#copc-status")?.textContent?.includes(statusText),
-        statusText,
-        { timeout: 60_000 },
-      );
-    } catch (error) {
-      const currentStatus = await page.locator("#copc-status").textContent();
-      throw new Error(
-        \`Timed out waiting for status "\${statusText}". Current status: "\${currentStatus}". \${error.message}\`,
-      );
-    }
   }
 
   async function check(condition, message) {
@@ -204,7 +276,7 @@ function createSmokeFlow(baseUrl) {
   }
 
   await page.goto(${JSON.stringify(baseUrl)}, { waitUntil: "domcontentloaded" });
-  await waitForRenderedStatus();
+  await waitForInteractivePointCount(minDefaultInteractivePointCount);
 
   await check(
     async () => (await metadataValue("Source preset")) === "Autzen classified",
@@ -223,13 +295,33 @@ function createSmokeFlow(baseUrl) {
   );
   typedRendererTiming = (await metadataValue("Renderer timing")) ?? "";
   typedRendererPayload = (await metadataValue("Renderer payload")) ?? "";
+  typedPointGeometryTiming =
+    (await metadataValue("Point geometry timing")) ?? "";
+  typedPointGeometryCache =
+    (await metadataValue("Point geometry cache")) ?? "";
   await check(
-    async () => parsePointCount(typedRendererTiming) >= minDefaultAutoLodPointCount,
-    "Default renderer timing did not report the upgraded Auto LOD point count.",
+    async () => parsePointCount(typedRendererTiming) >= minDefaultInteractivePointCount,
+    "Default renderer timing did not report the expected interactive point count.",
   );
   await check(
     async () => typedRendererPayload.includes("estimated coordinate/color payload"),
     "Default renderer payload estimate was not reported.",
+  );
+  await check(
+    async () =>
+      typedPointGeometryTiming === "Not available" ||
+      (
+        typedPointGeometryTiming.includes("decode") &&
+        typedPointGeometryTiming.includes("worker") &&
+        typedPointGeometryTiming.includes("slowest")
+      ),
+    "Default point geometry timing metadata was not reported.",
+  );
+  await check(
+    async () =>
+      typedPointGeometryCache.includes("loaded batches") &&
+      typedPointGeometryCache.includes("density reuses"),
+    "Default point geometry cache stats were not reported.",
   );
   await check(
     async () => page.locator("#copc-source-crs").isDisabled(),
@@ -237,7 +329,7 @@ function createSmokeFlow(baseUrl) {
   );
 
   await page.getByLabel("Renderer").selectOption("primitive");
-  await waitForRenderedStatus();
+  await waitForInteractivePointCount(minDefaultInteractivePointCount);
   primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
   primitiveRendererPayload = (await metadataValue("Renderer payload")) ?? "";
   await check(
@@ -245,8 +337,8 @@ function createSmokeFlow(baseUrl) {
     "Point primitive renderer was not reported after switching renderer.",
   );
   await check(
-    async () => parsePointCount(primitiveRendererTiming) >= minDefaultAutoLodPointCount,
-    "Primitive renderer timing did not report the upgraded Auto LOD point count.",
+    async () => parsePointCount(primitiveRendererTiming) >= minDefaultInteractivePointCount,
+    "Primitive renderer timing did not report the expected interactive point count.",
   );
   await check(
     async () => primitiveRendererPayload.includes("estimated coordinate/color payload"),
@@ -278,10 +370,15 @@ function createSmokeFlow(baseUrl) {
 
     checkbox.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await waitForStatusIncludes("Camera stream rendered");
+  await waitForRenderedStatus();
   await check(
     async () => (await metadataValue("Point cache"))?.includes("hits"),
     "Point sample cache stats were not reported after camera streaming.",
+  );
+  await check(
+    async () =>
+      (await metadataValue("Point geometry cache"))?.includes("loaded batches"),
+    "Point geometry cache stats were not reported after camera streaming.",
   );
   await check(
     async () => (await metadataValue("Point loader"))?.includes("Web Worker"),
@@ -294,6 +391,30 @@ function createSmokeFlow(baseUrl) {
   await check(
     async () => (await metadataValue("Camera stream diagnostics"))?.includes("depth"),
     "Camera stream diagnostics did not report selected depth.",
+  );
+  await check(
+    async () => (await metadataValue("Camera stream prefetch")) !== undefined,
+    "Camera stream prefetch metadata was not reported.",
+  );
+  await check(
+    async () =>
+      ((await page.locator("#copc-status").textContent()) ?? "").includes(
+        "Camera stream previewed",
+      ) ||
+      ((await metadataValue("Camera stream coverage")) ?? "").includes(
+        "current-view",
+      ) ||
+      ((await metadataValue("Camera stream coverage")) ?? "").includes(
+        "detail",
+      ),
+    "Camera stream coverage did not report preview or current-view detail coverage.",
+  );
+  await check(
+    async () =>
+      (await metadataValue("Auto LOD"))?.includes(
+        "progressive coverage",
+      ),
+    "Camera selection did not report progressive coverage selection.",
   );
   await page.getByRole("checkbox", { name: "Stream on camera move" }).uncheck();
 
@@ -328,13 +449,44 @@ function createSmokeFlow(baseUrl) {
   );
   await check(
     async () =>
-      (await page.locator("#copc-status").textContent())?.includes(expectedStatus),
-    "Custom URL did not render the expected COPC Auto LOD result.",
+      isRenderedStatus((await page.locator("#copc-status").textContent()) ?? ""),
+    "Custom URL did not render the expected COPC result.",
   );
   await check(
     async () => (await page.locator("canvas").count()) > 0,
     "Cesium canvas was not rendered.",
   );
+
+  if (localFilePath) {
+    await page.getByRole("textbox", { name: "Source CRS" }).fill("");
+    await page
+      .getByRole("textbox", { name: "proj4 definition" })
+      .fill("");
+    await page.locator("#copc-file").setInputFiles(localFilePath);
+    await waitForInteractivePointCount(minDefaultInteractivePointCount);
+
+    localFileRendererTiming = (await metadataValue("Renderer timing")) ?? "";
+    await check(
+      async () => (await metadataValue("Source preset")) === "Local file",
+      "Local COPC file source label was not reported.",
+    );
+    await check(
+      async () =>
+        (await metadataValue("Source note"))?.includes(
+          "Browser-selected COPC file",
+        ),
+      "Local COPC file source note was not reported.",
+    );
+    await check(
+      async () =>
+        (await metadataValue("Coordinate transform"))?.includes("EPSG:2992"),
+      "Local COPC file did not use the expected default Autzen transform.",
+    );
+    await check(
+      async () => parsePointCount(localFileRendererTiming) >= minDefaultInteractivePointCount,
+      "Local COPC file renderer timing did not report the expected interactive point count.",
+    );
+  }
 
   await page.screenshot({
     path: ${JSON.stringify(screenshotPath)},
@@ -362,6 +514,9 @@ function createSmokeFlow(baseUrl) {
     primitiveRendererPayload,
     typedRendererTiming,
     typedRendererPayload,
+    typedPointGeometryTiming,
+    typedPointGeometryCache,
+    localFileRendererTiming,
     screenshotPath: ${JSON.stringify(screenshotPath)},
   };
 }
@@ -370,10 +525,15 @@ function createSmokeFlow(baseUrl) {
 
 await mkdir(outputRoot, { recursive: true });
 assertInside(outputRoot, smokeRoot);
+assertInside(outputRoot, localFileSampleRoot);
 assertInside(outputRoot, screenshotDir);
 await rm(smokeRoot, { recursive: true, force: true });
 await mkdir(smokeRoot, { recursive: true });
 await mkdir(screenshotDir, { recursive: true });
+
+if (shouldRunLocalFileSmoke) {
+  await ensureLocalFileSmokeSample();
+}
 
 console.log("Building example...");
 run(npmCommand, ["run", "build:example"], repoRoot);
@@ -429,4 +589,57 @@ try {
     // The browser may already be closed if startup failed.
   }
   stopServer(serverProcess);
+}
+
+async function ensureLocalFileSmokeSample() {
+  await mkdir(localFileSampleRoot, { recursive: true });
+
+  const headResponse = await fetch(localFileSampleUrl, {
+    method: "HEAD",
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!headResponse.ok) {
+    throw new Error(
+      `Failed to inspect local-file smoke COPC sample: ${headResponse.status} ${headResponse.statusText}`,
+    );
+  }
+
+  const expectedBytes = Number(headResponse.headers.get("content-length"));
+
+  if (Number.isSafeInteger(expectedBytes) && expectedBytes > 0) {
+    try {
+      const current = await stat(localFileSamplePath);
+
+      if (current.size === expectedBytes) {
+        console.log(`Using cached local-file smoke sample: ${localFileSamplePath}`);
+        return;
+      }
+    } catch {
+      // Download below when the sample is missing or incomplete.
+    }
+  }
+
+  console.log(`Downloading local-file smoke sample: ${localFileSampleUrl}`);
+  const response = await fetch(localFileSampleUrl, {
+    signal: AbortSignal.timeout(180_000),
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `Failed to download local-file smoke COPC sample: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(localFileSamplePath));
+
+  if (Number.isSafeInteger(expectedBytes) && expectedBytes > 0) {
+    const downloaded = await stat(localFileSamplePath);
+
+    if (downloaded.size !== expectedBytes) {
+      throw new Error(
+        `Downloaded local-file smoke sample size mismatch: ${downloaded.size} !== ${expectedBytes}`,
+      );
+    }
+  }
 }

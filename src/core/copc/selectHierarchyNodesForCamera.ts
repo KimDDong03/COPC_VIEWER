@@ -7,6 +7,7 @@ export interface SelectHierarchyNodesForCameraOptions {
   readonly viewDirection?: CopcTargetVector;
   readonly viewportHeightPixels: number;
   readonly selectionMode?: CopcHierarchyNodeSelectionMode;
+  readonly coverageMode?: CopcHierarchyNodeCoverageMode;
   readonly maxNodes?: number;
   readonly minDepth?: number;
   readonly maxDepth?: number;
@@ -21,6 +22,9 @@ export interface SelectHierarchyNodesForCameraOptions {
 }
 
 export type CopcHierarchyNodeSelectionMode = "nearest" | "coverage";
+export type CopcHierarchyNodeCoverageMode =
+  | "complete-depth"
+  | "progressive";
 
 export interface CopcTargetVector {
   readonly x: number;
@@ -33,6 +37,7 @@ export interface CopcHierarchyNodeCameraSelection {
   readonly targetDepth: number;
   readonly selectedDepth: number;
   readonly selectionMode: CopcHierarchyNodeSelectionMode;
+  readonly coverageMode: CopcHierarchyNodeCoverageMode | undefined;
   readonly estimatedRootScreenPixels: number;
   readonly estimatedSelectedDepthScreenPixels: number;
   readonly targetNodeScreenPixels: number;
@@ -58,6 +63,7 @@ export interface CopcHierarchyNodeDepthEstimate {
 
 const DEFAULT_MAX_NODES = 4;
 const DEFAULT_SELECTION_MODE: CopcHierarchyNodeSelectionMode = "nearest";
+const DEFAULT_COVERAGE_MODE: CopcHierarchyNodeCoverageMode = "complete-depth";
 const DEFAULT_TARGET_NODE_SCREEN_PIXELS = 220;
 const DEFAULT_TARGET_POINT_SPACING_SCREEN_PIXELS = 4;
 const DEFAULT_MAX_VIEW_ANGLE_DEGREES = 80;
@@ -75,6 +81,7 @@ export function selectHierarchyNodesForCamera(
 
   const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
   const selectionMode = options.selectionMode ?? DEFAULT_SELECTION_MODE;
+  const coverageMode = options.coverageMode ?? DEFAULT_COVERAGE_MODE;
   const viewportHeightPixels = options.viewportHeightPixels;
   const targetNodeScreenPixels =
     options.targetNodeScreenPixels ?? DEFAULT_TARGET_NODE_SCREEN_PIXELS;
@@ -94,6 +101,15 @@ export function selectHierarchyNodesForCamera(
 
   if (selectionMode !== "nearest" && selectionMode !== "coverage") {
     throw new Error('selectionMode must be "nearest" or "coverage".');
+  }
+
+  if (
+    coverageMode !== "complete-depth" &&
+    coverageMode !== "progressive"
+  ) {
+    throw new Error(
+      'coverageMode must be "complete-depth" or "progressive".',
+    );
   }
 
   if (!Number.isFinite(viewportHeightPixels) || viewportHeightPixels <= 0) {
@@ -195,6 +211,7 @@ export function selectHierarchyNodesForCamera(
   const budgetOptions = {
     target: options.target,
     selectionMode,
+    coverageMode,
     maxNodes,
     maxNodePointCount: options.maxNodePointCount,
     maxNodePointDataLength: options.maxNodePointDataLength,
@@ -230,6 +247,7 @@ export function selectHierarchyNodesForCamera(
     targetDepth,
     selectedDepth: selection.selectedDepth,
     selectionMode,
+    coverageMode: selectionMode === "coverage" ? coverageMode : undefined,
     estimatedRootScreenPixels,
     estimatedSelectedDepthScreenPixels:
       selectedDepthEstimate.estimatedNodeScreenPixels,
@@ -250,6 +268,7 @@ export function selectHierarchyNodesForCamera(
       targetPointSpacingScreenPixels,
       candidateNodes.skippedByViewCount,
       selectionMode,
+      selectionMode === "coverage" ? coverageMode : undefined,
     ),
   };
 }
@@ -407,6 +426,7 @@ function createSelectionReason(
   targetPointSpacingScreenPixels: number | undefined,
   skippedByViewCount: number,
   selectionMode: CopcHierarchyNodeSelectionMode,
+  coverageMode: CopcHierarchyNodeCoverageMode | undefined,
 ): string {
   const pointSpacingReason =
     targetPointSpacingScreenPixels === undefined ||
@@ -418,7 +438,11 @@ function createSelectionReason(
       ? ""
       : ` Culled ${skippedByViewCount.toLocaleString()} off-camera candidate nodes.`;
   const modeReason =
-    selectionMode === "coverage" ? "screen-coverage" : "nearest";
+    selectionMode === "coverage"
+      ? coverageMode === "progressive"
+        ? "progressive screen-coverage"
+        : "screen-coverage"
+      : "nearest";
 
   return `Selected ${selection.nodes.length} ${modeReason} depth ${selection.selectedDepth} nodes; nearest depth ${selection.selectedDepth} node is estimated at ${selectedDepthEstimate.estimatedNodeScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px against a ${targetNodeScreenPixels.toLocaleString(undefined, { maximumFractionDigits: 0 })} px target${pointSpacingReason}.${viewReason}`;
 }
@@ -426,6 +450,7 @@ function createSelectionReason(
 interface SelectBudgetedNodesOptions {
   readonly target: CopcTargetPoint;
   readonly selectionMode: CopcHierarchyNodeSelectionMode;
+  readonly coverageMode: CopcHierarchyNodeCoverageMode;
   readonly maxNodes: number;
   readonly maxNodePointCount: number | undefined;
   readonly maxNodePointDataLength: number | undefined;
@@ -504,7 +529,6 @@ function selectBudgetedNodes(
           node,
           distanceToBounds: distanceToBounds3d(options.target, node.bounds),
         })),
-      options.selectionMode,
     );
     const selection = selectWithinBudget(
       candidates.map(({ node }) => node),
@@ -528,141 +552,425 @@ function selectBudgetedCoverageNodes(
   targetDepth: number,
   options: SelectBudgetedNodesOptions,
 ): BudgetedNodeSelection | undefined {
-  const selectedNodes: CopcHierarchyNodeSummary[] = [];
-  const selectedNodeKeys = new Set<string>();
-  let selectedPointCount = 0;
-  let selectedPointDataLength = 0;
-  let skippedByBudgetCount = 0;
-  let selectedDepth: number | undefined;
-
-  for (const depth of depthsByTargetDistance(availableDepths, targetDepth)) {
-    const candidates = orderNodeCandidates(
-      nodes
+  const candidatesByDepth = new Map(
+    availableDepths.map((depth) => [
+      depth,
+      [...nodes]
         .filter((node) => node.depth === depth)
-        .map((node) => ({
-          node,
-          distanceToBounds: distanceToBounds3d(options.target, node.bounds),
-        })),
-      "coverage",
-    );
+        .sort(compareNodesByCoverageOrder),
+    ]),
+  );
+  const completeSelection = selectCompleteCoverageDepth(
+    candidatesByDepth,
+    availableDepths,
+    targetDepth,
+    options,
+  );
 
-    for (const { node } of candidates) {
-      if (selectedNodes.length >= options.maxNodes) {
-        break;
-      }
+  if (options.coverageMode === "complete-depth") {
+    return completeSelection;
+  }
 
-      if (selectedNodeKeys.has(node.key)) {
-        continue;
-      }
+  return addProgressiveCoverageDetail(
+    completeSelection,
+    candidatesByDepth,
+    availableDepths,
+    targetDepth,
+    options,
+  );
+}
 
-      if (
-        isNodeOverIndividualBudget(node, options) ||
-        isNodeOverTotalBudget(
-          node,
-          selectedPointCount,
-          selectedPointDataLength,
-          options,
-        )
-      ) {
-        skippedByBudgetCount += 1;
-        continue;
-      }
+function selectCompleteCoverageDepth(
+  candidatesByDepth: ReadonlyMap<
+    number,
+    readonly CopcHierarchyNodeSummary[]
+  >,
+  availableDepths: readonly number[],
+  targetDepth: number,
+  options: SelectBudgetedNodesOptions,
+): BudgetedNodeSelection | undefined {
+  let skippedByBudgetCount = 0;
 
-      selectedNodes.push(node);
-      selectedNodeKeys.add(node.key);
-      selectedPointCount += node.pointCount;
-      selectedPointDataLength += node.pointDataLength;
-      selectedDepth = Math.max(selectedDepth ?? node.depth, node.depth);
+  for (const depth of coverageDepthsByTarget(availableDepths, targetDepth)) {
+    const candidates = candidatesByDepth.get(depth) ?? [];
+
+    if (candidates.length === 0) {
+      continue;
     }
 
-    if (selectedNodes.length >= options.maxNodes) {
-      break;
+    if (isSparseCoverageDepth(candidatesByDepth, depth, candidates.length)) {
+      skippedByBudgetCount += candidates.length;
+      continue;
+    }
+
+    if (candidates.length > options.maxNodes) {
+      skippedByBudgetCount += candidates.length - options.maxNodes;
+      continue;
+    }
+
+    const selection = selectCompleteDepthWithinBudget(candidates, options);
+
+    skippedByBudgetCount += selection.skippedByBudgetCount;
+
+    if (selection.nodes.length === candidates.length) {
+      return {
+        nodes: orderCoverageNodesByTarget(selection.nodes, options.target),
+        selectedDepth: depth,
+        skippedByBudgetCount,
+      };
     }
   }
 
-  if (selectedNodes.length === 0 || selectedDepth === undefined) {
-    return undefined;
+  return undefined;
+}
+
+function addProgressiveCoverageDetail(
+  completeSelection: BudgetedNodeSelection | undefined,
+  candidatesByDepth: ReadonlyMap<
+    number,
+    readonly CopcHierarchyNodeSummary[]
+  >,
+  availableDepths: readonly number[],
+  targetDepth: number,
+  options: SelectBudgetedNodesOptions,
+): BudgetedNodeSelection | undefined {
+  const remainingOptions = subtractSelectedNodeBudget(
+    options,
+    completeSelection?.nodes ?? [],
+  );
+
+  if (remainingOptions.maxNodes <= 0) {
+    return completeSelection;
+  }
+
+  const detailSelection = selectProgressiveCoverageDetail(
+    candidatesByDepth,
+    availableDepths,
+    targetDepth,
+    completeSelection?.selectedDepth,
+    remainingOptions,
+  );
+
+  if (!detailSelection) {
+    return completeSelection;
+  }
+
+  if (!completeSelection) {
+    return detailSelection;
+  }
+
+  return mergeBudgetedSelections(completeSelection, detailSelection);
+}
+
+function selectProgressiveCoverageDetail(
+  candidatesByDepth: ReadonlyMap<
+    number,
+    readonly CopcHierarchyNodeSummary[]
+  >,
+  availableDepths: readonly number[],
+  targetDepth: number,
+  completeCoverageDepth: number | undefined,
+  options: SelectBudgetedNodesOptions,
+): BudgetedNodeSelection | undefined {
+  for (const depth of progressiveCoverageDepthsByTarget(
+    availableDepths,
+    targetDepth,
+    completeCoverageDepth,
+  )) {
+    const candidates = candidatesByDepth.get(depth) ?? [];
+
+    if (candidates.length === 0) {
+      continue;
+    }
+
+    const selection = selectWithinBudget(
+      orderPartialCoverageNodes(candidates, options.target, options.maxNodes),
+      options,
+    );
+
+    if (selection.nodes.length > 0) {
+      return {
+        ...selection,
+        selectedDepth: depth,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function subtractSelectedNodeBudget(
+  options: SelectBudgetedNodesOptions,
+  nodes: readonly CopcHierarchyNodeSummary[],
+): SelectBudgetedNodesOptions {
+  const selectedPointCount = nodes.reduce(
+    (total, node) => total + node.pointCount,
+    0,
+  );
+  const selectedPointDataLength = nodes.reduce(
+    (total, node) => total + node.pointDataLength,
+    0,
+  );
+
+  return {
+    ...options,
+    maxNodes: Math.max(0, options.maxNodes - nodes.length),
+    maxTotalPointCount:
+      options.maxTotalPointCount === undefined
+        ? undefined
+        : Math.max(0, options.maxTotalPointCount - selectedPointCount),
+    maxTotalPointDataLength:
+      options.maxTotalPointDataLength === undefined
+        ? undefined
+        : Math.max(0, options.maxTotalPointDataLength - selectedPointDataLength),
+  };
+}
+
+function mergeBudgetedSelections(
+  coverageSelection: BudgetedNodeSelection,
+  detailSelection: BudgetedNodeSelection,
+): BudgetedNodeSelection {
+  const nodesByKey = new Map<string, CopcHierarchyNodeSummary>();
+
+  coverageSelection.nodes.forEach((node) => nodesByKey.set(node.key, node));
+  detailSelection.nodes.forEach((node) => nodesByKey.set(node.key, node));
+
+  const nodes = [...nodesByKey.values()];
+
+  return {
+    nodes,
+    selectedDepth: maxNodeDepth(nodes),
+    skippedByBudgetCount:
+      coverageSelection.skippedByBudgetCount +
+      detailSelection.skippedByBudgetCount,
+  };
+}
+
+function selectCompleteDepthWithinBudget(
+  nodes: readonly CopcHierarchyNodeSummary[],
+  options: SelectBudgetedNodesOptions,
+): Omit<BudgetedNodeSelection, "selectedDepth"> {
+  const selectedNodes: CopcHierarchyNodeSummary[] = [];
+  let selectedPointCount = 0;
+  let selectedPointDataLength = 0;
+  let skippedByBudgetCount = 0;
+
+  for (const node of nodes) {
+    if (
+      isNodeOverIndividualBudget(node, options) ||
+      isNodeOverTotalBudget(
+        node,
+        selectedPointCount,
+        selectedPointDataLength,
+        options,
+      )
+    ) {
+      skippedByBudgetCount = nodes.length;
+      return {
+        nodes: [],
+        skippedByBudgetCount,
+      };
+    }
+
+    selectedNodes.push(node);
+    selectedPointCount += node.pointCount;
+    selectedPointDataLength += node.pointDataLength;
   }
 
   return {
     nodes: selectedNodes,
-    selectedDepth,
     skippedByBudgetCount,
   };
 }
 
-function orderNodeCandidates(
-  candidates: readonly NodeDistanceCandidate[],
-  selectionMode: CopcHierarchyNodeSelectionMode,
-): readonly NodeDistanceCandidate[] {
-  return selectionMode === "coverage"
-    ? orderNodeCandidatesForCoverage(candidates)
-    : [...candidates].sort(compareNodeCandidatesByNearest);
-}
+function isSparseCoverageDepth(
+  candidatesByDepth: ReadonlyMap<number, readonly CopcHierarchyNodeSummary[]>,
+  depth: number,
+  candidateCount: number,
+): boolean {
+  const nearestShallowerDepth = [...candidatesByDepth.keys()]
+    .filter((candidateDepth) => candidateDepth < depth)
+    .sort((left, right) => right - left)[0];
 
-function orderNodeCandidatesForCoverage(
-  candidates: readonly NodeDistanceCandidate[],
-): readonly NodeDistanceCandidate[] {
-  const remaining = [...candidates].sort(compareNodeCandidatesByNearest);
-  const ordered: NodeDistanceCandidate[] = [];
-
-  while (remaining.length > 0) {
-    const nextIndex =
-      ordered.length === 0
-        ? 0
-        : findFarthestCoverageCandidateIndex(remaining, ordered);
-    const next = remaining.splice(nextIndex, 1)[0];
-
-    if (next) {
-      ordered.push(next);
-    }
+  if (nearestShallowerDepth === undefined) {
+    return false;
   }
 
-  return ordered;
+  const shallowerCount = candidatesByDepth.get(nearestShallowerDepth)?.length ?? 0;
+
+  return shallowerCount > 0 && candidateCount < shallowerCount;
 }
 
-function findFarthestCoverageCandidateIndex(
-  candidates: readonly NodeDistanceCandidate[],
-  selectedCandidates: readonly NodeDistanceCandidate[],
-): number {
-  let bestIndex = 0;
-  let bestDistance = Number.NEGATIVE_INFINITY;
+function coverageDepthsByTarget(
+  availableDepths: readonly number[],
+  targetDepth: number,
+): number[] {
+  const shallowerOrTarget = [...availableDepths]
+    .filter((depth) => depth <= targetDepth)
+    .sort((left, right) => right - left);
+  const deeperFallbacks = [...availableDepths]
+    .filter((depth) => depth > targetDepth)
+    .sort((left, right) => left - right);
 
-  candidates.forEach((candidate, index) => {
-    const distance = nearestSelectedCenterDistance(
-      candidate.node,
-      selectedCandidates,
+  return [...shallowerOrTarget, ...deeperFallbacks];
+}
+
+function progressiveCoverageDepthsByTarget(
+  availableDepths: readonly number[],
+  targetDepth: number,
+  completeCoverageDepth: number | undefined,
+): number[] {
+  return [...availableDepths]
+    .filter(
+      (depth) =>
+        completeCoverageDepth === undefined || depth > completeCoverageDepth,
+    )
+    .sort(
+      (left, right) =>
+        Math.abs(left - targetDepth) - Math.abs(right - targetDepth) ||
+        right - left,
     );
-    const bestCandidate = candidates[bestIndex];
-    const isBetter =
-      distance > bestDistance ||
-      (distance === bestDistance &&
-        bestCandidate !== undefined &&
-        compareNodeCandidatesByNearest(candidate, bestCandidate) < 0);
+}
 
-    if (isBetter) {
-      bestIndex = index;
-      bestDistance = distance;
-    }
+function compareNodesByCoverageOrder(
+  left: CopcHierarchyNodeSummary,
+  right: CopcHierarchyNodeSummary,
+): number {
+  return (
+    left.x - right.x ||
+    left.y - right.y ||
+    left.z - right.z ||
+    left.key.localeCompare(right.key)
+  );
+}
+
+function orderPartialCoverageNodes(
+  nodes: readonly CopcHierarchyNodeSummary[],
+  target: CopcTargetPoint,
+  maxNodes: number,
+): readonly CopcHierarchyNodeSummary[] {
+  if (nodes.length <= maxNodes) {
+    return orderCoverageNodesByTarget(nodes, target);
+  }
+
+  const buckets = new Map<string, CopcHierarchyNodeSummary[]>();
+  const bucketAxisCount = Math.max(1, Math.ceil(Math.sqrt(maxNodes)));
+  const xValues = nodes.map((node) => node.x);
+  const yValues = nodes.map((node) => node.y);
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
+
+  nodes.forEach((node) => {
+    const bucketKey = createCoverageBucketKey(
+      node,
+      minX,
+      maxX,
+      minY,
+      maxY,
+      bucketAxisCount,
+    );
+    buckets.set(bucketKey, [...(buckets.get(bucketKey) ?? []), node]);
   });
 
-  return bestIndex;
+  const orderedBucketKeys = [...buckets.entries()]
+    .map(([bucketKey, bucketNodes]) => ({
+      bucketKey,
+      distanceToTarget: Math.min(
+        ...bucketNodes.map((node) => distanceToBounds3d(target, node.bounds)),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        left.distanceToTarget - right.distanceToTarget ||
+        left.bucketKey.localeCompare(right.bucketKey),
+    )
+    .map(({ bucketKey }) => bucketKey);
+
+  buckets.forEach((bucketNodes, bucketKey) => {
+    buckets.set(bucketKey, [...orderCoverageNodesByTarget(bucketNodes, target)]);
+  });
+
+  const orderedNodes: CopcHierarchyNodeSummary[] = [];
+  let hasRemainingNodes = true;
+
+  while (hasRemainingNodes) {
+    hasRemainingNodes = false;
+
+    orderedBucketKeys.forEach((bucketKey) => {
+      const bucket = buckets.get(bucketKey);
+      const node = bucket?.shift();
+
+      if (node) {
+        orderedNodes.push(node);
+        hasRemainingNodes = true;
+      }
+    });
+  }
+
+  return orderedNodes;
 }
 
-function nearestSelectedCenterDistance(
+function createCoverageBucketKey(
   node: CopcHierarchyNodeSummary,
-  selectedCandidates: readonly NodeDistanceCandidate[],
-): number {
-  const center = boundsCenter(node.bounds);
-
-  return selectedCandidates.reduce(
-    (distance, selectedCandidate) =>
-      Math.min(
-        distance,
-        distanceBetweenPoints(center, boundsCenter(selectedCandidate.node.bounds)),
-      ),
-    Number.POSITIVE_INFINITY,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  bucketAxisCount: number,
+): string {
+  const bucketX = normalizeCoverageBucketCoordinate(
+    node.x,
+    minX,
+    maxX,
+    bucketAxisCount,
   );
+  const bucketY = normalizeCoverageBucketCoordinate(
+    node.y,
+    minY,
+    maxY,
+    bucketAxisCount,
+  );
+
+  return `${bucketX}:${bucketY}`;
+}
+
+function normalizeCoverageBucketCoordinate(
+  value: number,
+  min: number,
+  max: number,
+  bucketAxisCount: number,
+): number {
+  if (max <= min) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    Math.min(
+      bucketAxisCount - 1,
+      Math.floor(((value - min) / (max - min + 1)) * bucketAxisCount),
+    ),
+  );
+}
+
+function orderCoverageNodesByTarget(
+  nodes: readonly CopcHierarchyNodeSummary[],
+  target: CopcTargetPoint,
+): readonly CopcHierarchyNodeSummary[] {
+  return [...nodes].sort(
+    (left, right) =>
+      distanceToBounds3d(target, left.bounds) -
+        distanceToBounds3d(target, right.bounds) ||
+      compareNodesByCoverageOrder(left, right),
+  );
+}
+
+function orderNodeCandidates(
+  candidates: readonly NodeDistanceCandidate[],
+): readonly NodeDistanceCandidate[] {
+  return [...candidates].sort(compareNodeCandidatesByNearest);
 }
 
 function compareNodeCandidatesByNearest(
@@ -844,13 +1152,6 @@ function distanceToBounds3d(target: CopcTargetPoint, bounds: CopcBounds): number
     distanceToRange(target.y, bounds.minY, bounds.maxY),
     distanceToRange(target.z, bounds.minZ, bounds.maxZ),
   );
-}
-
-function distanceBetweenPoints(
-  left: CopcTargetPoint,
-  right: CopcTargetPoint,
-): number {
-  return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
 }
 
 function distanceToRange(value: number, min: number, max: number): number {

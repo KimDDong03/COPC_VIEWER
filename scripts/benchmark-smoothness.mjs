@@ -71,9 +71,29 @@ const benchmarkMoveMeters = readPositiveIntegerEnv(
   "COPC_SMOOTHNESS_MOVE_METERS",
   25,
 );
+const benchmarkCameraHeightAboveCloudMeters = readPositiveNumberEnv(
+  "COPC_SMOOTHNESS_CAMERA_HEIGHT_METERS",
+  undefined,
+);
 const benchmarkMinSelectedDepthOverride = readNonNegativeIntegerEnv(
   "COPC_SMOOTHNESS_MIN_SELECTED_DEPTH",
   undefined,
+);
+const benchmarkPointRenderer = readPointRendererEnv(
+  "COPC_SMOOTHNESS_RENDERER",
+  "typed",
+);
+const benchmarkClearCachesBeforeRun = readBooleanEnv(
+  "COPC_SMOOTHNESS_CLEAR_CACHES_BEFORE_RUN",
+  false,
+);
+const benchmarkCacheResetMode = readCacheResetModeEnv(
+  "COPC_SMOOTHNESS_CACHE_RESET_MODE",
+  benchmarkClearCachesBeforeRun ? "app" : "none",
+);
+const benchmarkWaitForFinalDetail = readBooleanEnv(
+  "COPC_SMOOTHNESS_WAIT_FOR_FINAL_DETAIL",
+  true,
 );
 
 if (benchmarkMaxPointCountPerNode < Math.max(...benchmarkStreamPointBudgets)) {
@@ -134,6 +154,76 @@ function readNonNegativeIntegerEnv(name, fallback) {
   }
 
   return value;
+}
+
+function readPositiveNumberEnv(name, fallback) {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const value = Number(rawValue);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number.`);
+  }
+
+  return value;
+}
+
+function readPointRendererEnv(name, fallback) {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  if (rawValue !== "typed" && rawValue !== "primitive" && rawValue !== "buffer") {
+    throw new Error(`${name} must be one of: typed, primitive, buffer.`);
+  }
+
+  return rawValue;
+}
+
+function readBooleanEnv(name, fallback) {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+
+  if (["1", "true", "yes", "on"].includes(normalizedValue)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalizedValue)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be a boolean value.`);
+}
+
+function readCacheResetModeEnv(name, fallback) {
+  const rawValue = process.env[name];
+
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+
+  if (
+    normalizedValue !== "none" &&
+    normalizedValue !== "app" &&
+    normalizedValue !== "layer"
+  ) {
+    throw new Error(`${name} must be one of: none, app, layer.`);
+  }
+
+  return normalizedValue;
 }
 
 function readSampleCasesEnv(name, fallbackIds) {
@@ -341,22 +431,31 @@ function createSmoothnessFlow(
   baseUrl,
   maxPointCountPerNode,
   streamPointBudgets,
+  pointRenderer,
   sampleCases,
   repeatCount,
   durationMilliseconds,
   cameraSteps,
   moveMeters,
+  cameraHeightAboveCloudMeters,
   minSelectedDepthOverride,
+  cacheResetMode,
+  waitForFinalDetail,
 ) {
   return `async (page) => {
   const maxPointCountPerNode = ${JSON.stringify(maxPointCountPerNode)};
   const streamPointBudgets = ${JSON.stringify(streamPointBudgets)};
+  const pointRenderer = ${JSON.stringify(pointRenderer)};
   const sampleCases = ${JSON.stringify(sampleCases)};
   const repeatCount = ${JSON.stringify(repeatCount)};
   const durationMilliseconds = ${JSON.stringify(durationMilliseconds)};
   const cameraSteps = ${JSON.stringify(cameraSteps)};
   const moveMeters = ${JSON.stringify(moveMeters)};
+  const cameraHeightAboveCloudMeters = ${JSON.stringify(cameraHeightAboveCloudMeters)};
   const minSelectedDepthOverride = ${JSON.stringify(minSelectedDepthOverride)};
+  const cacheResetMode = ${JSON.stringify(cacheResetMode)};
+  const waitForFinalDetail = ${JSON.stringify(waitForFinalDetail)};
+  const clearCachesBeforeRun = cacheResetMode !== "none";
   const failures = [];
   const consoleProblems = [];
   const pageErrors = [];
@@ -381,10 +480,24 @@ function createSmoothnessFlow(
   }
 
   async function waitForRenderedStatus() {
+    const renderedStatusTexts = [
+      "Rendered ",
+      "Auto LOD rendered",
+      "Camera stream rendered",
+      "Camera stream previewed",
+      "Camera stream partial render",
+    ];
+
     try {
       await page.waitForFunction(
-        () => document.querySelector("#copc-status")?.textContent?.includes("Rendered "),
-        undefined,
+        (statusTexts) => {
+          const currentStatus =
+            document.querySelector("#copc-status")?.textContent ?? "";
+          return statusTexts.some((statusText) =>
+            currentStatus.includes(statusText),
+          );
+        },
+        renderedStatusTexts,
         { timeout: 120_000 },
       );
     } catch (error) {
@@ -410,6 +523,43 @@ function createSmoothnessFlow(
     }
   }
 
+  async function waitForCameraStreamInteractiveStatus() {
+    try {
+      await page.waitForFunction(
+        () => {
+          const status = document.querySelector("#copc-status")?.textContent ?? "";
+          return (
+            status.includes("Camera stream rendered") ||
+            status.includes("Camera stream previewed") ||
+            status.includes("Camera stream partial render")
+          );
+        },
+        undefined,
+        { timeout: 120_000 },
+      );
+    } catch (error) {
+      const currentStatus = await page.locator("#copc-status").textContent();
+      throw new Error(
+        \`Timed out waiting for an interactive camera stream render. Current status: "\${currentStatus}". \${error.message}\`,
+      );
+    }
+  }
+
+  async function waitForBenchmarkApi() {
+    try {
+      await page.waitForFunction(
+        () => Boolean(window.__copcBasicViewerBenchmark),
+        undefined,
+        { timeout: 60_000 },
+      );
+    } catch (error) {
+      const currentStatus = await page.locator("#copc-status").textContent();
+      throw new Error(
+        \`Timed out waiting for the basic viewer benchmark API. Current status: "\${currentStatus}". \${error.message}\`,
+      );
+    }
+  }
+
   async function benchmarkStatus() {
     return page.evaluate(() => {
       const benchmark = window.__copcBasicViewerBenchmark;
@@ -422,8 +572,24 @@ function createSmoothnessFlow(
     });
   }
 
+  async function waitForCameraStreamPrefetch(timeoutMilliseconds) {
+    return page.evaluate((timeoutMilliseconds) => {
+      const benchmark = window.__copcBasicViewerBenchmark;
+
+      if (!benchmark) {
+        throw new Error("Basic viewer benchmark API was not installed.");
+      }
+
+      if (typeof benchmark.waitForCameraStreamPrefetch !== "function") {
+        return benchmark.getStatus();
+      }
+
+      return benchmark.waitForCameraStreamPrefetch(timeoutMilliseconds);
+    }, timeoutMilliseconds);
+  }
+
   async function prepareViewer(sampleCase, initialStreamPointBudget) {
-    await page.evaluate(({ maxPointCountPerNode, sampleCase, initialStreamPointBudget }) => {
+    await page.evaluate(({ maxPointCountPerNode, pointRenderer, sampleCase, initialStreamPointBudget }) => {
       const sampleSelect = document.querySelector("#copc-sample-select");
       const rendererSelect = document.querySelector("#copc-renderer-select");
       const maxPointCountInput = document.querySelector("#copc-max-point-count");
@@ -478,7 +644,11 @@ function createSmoothnessFlow(
         checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       }
 
-      rendererSelect.value = "primitive";
+      if (![...rendererSelect.options].some((option) => option.value === pointRenderer)) {
+        throw new Error(\`Point renderer was not found: \${pointRenderer}\`);
+      }
+
+      rendererSelect.value = pointRenderer;
       maxPointCountInput.value = String(maxPointCountPerNode);
       streamPointBudgetInput.value = String(initialStreamPointBudget);
 
@@ -498,7 +668,7 @@ function createSmoothnessFlow(
       sourceCrsInput.value = sampleCase.sourceCrs ?? "";
       sourceDefinitionInput.value = sampleCase.sourceDefinition ?? "";
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    }, { maxPointCountPerNode, sampleCase, initialStreamPointBudget });
+    }, { maxPointCountPerNode, pointRenderer, sampleCase, initialStreamPointBudget });
     await waitForRenderedStatus();
 
     const loadedSourcePreset = await metadataValue("Source preset");
@@ -538,7 +708,7 @@ function createSmoothnessFlow(
 
       checkbox.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await waitForCameraStreamStatus();
+    await waitForCameraStreamInteractiveStatus();
 
     return {
       sampleId: sampleCase.id,
@@ -567,7 +737,7 @@ function createSmoothnessFlow(
 
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }, streamPointBudget);
-    await waitForCameraStreamStatus();
+    await waitForCameraStreamInteractiveStatus();
   }
 
   function average(values) {
@@ -594,7 +764,9 @@ function createSmoothnessFlow(
   }
 
   function parseCameraStreamPointCount(statusText) {
-    const match = statusText.match(/Camera stream rendered ([\\d,]+) points/);
+    const match = statusText.match(
+      /Camera stream (?:rendered|previewed|partial render) ([\\d,]+) points/,
+    );
 
     if (!match) {
       return undefined;
@@ -603,9 +775,45 @@ function createSmoothnessFlow(
     return Number(match[1].replaceAll(",", ""));
   }
 
+  function isCameraStreamInteractiveStatus(statusText) {
+    return (
+      statusText.includes("Camera stream rendered") ||
+      statusText.includes("Camera stream previewed") ||
+      statusText.includes("Camera stream partial render")
+    );
+  }
+
+  function parseCameraStreamDetailProgress(statusText) {
+    const renderedMatch = statusText.match(
+      /Camera stream rendered [\\d,]+ points from ([\\d,]+) COPC nodes/,
+    );
+    const finalMatch = statusText.match(
+      /([\\d,]+) selected detail nodes for the current view/,
+    );
+
+    if (!renderedMatch || !finalMatch) {
+      return undefined;
+    }
+
+    const finalNodeCount = Number(finalMatch[1].replaceAll(",", ""));
+    const renderedFinalNodeCount = Math.min(
+      finalNodeCount,
+      Number(renderedMatch[1].replaceAll(",", "")),
+    );
+
+    return {
+      finalNodeCount,
+      renderedFinalNodeCount,
+      renderedFinalNodeCoverageRatio:
+        finalNodeCount > 0 ? renderedFinalNodeCount / finalNodeCount : 0,
+      reachedRenderBudget: statusText.includes("render budget filled"),
+      isComplete: true,
+    };
+  }
+
   function parseCameraStreamDiagnostics(diagnosticsText) {
     const match = diagnosticsText?.match(
-      /^expand ([\\d,.]+) ms, apply ([\\d,.]+) ms, select ([\\d,.]+) ms, render ([\\d,.]+) ms, total ([\\d,.]+) ms, ([\\d,]+) pages, ([\\d,]+) nodes, depth ([\\d,]+)$/,
+      /expand ([\\d,.]+) ms, apply ([\\d,.]+) ms, select ([\\d,.]+) ms, render ([\\d,.]+) ms, total ([\\d,.]+) ms, ([\\d,]+) pages, ([\\d,]+) nodes, depth ([\\d,]+)/,
     );
 
     if (!match) {
@@ -624,11 +832,35 @@ function createSmoothnessFlow(
     };
   }
 
-  function parseAppliedCameraStreamBudget(budgetText) {
-    const lastMatch = budgetText?.match(/last ([\\d,]+) points/);
+  function parsePointGeometryTiming(timingText) {
+    const match = timingText?.match(
+      /([\\d,]+) nodes, ([\\d,]+) cache hits, max round trip ([\\d,.]+) ms, max decode ([\\d,.]+) ms, max worker ([\\d,.]+) ms(?:, max queue ([\\d,.]+) ms)?, sum decode ([\\d,.]+) ms, sum worker ([\\d,.]+) ms, sum queue ([\\d,.]+) ms/,
+    );
 
-    if (lastMatch) {
-      return Number(lastMatch[1].replaceAll(",", ""));
+    if (!match) {
+      return undefined;
+    }
+
+    return {
+      nodeCount: Number(match[1].replaceAll(",", "")),
+      cacheHitCount: Number(match[2].replaceAll(",", "")),
+      maxRequestRoundTripMilliseconds: Number(match[3].replaceAll(",", "")),
+      maxDecodeMilliseconds: Number(match[4].replaceAll(",", "")),
+      maxWorkerMilliseconds: Number(match[5].replaceAll(",", "")),
+      maxQueueMilliseconds: match[6] === undefined
+        ? undefined
+        : Number(match[6].replaceAll(",", "")),
+      sumDecodeMilliseconds: Number(match[7].replaceAll(",", "")),
+      sumWorkerMilliseconds: Number(match[8].replaceAll(",", "")),
+      sumQueueMilliseconds: Number(match[9].replaceAll(",", "")),
+    };
+  }
+
+  function parseAppliedCameraStreamBudget(budgetText) {
+    const capMatch = budgetText?.match(/([\\d,]+)\\s+render pts cap/i);
+
+    if (capMatch) {
+      return Number(capMatch[1].replaceAll(",", ""));
     }
 
     const budgetMatch = budgetText?.match(/^([\\d,]+) points/);
@@ -638,11 +870,23 @@ function createSmoothnessFlow(
 
   async function measureSmoothness(sampleSnapshot, streamPointBudget, runIndex) {
     const measurement = await page.evaluate(
-      async ({ durationMilliseconds, cameraSteps, moveMeters }) => {
+      async ({ durationMilliseconds, cameraSteps, moveMeters, cameraHeightAboveCloudMeters, clearCachesBeforeRun, cacheResetMode }) => {
         const benchmark = window.__copcBasicViewerBenchmark;
 
         if (!benchmark) {
           throw new Error("Basic viewer benchmark API was not installed.");
+        }
+
+        let cacheReset;
+
+        if (clearCachesBeforeRun) {
+          if (typeof benchmark.clearStreamingCaches !== "function") {
+            throw new Error("Basic viewer benchmark cache reset API was not installed.");
+          }
+
+          cacheReset = benchmark.clearStreamingCaches({
+            resetLayerCaches: cacheResetMode === "layer",
+          });
         }
 
         const frameDeltas = [];
@@ -666,6 +910,7 @@ function createSmoothnessFlow(
         const status = await benchmark.moveCameraForSmoothness({
           steps: cameraSteps,
           durationMilliseconds,
+          heightAboveCloudMeters: cameraHeightAboveCloudMeters,
           moveMeters,
         });
         const completedAt = performance.now();
@@ -678,17 +923,33 @@ function createSmoothnessFlow(
 
         return {
           measuredDurationMilliseconds: completedAt - startedAt,
+          cacheReset,
           frameDeltas,
           status,
         };
       },
-      { durationMilliseconds, cameraSteps, moveMeters },
+      { durationMilliseconds, cameraSteps, moveMeters, cameraHeightAboveCloudMeters, clearCachesBeforeRun, cacheResetMode },
     );
+    const cameraStreamFirstResponseMilliseconds =
+      measurement.status.cameraStreamFirstResponseMilliseconds;
 
-    if (!measurement.status.status.includes("Camera stream rendered")) {
+    if (
+      waitForFinalDetail &&
+      !measurement.status.status.includes("Camera stream rendered")
+    ) {
       await waitForCameraStreamStatus();
       measurement.status = await benchmarkStatus();
+    } else if (
+      !waitForFinalDetail &&
+      !isCameraStreamInteractiveStatus(measurement.status.status)
+    ) {
+      await waitForCameraStreamInteractiveStatus();
+      measurement.status = await benchmarkStatus();
     }
+
+    measurement.status = await waitForCameraStreamPrefetch(
+      waitForFinalDetail ? 5_000 : 2_000,
+    );
 
     if (measurement.frameDeltas.length < Math.max(10, cameraSteps / 2)) {
       failures.push(
@@ -696,9 +957,19 @@ function createSmoothnessFlow(
       );
     }
 
-    if (!measurement.status.status.includes("Camera stream rendered")) {
+    if (
+      waitForFinalDetail &&
+      !measurement.status.status.includes("Camera stream rendered")
+    ) {
       failures.push(
         \`run \${runIndex} ended with unexpected status: \${measurement.status.status}\`,
+      );
+    } else if (
+      !waitForFinalDetail &&
+      !isCameraStreamInteractiveStatus(measurement.status.status)
+    ) {
+      failures.push(
+        \`run \${runIndex} ended without an interactive camera stream status: \${measurement.status.status}\`,
       );
     }
 
@@ -707,8 +978,14 @@ function createSmoothnessFlow(
     }
 
     const renderedPointCount = parseCameraStreamPointCount(measurement.status.status);
-    const cameraStreamDiagnostics = parseCameraStreamDiagnostics(
-      measurement.status.cameraStreamDiagnostics,
+    const cameraStreamDetailProgress =
+      measurement.status.cameraStreamDetailProgress ??
+      parseCameraStreamDetailProgress(measurement.status.status);
+    const cameraStreamDiagnostics =
+      measurement.status.cameraStreamDiagnosticsData ??
+      parseCameraStreamDiagnostics(measurement.status.cameraStreamDiagnostics);
+    const pointGeometryTiming = parsePointGeometryTiming(
+      measurement.status.pointGeometryTiming,
     );
     const appliedStreamPointBudget =
       parseAppliedCameraStreamBudget(measurement.status.cameraStreamBudget) ??
@@ -738,6 +1015,17 @@ function createSmoothnessFlow(
       }
     }
 
+    if (waitForFinalDetail && !cameraStreamDetailProgress) {
+      failures.push(\`run \${runIndex} did not expose camera stream detail progress.\`);
+    }
+
+    if (
+      cameraStreamFirstResponseMilliseconds === undefined ||
+      !Number.isFinite(cameraStreamFirstResponseMilliseconds)
+    ) {
+      failures.push(\`run \${runIndex} did not expose camera stream first-response timing.\`);
+    }
+
     return {
       sampleId: sampleSnapshot.sampleId,
       sampleLabel: sampleSnapshot.label,
@@ -745,16 +1033,31 @@ function createSmoothnessFlow(
       coordinateTransform: sampleSnapshot.coordinateTransform,
       runIndex,
       streamPointBudget,
+      appliedStreamPointBudget,
       renderedPointCount,
+      cameraStreamDetailProgress,
+      finalNodeCount: cameraStreamDetailProgress?.finalNodeCount,
+      renderedFinalNodeCount:
+        cameraStreamDetailProgress?.renderedFinalNodeCount,
+      renderedFinalNodeCoverageRatio:
+        cameraStreamDetailProgress?.renderedFinalNodeCoverageRatio,
+      renderedFinalNodeWeightCoverageRatio:
+        cameraStreamDetailProgress?.renderedFinalNodeWeightCoverageRatio,
       cameraStreamDiagnosticsText: measurement.status.cameraStreamDiagnostics,
       cameraStreamDiagnostics,
+      cameraStreamPrefetchText: measurement.status.cameraStreamPrefetch,
+      cameraStreamPrefetch: measurement.status.cameraStreamPrefetchData,
+      pointGeometryTimingText: measurement.status.pointGeometryTiming,
+      pointGeometryTiming,
+      cameraStreamFirstResponseMilliseconds,
+      cacheReset: measurement.cacheReset,
       ...measurement,
       summary: summarizeFrames(measurement.frameDeltas),
     };
   }
 
   await page.goto(${JSON.stringify(baseUrl)}, { waitUntil: "domcontentloaded" });
-  await waitForRenderedStatus();
+  await waitForBenchmarkApi();
 
   for (const sampleCase of sampleCases) {
     const sampleSnapshot = await prepareViewer(sampleCase, streamPointBudgets[0]);
@@ -786,6 +1089,7 @@ function createSmoothnessFlow(
   return {
     maxPointCountPerNode,
     streamPointBudgets,
+    requestedPointRenderer: pointRenderer,
     sampleCases: sampleCases.map((sampleCase) => ({
       id: sampleCase.id,
       label: sampleCase.label,
@@ -797,6 +1101,10 @@ function createSmoothnessFlow(
     durationMilliseconds,
     cameraSteps,
     moveMeters,
+    cameraHeightAboveCloudMeters,
+    clearCachesBeforeRun,
+    cacheResetMode,
+    waitForFinalDetail,
     pointRenderer: await metadataValue("Point renderer"),
     results,
   };
@@ -850,8 +1158,14 @@ function printBenchmarkSummary(result) {
         0,
       );
       const renderedPoints = runs.map((run) => run.renderedPointCount ?? 0);
+      const cacheResets = runs
+        .map((run) => run.cacheReset)
+        .filter(Boolean);
       const diagnostics = runs
         .map((run) => run.cameraStreamDiagnostics)
+        .filter(Boolean);
+      const detailProgresses = runs
+        .map((run) => run.cameraStreamDetailProgress)
         .filter(Boolean);
       const averageExpandMilliseconds = average(
         diagnostics.map((run) => run.expandHierarchyMilliseconds),
@@ -871,20 +1185,100 @@ function printBenchmarkSummary(result) {
       const averageSelectedDepth = average(
         diagnostics.map((run) => run.selectedDepth),
       );
+      const geometryTimings = runs
+        .map((run) => run.pointGeometryTiming)
+        .filter(Boolean);
+      const firstResponseTimings = runs
+        .map((run) => run.cameraStreamFirstResponseMilliseconds)
+        .filter((value) => Number.isFinite(value));
+      const firstResponseSummary =
+        firstResponseTimings.length === 0
+          ? undefined
+          : `first response avg ${average(firstResponseTimings).toFixed(1)} ms`;
+      const geometrySummary =
+        geometryTimings.length === 0
+          ? undefined
+          : `geometry avg max decode/worker/roundtrip ${average(
+              geometryTimings.map((run) => run.maxDecodeMilliseconds),
+            ).toFixed(1)}/${average(
+              geometryTimings.map((run) => run.maxWorkerMilliseconds),
+            ).toFixed(1)}/${average(
+              geometryTimings.map((run) => run.maxRequestRoundTripMilliseconds),
+            ).toFixed(1)} ms, avg queue/node ${average(
+              geometryTimings.map(
+                (run) => run.sumQueueMilliseconds / Math.max(1, run.nodeCount),
+              ),
+            ).toFixed(1)} ms, cache hits avg ${average(
+              geometryTimings.map((run) => run.cacheHitCount),
+            ).toFixed(1)}/${average(
+              geometryTimings.map((run) => run.nodeCount),
+            ).toFixed(1)} nodes`;
+      const detailCoverageSummary =
+        detailProgresses.length === 0
+          ? undefined
+          : `current-view node coverage avg ${(
+              average(
+                detailProgresses.map(
+                  (progress) => progress.renderedFinalNodeCoverageRatio,
+                ),
+              ) * 100
+            ).toFixed(1)}%`;
+      const prefetches = runs
+        .map((run) => run.cameraStreamPrefetch)
+        .filter(Boolean);
+      const prefetchSummary =
+        prefetches.length === 0
+          ? undefined
+          : `prefetch avg ${average(
+              prefetches.map((prefetch) => prefetch.prefetchedNodeCount),
+            ).toFixed(1)}/${average(
+              prefetches.map((prefetch) => prefetch.requestedNodeCount),
+            ).toFixed(1)} nodes, skipped avg ${average(
+              prefetches.map((prefetch) => prefetch.skippedNodeCount),
+            ).toFixed(1)}`;
+      const summaryParts = [
+        `  - ${streamPointBudget.toLocaleString()} point stream budget`,
+        `${runs.length.toLocaleString()} runs`,
+        `${Math.min(...renderedPoints).toLocaleString()}-${Math.max(...renderedPoints).toLocaleString()} rendered pts`,
+        `avg ${averageFps.toFixed(1)} fps`,
+        `p95 ${averageP95.toFixed(2)} ms`,
+        `max ${maxFrame.toFixed(2)} ms`,
+        `${over50.toLocaleString()} frames > 50 ms`,
+        `depth avg ${averageSelectedDepth.toFixed(1)}`,
+        `stream avg expand/apply/select/render/total ${averageExpandMilliseconds.toFixed(1)}/${averageApplyMilliseconds.toFixed(1)}/${averageSelectMilliseconds.toFixed(1)}/${averageRenderMilliseconds.toFixed(1)}/${averageTotalStreamMilliseconds.toFixed(1)} ms`,
+      ];
 
-      console.log(
-        [
-          `  - ${streamPointBudget.toLocaleString()} point stream budget`,
-          `${runs.length.toLocaleString()} runs`,
-          `${Math.min(...renderedPoints).toLocaleString()}-${Math.max(...renderedPoints).toLocaleString()} rendered pts`,
-          `avg ${averageFps.toFixed(1)} fps`,
-          `p95 ${averageP95.toFixed(2)} ms`,
-          `max ${maxFrame.toFixed(2)} ms`,
-          `${over50.toLocaleString()} frames > 50 ms`,
-          `depth avg ${averageSelectedDepth.toFixed(1)}`,
-          `stream avg expand/apply/select/render/total ${averageExpandMilliseconds.toFixed(1)}/${averageApplyMilliseconds.toFixed(1)}/${averageSelectMilliseconds.toFixed(1)}/${averageRenderMilliseconds.toFixed(1)}/${averageTotalStreamMilliseconds.toFixed(1)} ms`,
-        ].join(", "),
-      );
+      if (cacheResets.length > 0) {
+        summaryParts.push(
+          `cache reset avg ${average(
+            cacheResets.map((reset) => reset.pointSampleSetCount),
+          ).toFixed(1)} sample sets / ${average(
+            cacheResets.map((reset) => reset.pointGeometryBatchCount),
+          ).toFixed(1)} geometry batches / ${average(
+            cacheResets.map((reset) => reset.pointSampleWorkerCount ?? 0),
+          ).toFixed(1)} sample workers / ${average(
+            cacheResets.map((reset) => reset.pointGeometryWorkerCount ?? 0),
+          ).toFixed(1)} geometry workers`,
+        );
+      }
+
+      if (geometrySummary) {
+        summaryParts.push(geometrySummary);
+      }
+
+      if (firstResponseSummary) {
+        summaryParts.push(firstResponseSummary);
+      }
+
+      if (detailCoverageSummary) {
+        summaryParts.push(detailCoverageSummary);
+      }
+
+      if (prefetchSummary) {
+        summaryParts.push(prefetchSummary);
+      }
+
+      console.log(summaryParts.join(", "));
     }
   }
 }
@@ -940,12 +1334,16 @@ try {
       baseUrl,
       benchmarkMaxPointCountPerNode,
       benchmarkStreamPointBudgets,
+      benchmarkPointRenderer,
       benchmarkSampleCases,
       benchmarkRepeats,
       benchmarkDurationMilliseconds,
       benchmarkCameraSteps,
       benchmarkMoveMeters,
+      benchmarkCameraHeightAboveCloudMeters,
       benchmarkMinSelectedDepthOverride,
+      benchmarkCacheResetMode,
+      benchmarkWaitForFinalDetail,
     ),
   );
 
@@ -956,13 +1354,20 @@ try {
       `${benchmarkStreamPointBudgets
         .map((value) => value.toLocaleString())
         .join("/")} stream budgets,`,
+      `${benchmarkPointRenderer} renderer,`,
       `${benchmarkSampleCases.map((sample) => sample.id).join("/")} samples,`,
       `${benchmarkRepeats.toLocaleString()} repeats,`,
       `${benchmarkCameraSteps.toLocaleString()} camera steps,`,
+      benchmarkCameraHeightAboveCloudMeters === undefined
+        ? ""
+        : `${benchmarkCameraHeightAboveCloudMeters.toLocaleString()} m camera height,`,
+      benchmarkCacheResetMode !== "none"
+        ? `${benchmarkCacheResetMode} cache reset,`
+        : "",
       benchmarkMinSelectedDepthOverride === undefined
         ? "sample depth targets"
         : `min selected depth ${benchmarkMinSelectedDepthOverride}`,
-    ].join(" "),
+    ].filter(Boolean).join(" "),
   );
   runPlaywrightCli(["open", "about:blank"]);
   const output = runPlaywrightCli(["run-code", "--filename", benchmarkFlowPath]);

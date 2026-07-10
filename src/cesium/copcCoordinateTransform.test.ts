@@ -20,8 +20,14 @@ describe("createProj4CoordinateTransforms", () => {
     );
 
     expect(transforms.status).toEqual({
+      heightScaleToMeters: 1,
       kind: "custom",
       label: "EPSG:32611 to WGS84",
+      sourceCrs: "EPSG:32611",
+      sourceDefinition:
+        "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs",
+      targetCrs: "EPSG:4326",
+      targetDefinition: undefined,
     });
     expect(cesiumCoordinate.longitudeDegrees).toBeGreaterThan(-119);
     expect(cesiumCoordinate.longitudeDegrees).toBeLessThan(-118);

@@ -1,11 +1,11 @@
 import proj4 from "proj4";
 import type { CopcInspection } from "../core/copc/CopcInspection";
 
-const EPSG_2992 = "EPSG:2992";
+export const EPSG_2992 = "EPSG:2992";
 const WGS84 = "EPSG:4326";
 const UNSUPPORTED_CRS_MESSAGE =
   "This prototype can only render geographic coordinates or the sample EPSG:2992 COPC CRS.";
-const US_SURVEY_FOOT_TO_METER = 0.304800609601219;
+export const US_SURVEY_FOOT_TO_METER = 0.304800609601219;
 
 let projectionsConfigured = false;
 
@@ -39,6 +39,11 @@ export interface CopcCoordinateTransformStatus {
   readonly kind: CopcCoordinateTransformKind;
   readonly label: string;
   readonly supportsCameraSelection: boolean;
+  readonly sourceCrs?: string;
+  readonly sourceDefinition?: string;
+  readonly targetCrs?: string;
+  readonly targetDefinition?: string;
+  readonly heightScaleToMeters?: number;
 }
 
 export interface CopcCoordinateTransformSet {
@@ -113,6 +118,11 @@ export function createProj4CoordinateTransforms(
       status: {
         kind: "custom",
         label,
+        sourceCrs: options.sourceCrs,
+        sourceDefinition: options.sourceDefinition,
+        targetCrs,
+        targetDefinition: options.targetDefinition,
+        heightScaleToMeters,
       },
     };
   };
@@ -188,6 +198,10 @@ function createInverseHorizontalTransform(
 }
 
 function configureKnownProjections(): void {
+  configureKnownCopcProjections();
+}
+
+export function configureKnownCopcProjections(): void {
   if (projectionsConfigured) {
     return;
   }
@@ -244,17 +258,17 @@ function detectDefaultCoordinateTransformStatus(
 }
 
 function heightToMeters(z: number, inspection: CopcInspection): number {
-  if (inspection.wkt?.includes('VERT_CS["NAVD88 height (ftUS)"')) {
-    return z * US_SURVEY_FOOT_TO_METER;
-  }
-
-  return z;
+  return z * getDefaultCopcHeightScaleToMeters(inspection);
 }
 
 function heightFromMeters(heightMeters: number, inspection: CopcInspection): number {
-  if (inspection.wkt?.includes('VERT_CS["NAVD88 height (ftUS)"')) {
-    return heightMeters / US_SURVEY_FOOT_TO_METER;
-  }
+  return heightMeters / getDefaultCopcHeightScaleToMeters(inspection);
+}
 
-  return heightMeters;
+export function getDefaultCopcHeightScaleToMeters(
+  inspection: CopcInspection,
+): number {
+  return inspection.wkt?.includes('VERT_CS["NAVD88 height (ftUS)"')
+    ? US_SURVEY_FOOT_TO_METER
+    : 1;
 }

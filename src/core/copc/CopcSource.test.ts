@@ -9,6 +9,21 @@ import type {
 } from "./CopcPointSampleWorkerProtocol";
 
 describe("CopcSource point sample cache", () => {
+  it("stores Blob-backed source descriptors for local file inputs", () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])]) as Blob & {
+      readonly name: string;
+    };
+    Object.defineProperty(blob, "name", {
+      value: "local-sample.copc.laz",
+    });
+    const source = new CopcSource(blob);
+
+    expect(source.input).toBe(blob);
+    expect(source.url).toBe("local-sample.copc.laz");
+    expect(source.getDescriptor().input).toBe(blob);
+    expect(source.getDescriptor().key).toMatch(/^blob:\d+$/);
+  });
+
   it("reports cache hits and misses for sampled hierarchy nodes", async () => {
     const source = new CopcSource("https://example.com/sample.copc.laz");
     const mutableSource = source as unknown as {
@@ -56,6 +71,51 @@ describe("CopcSource point sample cache", () => {
       cacheMissCount: 2,
       cacheEvictionCount: 0,
     });
+  });
+
+  it("reuses a denser sampled node cache for a lower point count request", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const mutableSource = source as unknown as {
+      loadNodePointSamplesWithoutCache: (
+        nodeKey: string,
+        maxPointCount: number,
+      ) => Promise<CopcNodePointSampleResult>;
+    };
+    let loadCount = 0;
+
+    mutableSource.loadNodePointSamplesWithoutCache = async (
+      nodeKey,
+      maxPointCount,
+    ) => {
+      loadCount += 1;
+
+      return {
+        nodeKey,
+        nodePointCount: 10,
+        sampledPointCount: maxPointCount,
+        points: createSamplePoints(maxPointCount),
+      };
+    };
+
+    await source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 8,
+    });
+    const reused = await source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 3,
+    });
+
+    expect(loadCount).toBe(1);
+    expect(reused.sampledPointCount).toBe(3);
+    expect(reused.points.map((point) => point.x)).toEqual([0, 2, 5]);
+    expect(source.getPointSampleCacheStats()).toEqual(
+      expect.objectContaining({
+        cachedSampleSetCount: 1,
+        cacheHitCount: 1,
+        cacheMissCount: 1,
+      }),
+    );
   });
 
   it("evicts least recently used sampled node caches when the limit is reached", async () => {
@@ -212,6 +272,13 @@ describe("CopcSource point sample cache", () => {
     expect(
       () =>
         new CopcSource("https://example.com/sample.copc.laz", {
+          maxCachedHierarchyPageBytes: 0,
+        }),
+    ).toThrow("maxCachedHierarchyPageBytes must be a positive integer.");
+
+    expect(
+      () =>
+        new CopcSource("https://example.com/sample.copc.laz", {
           maxConcurrentPointSampleWorkerRequests: 0,
         }),
     ).toThrow(
@@ -221,9 +288,128 @@ describe("CopcSource point sample cache", () => {
     expect(
       () =>
         new CopcSource("https://example.com/sample.copc.laz", {
+          maxDecodedPointDataViewsPerWorker: 0,
+        }),
+    ).toThrow("maxDecodedPointDataViewsPerWorker must be a positive integer.");
+
+    expect(
+      () =>
+        new CopcSource("https://example.com/sample.copc.laz", {
+          maxDecodedPointDataViewBytesPerWorker: 0,
+        }),
+    ).toThrow(
+      "maxDecodedPointDataViewBytesPerWorker must be a positive integer.",
+    );
+
+    expect(
+      () =>
+        new CopcSource("https://example.com/sample.copc.laz", {
           pointSampleLoading: "invalid",
         } as never),
     ).toThrow("pointSampleLoading must be either 'main-thread' or 'worker'.");
+  });
+
+  it("warms point sample workers without dispatching point requests", () => {
+    const workers: FakePointSampleWorker[] = [];
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 3,
+      createPointSampleWorker: () => {
+        const worker = new FakePointSampleWorker();
+        workers.push(worker);
+
+        return worker as unknown as Worker;
+      },
+    });
+
+    expect(source.warmUpPointSampleWorkers({ workerCount: 2 })).toBe(2);
+    expect(workers).toHaveLength(2);
+    expect(workers.flatMap((worker) => worker.requests)).toEqual([]);
+
+    expect(source.warmUpPointSampleWorkers({ workerCount: 10 })).toBe(3);
+    expect(workers).toHaveLength(3);
+
+    source.destroy();
+    expect(workers.map((worker) => worker.terminateCount)).toEqual([1, 1, 1]);
+  });
+
+  it("resets active point sample worker requests without destroying the source", async () => {
+    const workers: FakePointSampleWorker[] = [];
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      createPointSampleWorker: () => {
+        const worker = new FakePointSampleWorker();
+        workers.push(worker);
+
+        return worker as unknown as Worker;
+      },
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+      },
+      pages: {},
+    });
+
+    const pendingResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerPoolLoadRequestCount(workers, 1);
+
+    const rejects = expect(pendingResult).rejects.toThrow(
+      "COPC point sample worker was reset.",
+    );
+
+    expect(source.resetPointSampleWorkers()).toBe(1);
+    expect(workers[0]?.terminateCount).toBe(1);
+    await rejects;
+    expect(source.getPointSampleCacheStats()).toEqual(
+      expect.objectContaining({
+        cachedSampleSetCount: 0,
+      }),
+    );
+
+    const nextResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerPoolLoadRequestCount(workers, 2);
+
+    const nextRequest = workers[1]?.requests.find(isLoadRequest);
+
+    if (!nextRequest) {
+      throw new Error("Expected a new worker request after reset.");
+    }
+
+    workers[1]?.emit(createWorkerSuccessResponse(nextRequest));
+    await expect(nextResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+    });
+  });
+
+  it("skips point sample worker warmup when worker loading is disabled", () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "main-thread",
+    });
+
+    expect(source.warmUpPointSampleWorkers()).toBe(0);
+    expect(() =>
+      source.warmUpPointSampleWorkers({ workerCount: 0 }),
+    ).not.toThrow();
   });
 
   it("loads sampled hierarchy node points through a worker when configured", async () => {
@@ -245,6 +431,8 @@ describe("CopcSource point sample cache", () => {
     }));
     const source = new CopcSource("https://example.com/sample.copc.laz", {
       pointSampleLoading: "worker",
+      maxDecodedPointDataViewsPerWorker: 80,
+      maxDecodedPointDataViewBytesPerWorker: 200 * 1024 * 1024,
       createPointSampleWorker: () => worker as unknown as Worker,
     });
     const mutableSource = source as unknown as {
@@ -274,10 +462,15 @@ describe("CopcSource point sample cache", () => {
 
     expect(worker.requests).toEqual([
       expect.objectContaining({
-        url: "https://example.com/sample.copc.laz",
+        source: {
+          key: "url:https://example.com/sample.copc.laz",
+          input: "https://example.com/sample.copc.laz",
+        },
         nodeKey: "0-0-0-0",
         node: createNode(100),
         maxPointCount: 5,
+        maxDecodedPointDataViews: 80,
+        maxDecodedPointDataViewBytes: 200 * 1024 * 1024,
       }),
     ]);
     expect(result).toEqual({
@@ -301,11 +494,16 @@ describe("CopcSource point sample cache", () => {
   });
 
   it("limits concurrent worker point sample requests", async () => {
-    const worker = new FakePointSampleWorker();
+    const workers: FakePointSampleWorker[] = [];
     const source = new CopcSource("https://example.com/sample.copc.laz", {
       pointSampleLoading: "worker",
       maxConcurrentPointSampleWorkerRequests: 2,
-      createPointSampleWorker: () => worker as unknown as Worker,
+      createPointSampleWorker: () => {
+        const worker = new FakePointSampleWorker();
+        workers.push(worker);
+
+        return worker as unknown as Worker;
+      },
     });
     const mutableSource = source as unknown as {
       copcPromise: Promise<CopcData>;
@@ -334,30 +532,586 @@ describe("CopcSource point sample cache", () => {
       nodeKeys,
       maxPointCountPerNode: 5,
     });
-    await waitForWorkerLoadRequestCount(worker, 2);
+    await waitForWorkerPoolLoadRequestCount(workers, 2);
+    expect(workers).toHaveLength(2);
     expect(
-      worker.requests.filter(isLoadRequest).map((request) => request.nodeKey),
-    ).toEqual(["0-0-0-0", "1-0-0-0"]);
+      workers[0]?.requests.filter(isLoadRequest).map((request) => request.nodeKey),
+    ).toEqual(["0-0-0-0"]);
+    expect(
+      workers[1]?.requests.filter(isLoadRequest).map((request) => request.nodeKey),
+    ).toEqual(["1-0-0-0"]);
 
-    const firstRequest = worker.requests.find(isLoadRequest);
+    const firstRequest = workers[0]?.requests.find(isLoadRequest);
 
     if (!firstRequest) {
       throw new Error("Expected first worker load request.");
     }
 
-    worker.emit(createWorkerSuccessResponse(firstRequest));
-    await waitForWorkerLoadRequestCount(worker, 3);
+    workers[0]?.emit(createWorkerSuccessResponse(firstRequest));
+    await waitForWorkerPoolLoadRequestCount(workers, 3);
 
-    const loadRequests = worker.requests.filter(isLoadRequest);
+    const loadRequests = workers
+      .flatMap((worker) => worker.requests.filter(isLoadRequest))
+      .sort((first, second) => first.id - second.id);
     expect(loadRequests.map((request) => request.nodeKey)).toEqual(nodeKeys);
 
     for (const request of loadRequests.slice(1)) {
-      worker.emit(createWorkerSuccessResponse(request));
+      const worker = workers.find((candidate) =>
+        candidate.requests.includes(request),
+      );
+      worker?.emit(createWorkerSuccessResponse(request));
     }
 
     const result = await promise;
     expect(result.nodeKeys).toEqual(nodeKeys);
     expect(result.sampledPointCount).toBe(3);
+  });
+
+  it("sends queued worker point sample requests to the worker that became idle", async () => {
+    const workers: FakePointSampleWorker[] = [];
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 2,
+      createPointSampleWorker: () => {
+        const worker = new FakePointSampleWorker();
+        workers.push(worker);
+
+        return worker as unknown as Worker;
+      },
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+    const nodeKeys = ["0-0-0-0", "1-0-0-0", "1-1-0-0"];
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+        "1-1-0-0": createNode(25),
+      },
+      pages: {},
+    });
+
+    const promise = source.loadNodesPointSamples({
+      nodeKeys,
+      maxPointCountPerNode: 5,
+    });
+    await waitForWorkerPoolLoadRequestCount(workers, 2);
+
+    const secondRequest = workers[1]?.requests.find(isLoadRequest);
+
+    if (!secondRequest) {
+      throw new Error("Expected second worker load request.");
+    }
+
+    workers[1]?.emit(createWorkerSuccessResponse(secondRequest));
+    await waitForWorkerPoolLoadRequestCount(workers, 3);
+
+    expect(
+      workers[0]?.requests.filter(isLoadRequest).map((request) => request.nodeKey),
+    ).toEqual(["0-0-0-0"]);
+    expect(
+      workers[1]?.requests.filter(isLoadRequest).map((request) => request.nodeKey),
+    ).toEqual(["1-0-0-0", "1-1-0-0"]);
+
+    const remainingRequests = workers
+      .flatMap((worker) => worker.requests.filter(isLoadRequest))
+      .filter((request) => request.id !== secondRequest.id);
+
+    for (const request of remainingRequests) {
+      const worker = workers.find((candidate) =>
+        candidate.requests.includes(request),
+      );
+      worker?.emit(createWorkerSuccessResponse(request));
+    }
+
+    const result = await promise;
+    expect(result.nodeKeys).toEqual(nodeKeys);
+    expect(result.sampledPointCount).toBe(3);
+  });
+
+  it("waits for the active same-node point sample worker while dispatching other nodes", async () => {
+    const workers: FakePointSampleWorker[] = [];
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 2,
+      createPointSampleWorker: () => {
+        const worker = new FakePointSampleWorker();
+        workers.push(worker);
+
+        return worker as unknown as Worker;
+      },
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+      },
+      pages: {},
+    });
+
+    const firstSameNodeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerPoolLoadRequestCount(workers, 1);
+
+    const secondSameNodeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 8,
+    });
+    const otherNodeResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+    });
+
+    await waitForWorkerPoolLoadRequestCount(workers, 2);
+    expect(workers).toHaveLength(2);
+    expect(
+      workers[0]?.requests.filter(isLoadRequest).map((request) => [
+        request.nodeKey,
+        request.maxPointCount,
+      ]),
+    ).toEqual([["0-0-0-0", 5]]);
+    expect(
+      workers[1]?.requests.filter(isLoadRequest).map((request) => [
+        request.nodeKey,
+        request.maxPointCount,
+      ]),
+    ).toEqual([["1-0-0-0", 5]]);
+
+    const otherRequest = workers[1]?.requests.find(isLoadRequest);
+
+    if (!otherRequest) {
+      throw new Error("Expected other node worker request.");
+    }
+
+    workers[1]?.emit(createWorkerSuccessResponse(otherRequest));
+    await expect(otherNodeResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+      sampledPointCount: 1,
+    });
+    expect(workers[1]?.requests.filter(isLoadRequest)).toHaveLength(1);
+
+    const firstSameNodeRequest = workers[0]?.requests.find(isLoadRequest);
+
+    if (!firstSameNodeRequest) {
+      throw new Error("Expected first same-node worker request.");
+    }
+
+    workers[0]?.emit(createWorkerSuccessResponse(firstSameNodeRequest));
+    await expect(firstSameNodeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+      sampledPointCount: 1,
+    });
+    await waitForWorkerPoolLoadRequestCount(workers, 3);
+    expect(
+      workers[0]?.requests.filter(isLoadRequest).map((request) => [
+        request.nodeKey,
+        request.maxPointCount,
+      ]),
+    ).toEqual([
+      ["0-0-0-0", 5],
+      ["0-0-0-0", 8],
+    ]);
+
+    const secondSameNodeRequest = workers[0]?.requests
+      .filter(isLoadRequest)
+      .find((request) => request.maxPointCount === 8);
+
+    if (!secondSameNodeRequest) {
+      throw new Error("Expected second same-node worker request.");
+    }
+
+    workers[0]?.emit(createWorkerSuccessResponse(secondSameNodeRequest));
+    await expect(secondSameNodeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+      sampledPointCount: 1,
+    });
+  });
+
+  it("upgrades a queued lower-density point sample worker request when a denser same-node request arrives", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(80),
+      },
+      pages: {},
+    });
+
+    const activeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+
+    const lowerDensityResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+    });
+    const higherDensityResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 8,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+    await waitForAsyncPointSampleScheduling();
+
+    const activeRequest = worker.requests.find(isLoadRequest);
+
+    if (!activeRequest) {
+      throw new Error("Expected active worker request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(activeRequest));
+    await expect(activeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+
+    const upgradedRequest = worker.requests.filter(isLoadRequest)[1];
+
+    if (!upgradedRequest) {
+      throw new Error("Expected upgraded worker request.");
+    }
+
+    expect(upgradedRequest).toMatchObject({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 8,
+    });
+
+    worker.emit(createWorkerSuccessResponseWithPointCount(upgradedRequest, 8));
+
+    await expect(lowerDensityResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+      sampledPointCount: 5,
+      points: expect.arrayContaining([
+        expect.objectContaining({ x: 0 }),
+      ]),
+    });
+    await expect(higherDensityResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+      sampledPointCount: 8,
+    });
+    expect(worker.requests.filter(isLoadRequest)).toHaveLength(2);
+  });
+
+  it("dispatches higher-priority queued point sample worker requests before older lower-priority work", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+        "2-0-0-0": createNode(25),
+      },
+      pages: {},
+    });
+
+    const activeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 0,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+
+    const backgroundResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+      requestPriority: -10,
+    });
+    const currentViewResult = source.loadNodePointSamples({
+      nodeKey: "2-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 20,
+    });
+    await waitForAsyncPointSampleScheduling();
+
+    const activeRequest = worker.requests.find(isLoadRequest);
+
+    if (!activeRequest) {
+      throw new Error("Expected active worker request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(activeRequest));
+    await expect(activeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+
+    const currentViewRequest = worker.requests.filter(isLoadRequest)[1];
+
+    if (!currentViewRequest) {
+      throw new Error("Expected current-view worker request.");
+    }
+
+    expect(currentViewRequest.nodeKey).toBe("2-0-0-0");
+    worker.emit(createWorkerSuccessResponse(currentViewRequest));
+    await expect(currentViewResult).resolves.toMatchObject({
+      nodeKey: "2-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 3);
+
+    const backgroundRequest = worker.requests.filter(isLoadRequest)[2];
+
+    if (!backgroundRequest) {
+      throw new Error("Expected background worker request.");
+    }
+
+    expect(backgroundRequest.nodeKey).toBe("1-0-0-0");
+    worker.emit(createWorkerSuccessResponse(backgroundRequest));
+    await expect(backgroundResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+    });
+    expect(worker.requests.filter(isLoadRequest).map((request) => request.nodeKey))
+      .toEqual(["0-0-0-0", "2-0-0-0", "1-0-0-0"]);
+  });
+
+  it("raises a pending point sample cache hit above older queued work", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+        "2-0-0-0": createNode(25),
+      },
+      pages: {},
+    });
+
+    const activeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 0,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+
+    const backgroundResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+      requestPriority: -10,
+    });
+    const middlePriorityResult = source.loadNodePointSamples({
+      nodeKey: "2-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 0,
+    });
+    await waitForAsyncPointSampleScheduling();
+
+    const currentViewResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 20,
+    });
+    await waitForAsyncPointSampleScheduling();
+
+    const activeRequest = worker.requests.find(isLoadRequest);
+
+    if (!activeRequest) {
+      throw new Error("Expected active worker request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(activeRequest));
+    await expect(activeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+
+    const raisedRequest = worker.requests.filter(isLoadRequest)[1];
+
+    if (!raisedRequest) {
+      throw new Error("Expected raised worker request.");
+    }
+
+    expect(raisedRequest.nodeKey).toBe("1-0-0-0");
+    worker.emit(createWorkerSuccessResponse(raisedRequest));
+    await expect(backgroundResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+    });
+    await expect(currentViewResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 3);
+
+    const middlePriorityRequest = worker.requests.filter(isLoadRequest)[2];
+
+    if (!middlePriorityRequest) {
+      throw new Error("Expected middle-priority worker request.");
+    }
+
+    expect(middlePriorityRequest.nodeKey).toBe("2-0-0-0");
+    worker.emit(createWorkerSuccessResponse(middlePriorityRequest));
+    await expect(middlePriorityResult).resolves.toMatchObject({
+      nodeKey: "2-0-0-0",
+    });
+  });
+
+  it("does not let lower-priority dense point sample work upgrade queued current-view warmup", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(80),
+      },
+      pages: {},
+    });
+
+    const activeResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 0,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+
+    const warmupResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+      requestPriority: 20,
+    });
+    const denseDetailResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 8,
+      requestPriority: 10,
+    });
+    await waitForAsyncPointSampleScheduling();
+
+    const activeRequest = worker.requests.find(isLoadRequest);
+
+    if (!activeRequest) {
+      throw new Error("Expected active worker request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(activeRequest));
+    await expect(activeResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+
+    const warmupRequest = worker.requests.filter(isLoadRequest)[1];
+
+    if (!warmupRequest) {
+      throw new Error("Expected warmup worker request.");
+    }
+
+    expect(warmupRequest).toMatchObject({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+    });
+    worker.emit(createWorkerSuccessResponseWithPointCount(warmupRequest, 5));
+    await expect(warmupResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+      sampledPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 3);
+
+    const denseDetailRequest = worker.requests.filter(isLoadRequest)[2];
+
+    if (!denseDetailRequest) {
+      throw new Error("Expected dense detail worker request.");
+    }
+
+    expect(denseDetailRequest).toMatchObject({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 8,
+    });
+    worker.emit(createWorkerSuccessResponseWithPointCount(denseDetailRequest, 8));
+    await expect(denseDetailResult).resolves.toMatchObject({
+      nodeKey: "1-0-0-0",
+      sampledPointCount: 8,
+    });
   });
 
   it("distributes a total sampled point budget across multiple nodes", async () => {
@@ -475,10 +1229,7 @@ describe("CopcSource point sample cache", () => {
     expect(
       worker.requests.filter(isLoadRequest).map((request) => request.nodeKey),
     ).toEqual(["0-0-0-0"]);
-    expect(worker.requests).toContainEqual({
-      id: firstRequest.id,
-      type: "cancel",
-    });
+    expect(worker.terminateCount).toBe(1);
   });
 
   it("cancels in-flight worker point sample requests when aborted", async () => {
@@ -525,10 +1276,7 @@ describe("CopcSource point sample cache", () => {
     await expect(promise).rejects.toMatchObject({
       name: "AbortError",
     });
-    expect(worker.requests).toContainEqual({
-      id: request.id,
-      type: "cancel",
-    });
+    expect(worker.terminateCount).toBe(1);
 
     worker.emit({
       id: request.id,
@@ -620,6 +1368,8 @@ describe("CopcSource point sample cache", () => {
     expect(source.getHierarchyCacheStats()).toEqual({
       loadedPageCount: 1,
       maxCachedPageCount: 64,
+      loadedPageBytes: 20,
+      maxCachedPageBytes: 16_777_216,
       pendingPageCount: 1,
       trackedNodeCount: 1,
       trackedPendingPageCount: 1,
@@ -670,6 +1420,8 @@ describe("CopcSource point sample cache", () => {
     expect(source.getHierarchyCacheStats()).toEqual({
       loadedPageCount: 2,
       maxCachedPageCount: 64,
+      loadedPageBytes: 60,
+      maxCachedPageBytes: 16_777_216,
       pendingPageCount: 1,
       trackedNodeCount: 3,
       trackedPendingPageCount: 1,
@@ -729,6 +1481,70 @@ describe("CopcSource point sample cache", () => {
     expect(source.getHierarchyCacheStats()).toEqual({
       loadedPageCount: 1,
       maxCachedPageCount: 1,
+      loadedPageBytes: 20,
+      maxCachedPageBytes: 16_777_216,
+      pendingPageCount: 1,
+      trackedNodeCount: 1,
+      trackedPendingPageCount: 1,
+      cacheEvictionCount: 1,
+      isOverLimit: false,
+    });
+  });
+
+  it("evicts loaded hierarchy pages back to pending pages when the byte limit is reached", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      maxCachedHierarchyPages: 10,
+      maxCachedHierarchyPageBytes: 50,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async (page) => {
+      if (page.pageOffset === 10) {
+        return {
+          nodes: {
+            "0-0-0-0": createNode(100),
+          },
+          pages: {
+            "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+          },
+        };
+      }
+
+      return {
+        nodes: {
+          "1-0-0-0": createNode(50),
+        },
+        pages: {},
+      };
+    };
+
+    const hierarchy = await source.loadHierarchyPage("1-0-0-0");
+
+    expect(hierarchy.nodes.map((node) => node.key)).toEqual(["0-0-0-0"]);
+    expect(hierarchy.pendingPages).toEqual([
+      expect.objectContaining({
+        key: "1-0-0-0",
+        pageOffset: 30,
+        pageLength: 40,
+        sourceHierarchyPageId: "10:20",
+      }),
+    ]);
+    expect(source.getHierarchyCacheStats()).toEqual({
+      loadedPageCount: 1,
+      maxCachedPageCount: 10,
+      loadedPageBytes: 20,
+      maxCachedPageBytes: 50,
       pendingPageCount: 1,
       trackedNodeCount: 1,
       trackedPendingPageCount: 1,
@@ -809,6 +1625,8 @@ describe("CopcSource point sample cache", () => {
     expect(source.getHierarchyCacheStats()).toEqual({
       loadedPageCount: 2,
       maxCachedPageCount: 2,
+      loadedPageBytes: 60,
+      maxCachedPageBytes: 16_777_216,
       pendingPageCount: 2,
       trackedNodeCount: 2,
       trackedPendingPageCount: 2,
@@ -862,8 +1680,25 @@ function createWorkerSuccessResponse(
   };
 }
 
+function createWorkerSuccessResponseWithPointCount(
+  request: CopcPointSampleWorkerLoadRequest,
+  pointCount: number,
+): CopcPointSampleWorkerResponse {
+  return {
+    id: request.id,
+    type: "loadNodePointSamples:success",
+    result: {
+      nodeKey: request.nodeKey,
+      nodePointCount: request.node.pointCount,
+      sampledPointCount: pointCount,
+      points: createSamplePoints(pointCount),
+    },
+  };
+}
+
 class FakePointSampleWorker {
   readonly requests: CopcPointSampleWorkerRequest[] = [];
+  terminateCount = 0;
   private messageListener:
     | ((event: MessageEvent<CopcPointSampleWorkerResponse>) => void)
     | undefined;
@@ -910,6 +1745,7 @@ class FakePointSampleWorker {
   }
 
   terminate(): void {
+    this.terminateCount += 1;
     this.messageListener = undefined;
   }
 }
@@ -929,6 +1765,10 @@ async function waitForWorkerRequestCount(
   throw new Error(`Timed out waiting for ${requestCount} worker requests.`);
 }
 
+async function waitForAsyncPointSampleScheduling(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function waitForWorkerLoadRequestCount(
   worker: FakePointSampleWorker,
   requestCount: number,
@@ -943,5 +1783,27 @@ async function waitForWorkerLoadRequestCount(
 
   throw new Error(
     `Timed out waiting for ${requestCount} worker load requests.`,
+  );
+}
+
+async function waitForWorkerPoolLoadRequestCount(
+  workers: readonly FakePointSampleWorker[],
+  requestCount: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const loadRequestCount = workers.reduce(
+      (count, worker) => count + worker.requests.filter(isLoadRequest).length,
+      0,
+    );
+
+    if (loadRequestCount >= requestCount) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  throw new Error(
+    `Timed out waiting for ${requestCount} worker pool load requests.`,
   );
 }

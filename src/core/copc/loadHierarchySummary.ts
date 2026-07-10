@@ -1,8 +1,8 @@
 import type { CopcHierarchySummary } from "./CopcHierarchySummary";
-import { CopcSource } from "./CopcSource";
+import { CopcSource, type CopcSourceInput } from "./CopcSource";
 
 export async function loadHierarchySummary(
-  url: string,
+  input: CopcSourceInput,
 ): Promise<CopcHierarchySummary> {
-  return new CopcSource(url).loadHierarchySummary();
+  return new CopcSource(input).loadHierarchySummary();
 }
