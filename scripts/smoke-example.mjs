@@ -936,21 +936,10 @@ function createSmokeFlow(baseUrl) {
     .getByRole("textbox", { name: "proj4 definition" })
     .fill(millsiteDefinition);
   await page.getByRole("button", { name: "Inspect" }).click();
-  await page.waitForFunction(
-    () => document.querySelector("#copc-form")?.getAttribute("aria-busy") === "true",
-    undefined,
-    { timeout: 5_000 },
-  );
+  const pendingSourceWasBusy =
+    (await page.locator("#copc-form").getAttribute("aria-busy")) === "true";
   await page.getByRole("textbox", { name: "Source CRS" }).fill("");
   await page.getByRole("button", { name: "Inspect" }).click();
-  await page.waitForFunction(
-    () =>
-      document
-        .querySelector("#copc-status")
-        ?.textContent?.includes("Keeping the last valid view."),
-    undefined,
-    { timeout: 5_000 },
-  );
   await page.waitForTimeout(1_750);
   await page.unroute(pendingSourceRoutePattern);
   await check(
@@ -962,9 +951,13 @@ function createSmokeFlow(baseUrl) {
       }));
 
       return (
+        pendingSourceWasBusy &&
         JSON.stringify(preservedHudAfterInvalidSource) ===
           JSON.stringify(preservedHudBeforeInvalidSource) &&
         (await hudText("#copc-hud-stage")) === "Needs attention" &&
+        ((await page.locator("#copc-status").textContent()) ?? "").includes(
+          "Keeping the last valid view.",
+        ) &&
         (await page.locator("#copc-form").getAttribute("aria-busy")) === null &&
         (await page.locator("canvas").count()) > 0
       );
