@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 
@@ -36,5 +38,24 @@ describe("browser console policy", () => {
         "COPC worker failed to decode a node.",
       ),
     ).toBe(false);
+  });
+
+  it("applies the same narrow warning policy in both browser smoke entrypoints", () => {
+    for (const relativePath of ["smoke-example.mjs", "smoke-package.mjs"]) {
+      const source = readFileSync(
+        fileURLToPath(new URL(relativePath, import.meta.url)),
+        "utf8",
+      );
+
+      expect(source).toMatch(
+        /import \{ isExpectedNonFatalWebGlDriverWarning \} from "\.\/browser-console-policy\.mjs";/,
+      );
+      expect(source).toMatch(
+        /if \(isExpectedNonFatalWebGlDriverWarning\(type, text\)\) \{\s+ignoredConsoleWarnings\.push/,
+      );
+      expect(source).toMatch(
+        /if \(type === "error" \|\| type === "warning"\) \{\s+consoleProblems\.push/,
+      );
+    }
   });
 });

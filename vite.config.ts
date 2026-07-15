@@ -1,5 +1,8 @@
 import { defineConfig, type ProxyOptions } from "vite";
 import cesium from "vite-plugin-cesium";
+import { HOBU_LIDAR_SAMPLE_ROOT } from "./config/live-copc-sources.mjs";
+
+const hobuLidarSampleRoot = new URL(HOBU_LIDAR_SAMPLE_ROOT);
 
 export default defineConfig({
   plugins: [cesium()],
@@ -51,10 +54,13 @@ export default defineConfig({
 function createCopcSampleProxy(): Record<string, string | ProxyOptions> {
   return {
     "/copc-samples": {
-      target: "https://s3.amazonaws.com",
+      target: hobuLidarSampleRoot.origin,
       changeOrigin: true,
       rewrite: (path: string) =>
-        path.replace(/^\/copc-samples/, "/hobu-lidar"),
+        path.replace(
+          /^\/copc-samples/,
+          hobuLidarSampleRoot.pathname.replace(/\/$/, ""),
+        ),
     },
   };
 }

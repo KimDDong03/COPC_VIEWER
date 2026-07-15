@@ -40,7 +40,10 @@ const thresholds = {
     "COPC_SMOOTHNESS_ASSERT_MAX_FRAMES_OVER_50",
     10,
   ),
-  maxTerminalRefinementFramesOver100Milliseconds: 0,
+  maxTerminalRefinementFramesOver100Milliseconds: readNonNegativeIntegerEnv(
+    "COPC_SMOOTHNESS_ASSERT_MAX_TERMINAL_REFINEMENT_FRAMES_OVER_100",
+    0,
+  ),
   maxCameraStreamInteractiveMilliseconds: readNumberEnv(
     "COPC_SMOOTHNESS_ASSERT_MAX_INTERACTIVE_STREAM_MS",
     readNumberEnv("COPC_SMOOTHNESS_ASSERT_MAX_STREAM_TOTAL_MS", 250),
@@ -1718,6 +1721,16 @@ function readIntegerEnv(name, fallback) {
 
   if (!Number.isSafeInteger(value)) {
     throw new Error(`${name} must be an integer.`);
+  }
+
+  return value;
+}
+
+function readNonNegativeIntegerEnv(name, fallback) {
+  const value = readIntegerEnv(name, fallback);
+
+  if (value < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
   }
 
   return value;

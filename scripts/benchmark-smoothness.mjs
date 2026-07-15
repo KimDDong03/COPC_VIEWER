@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
 import { createRunEvidence } from "./run-evidence.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
@@ -75,7 +76,7 @@ const smoothnessSampleCaseById = {
     id: "custom-millsite",
     label: "Custom Millsite URL",
     kind: "custom",
-    url: "https://s3.amazonaws.com/hobu-lidar/millsite.copc.laz",
+    url: LIVE_COPC_SAMPLE_URLS.millsiteReservoir,
     sourceCrs: "EPSG:6341",
     sourceDefinition:
       "+proj=utm +zone=12 +ellps=GRS80 +units=m +no_defs +type=crs",

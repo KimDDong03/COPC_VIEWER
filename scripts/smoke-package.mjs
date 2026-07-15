@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 import { summarizeRecoveredHttpRangeResponses } from "./http-range-response-policy.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 import {
@@ -284,8 +285,10 @@ function createPackageBrowserFlow(baseUrl) {
   return `async (page) => {
   const failures = [];
   const consoleProblems = [];
+  const ignoredConsoleWarnings = [];
   const pageErrors = [];
   const browserSourceRangeRequests = [];
+  const isExpectedNonFatalWebGlDriverWarning = ${isExpectedNonFatalWebGlDriverWarning.toString()};
 
   function recordFailure(condition, message) {
     if (!condition) {
@@ -294,8 +297,16 @@ function createPackageBrowserFlow(baseUrl) {
   }
 
   page.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") {
-      consoleProblems.push(message.type() + ": " + message.text());
+    const type = message.type();
+    const text = message.text();
+
+    if (isExpectedNonFatalWebGlDriverWarning(type, text)) {
+      ignoredConsoleWarnings.push(type + ": " + text);
+      return;
+    }
+
+    if (type === "error" || type === "warning") {
+      consoleProblems.push(type + ": " + text);
     }
   });
   page.on("pageerror", (error) => {
@@ -322,6 +333,9 @@ function createPackageBrowserFlow(baseUrl) {
   let runtimeResult;
   let cesiumStaticAssets;
   let packageWorkerResources;
+  let zoomInputCount = 0;
+  let zoomInputCameraHeightMeters;
+  let zoomTargetCameraHeightMeters;
 
   try {
     await page.goto(${JSON.stringify(baseUrl)}, {
@@ -349,6 +363,9 @@ function createPackageBrowserFlow(baseUrl) {
 
     const overviewRequestId =
       overviewRuntimeResult?.overviewStream?.requestId;
+    const overviewCameraHeightMeters = Number(
+      overviewRuntimeResult?.overviewStream?.cameraHeightMeters,
+    );
     const visibleCanvas = page.locator("#cesium-container canvas:visible");
     const visibleCanvasCountBeforeWheel = await visibleCanvas.count();
     const canvasBounds =
@@ -356,28 +373,80 @@ function createPackageBrowserFlow(baseUrl) {
         ? await visibleCanvas.boundingBox()
         : undefined;
 
-    if (!canvasBounds || !Number.isSafeInteger(overviewRequestId)) {
+    if (
+      !canvasBounds ||
+      !Number.isSafeInteger(overviewRequestId) ||
+      !Number.isFinite(overviewCameraHeightMeters) ||
+      overviewCameraHeightMeters <= 0
+    ) {
       throw new Error(
-        "Installed-package overview did not expose one visible Cesium canvas and a stream request id.",
+        "Installed-package overview did not expose one visible Cesium canvas, a stream request id, and a positive dataset-relative camera height.",
       );
     }
 
+    zoomTargetCameraHeightMeters = Math.min(
+      650,
+      overviewCameraHeightMeters * 0.25,
+    );
+    zoomInputCameraHeightMeters = overviewCameraHeightMeters;
     await page.mouse.move(
       canvasBounds.x + canvasBounds.width / 2,
       canvasBounds.y + canvasBounds.height / 2,
     );
-    await page.mouse.wheel(0, -300);
+    const minimumZoomInputCount = 3;
+    const maximumZoomInputCount = 20;
+
+    while (
+      zoomInputCount < minimumZoomInputCount ||
+      zoomInputCameraHeightMeters > zoomTargetCameraHeightMeters
+    ) {
+      if (zoomInputCount >= maximumZoomInputCount) {
+        throw new Error(
+          "Real wheel input did not reach the dataset-relative camera-height target after " +
+            zoomInputCount +
+            " bounded steps (" +
+            zoomInputCameraHeightMeters +
+            " m > " +
+            zoomTargetCameraHeightMeters +
+            " m).",
+        );
+      }
+
+      await page.mouse.wheel(0, -60);
+      zoomInputCount += 1;
+      await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+          }),
+      );
+      zoomInputCameraHeightMeters = await page.evaluate(() =>
+        window.__COPC_PACKAGE_SMOKE_READ_CAMERA_HEIGHT_METERS__?.(),
+      );
+
+      if (!Number.isFinite(zoomInputCameraHeightMeters)) {
+        throw new Error(
+          "Installed package did not expose a finite dataset-relative camera height after real wheel input.",
+        );
+      }
+    }
+
     await page.waitForFunction(
-      (previousRequestId) => {
+      ({ previousRequestId, targetCameraHeightMeters }) => {
         const result = window.__COPC_PACKAGE_SMOKE_RESULT__;
 
         return (
           result?.status === "failed" ||
           (result?.status === "passed" &&
-            (result.wheelZoomStream?.requestId ?? -1) > previousRequestId)
+            (result.wheelZoomStream?.requestId ?? -1) > previousRequestId &&
+            (result.wheelZoomStream?.cameraHeightMeters ?? Infinity) <=
+              targetCameraHeightMeters)
         );
       },
-      overviewRequestId,
+      {
+        previousRequestId: overviewRequestId,
+        targetCameraHeightMeters: zoomTargetCameraHeightMeters,
+      },
       { timeout: 120_000 },
     );
     runtimeResult = await page.evaluate(
@@ -522,18 +591,37 @@ function createPackageBrowserFlow(baseUrl) {
       JSON.stringify(overviewStream),
   );
   recordFailure(
+    zoomInputCount >= 3,
+    "Installed-package zoom verification did not exercise a real wheel-input sequence.",
+  );
+  recordFailure(
+    Number.isFinite(zoomInputCameraHeightMeters) &&
+      Number.isFinite(zoomTargetCameraHeightMeters) &&
+      zoomInputCameraHeightMeters <= zoomTargetCameraHeightMeters,
+    "The real wheel-input sequence did not reach its dataset-relative camera-height target (" +
+      zoomInputCameraHeightMeters +
+      " m > " +
+      zoomTargetCameraHeightMeters +
+      " m).",
+  );
+  recordFailure(
     Number(wheelZoomStream?.requestId) > Number(overviewStream?.requestId),
-    "The real wheel input did not complete a newer public camera-stream request.",
+    "The real wheel-input sequence did not complete a newer public camera-stream request.",
   );
   recordFailure(
     Number(wheelZoomStream?.cameraHeightMeters) <
       Number(overviewStream?.cameraHeightMeters),
-    "The real wheel input did not lower dataset-relative camera height.",
+    "The real wheel-input sequence did not lower dataset-relative camera height.",
+  );
+  recordFailure(
+    Number(wheelZoomStream?.cameraHeightMeters) <=
+      Number(zoomTargetCameraHeightMeters),
+    "The terminal public camera stream did not reach the deterministic dataset-relative camera-height target.",
   );
   recordFailure(
     Number(wheelZoomStream?.selectedDepth) >
       Number(overviewStream?.selectedDepth),
-    "The real wheel input did not refine to a deeper terminal depth.",
+    "The real wheel-input sequence did not refine to a deeper terminal depth.",
   );
   recordFailure(
     Number(wheelZoomStream?.renderedPointCount) >=
@@ -543,7 +631,7 @@ function createPackageBrowserFlow(baseUrl) {
   recordFailure(
     Number(wheelZoomStream?.normalizedDensity) >
       Number(overviewStream?.normalizedDensity),
-    "The real wheel input did not increase normalized current-view density.",
+    "The real wheel-input sequence did not increase normalized current-view density.",
   );
   recordFailure(canvasCount > 0, "Cesium did not create a canvas.");
   recordFailure(visibleCanvasCount > 0, "Cesium canvas is not visible.");
@@ -614,7 +702,11 @@ function createPackageBrowserFlow(baseUrl) {
     packageWorkerResources,
     browserSourceRangeRequests,
     consoleProblems,
+    ignoredConsoleWarnings,
     pageErrors,
+    zoomInputCount,
+    zoomInputCameraHeightMeters,
+    zoomTargetCameraHeightMeters,
     screenshotPath: ${JSON.stringify(browserScreenshotPath)},
     userAgent: await page.evaluate(() => navigator.userAgent),
   };
@@ -1527,6 +1619,7 @@ interface InstalledPackageRuntimeResult {
 
 type InstalledPackageSmokeWindow = Window & {
   __COPC_PACKAGE_SMOKE_RESULT__?: InstalledPackageRuntimeResult;
+  __COPC_PACKAGE_SMOKE_READ_CAMERA_HEIGHT_METERS__?: () => number | undefined;
 };
 
 const runtimeSourceUrl = "/copc-samples/autzen-classified.copc.laz";
@@ -1620,6 +1713,10 @@ async function runInstalledPackageRuntimeSmoke(): Promise<void> {
     const coordinateTransforms = createDefaultCopcCoordinateTransforms(
       loadResult.inspection,
     );
+    runtimeWindow.__COPC_PACKAGE_SMOKE_READ_CAMERA_HEIGHT_METERS__ = () =>
+      layer.getCameraHeightAbovePointCloudMeters(
+        viewer.camera.positionCartographic.height,
+      );
     viewer.camera.setView({
       destination: createCopcCameraDestination(
         loadResult.inspection,
@@ -1781,50 +1878,29 @@ async function runInstalledPackageRuntimeSmoke(): Promise<void> {
             streamEvidence.requestId > overviewStream.requestId &&
             streamEvidence.cameraHeightMeters < overviewStream.cameraHeightMeters
           ) {
-            if (streamEvidence.selectedDepth <= overviewStream.selectedDepth) {
-              throw new Error(
-                "Wheel zoom did not refine selected depth from " +
-                  overviewStream.selectedDepth.toLocaleString() +
-                  " to " +
-                  streamEvidence.selectedDepth.toLocaleString() +
-                  ".",
-              );
-            }
-            if (
-              streamEvidence.renderedPointCount <
-              overviewStream.renderedPointCount * 1.25
-            ) {
-              throw new Error(
-                "Wheel zoom did not increase rendered points by at least 25% (" +
-                  overviewStream.renderedPointCount.toLocaleString() +
-                  " to " +
-                  streamEvidence.renderedPointCount.toLocaleString() +
-                  ").",
-              );
-            }
-            if (
-              streamEvidence.normalizedDensity <=
-              overviewStream.normalizedDensity
-            ) {
-              throw new Error(
-                "Wheel zoom did not increase normalized density from " +
-                  overviewStream.normalizedDensity.toLocaleString() +
-                  " to " +
-                  streamEvidence.normalizedDensity.toLocaleString() +
-                  ".",
-              );
-            }
+            const isMeaningfulZoomRefinement =
+              streamEvidence.selectedDepth > overviewStream.selectedDepth &&
+              streamEvidence.renderedPointCount >=
+                overviewStream.renderedPointCount * 1.25 &&
+              streamEvidence.normalizedDensity > overviewStream.normalizedDensity;
 
-            publishRuntimeResult("passed", {
-              overviewStream,
-              wheelZoomStream: streamEvidence,
-            });
+            publishRuntimeResult(
+              isMeaningfulZoomRefinement ? "passed" : "ready",
+              {
+                overviewStream,
+                wheelZoomStream: streamEvidence,
+              },
+            );
             runtimeStatus?.replaceChildren(
-              "Installed public camera stream wheel-zoomed from " +
-                overviewStream.renderedPointCount.toLocaleString() +
-                " to " +
-                streamEvidence.renderedPointCount.toLocaleString() +
-                " points with clean additive terminal composition.",
+              isMeaningfulZoomRefinement
+                ? "Installed public camera stream completed the real wheel-input sequence from " +
+                    overviewStream.renderedPointCount.toLocaleString() +
+                    " to " +
+                    streamEvidence.renderedPointCount.toLocaleString() +
+                    " points with clean additive terminal composition."
+                : "Installed public camera stream completed an intermediate wheel-input terminal at depth " +
+                    streamEvidence.selectedDepth.toLocaleString() +
+                    "; continuing toward the deterministic zoom target.",
             );
           }
         } catch (error) {
@@ -1876,7 +1952,7 @@ async function runInstalledPackageRuntimeSmoke(): Promise<void> {
     cameraStream.start();
     publishRuntimeResult("ready", { overviewStream });
     runtimeStatus?.replaceChildren(
-      "Installed public camera stream rendered an overview terminal frame; waiting for a real wheel zoom.",
+      "Installed public camera stream rendered an overview terminal frame; waiting for the real wheel-input sequence.",
     );
   } catch (error) {
     const message =
@@ -2023,6 +2099,8 @@ async function waitForAnimationFrames(frameCount: number): Promise<void> {
 }
 
 function destroyInstalledPackageRuntime(): void {
+  delete runtimeWindow.__COPC_PACKAGE_SMOKE_READ_CAMERA_HEIGHT_METERS__;
+
   runtimeCameraStream?.destroy();
   runtimeCameraStream = undefined;
 

@@ -1,4 +1,4 @@
-name: Example Browser Smoke
+name: Live COPC Browser Evidence
 
 on:
   push:
@@ -39,6 +39,12 @@ jobs:
       - name: Install Playwright browser
         run: npm run smoke:example:install-browser
 
+      - name: Verify live COPC range sources
+        run: npm run live:copc-range
+
+      - name: Verify packaged consumer against live COPC
+        run: npm run smoke:package
+
       - name: Run URL and local-file browser smoke
         run: npm run smoke:example:file
 
@@ -51,4 +57,6 @@ jobs:
           path: |
             output/playwright/
             output/example-smoke/
+            output/live-copc-range/
+            output/package-smoke/
             .playwright-cli/

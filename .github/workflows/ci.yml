@@ -31,30 +31,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify license and SPDX evidence
-        run: npm run license:evidence:self-test
-
       - name: Audit dependency advisories
         run: npm audit
 
-      - name: Run tests
-        run: npm test
+      - name: Run deterministic product QC
+        run: npm run qc:product
 
-      - name: Install Playwright browser
-        run: npm run smoke:example:install-browser
-
-      - name: Verify packaged install
-        run: npm run smoke:package
-
-      - name: Upload package smoke evidence
+      - name: Upload product QC evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: package-consumer-smoke
+          name: deterministic-product-qc
           if-no-files-found: ignore
           path: |
-            output/package-smoke/*.tgz
-            output/package-smoke/*.sha256
-            output/package-smoke/browser-result.json
-            output/playwright/smoke-package-consumer.png
-            .playwright-cli/
+            output/qc/qc-status.json

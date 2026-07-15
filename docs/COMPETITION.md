@@ -114,11 +114,14 @@ URL과 동일한 레이어 API로 표시할 수 있다.
 npm run qc:contest-device
 ```
 
-이 명령은 표준 `npm run qc` 체인인 단위 테스트, 라이브러리·예제 빌드, 세
-렌더러 비교, Autzen·Millsite 카메라 스트림 성능 게이트, cold 회귀, 설치
-tarball의 실제 브라우저 실행, URL·로컬 파일 브라우저 스모크,
-라이선스/SBOM 증거와 공백 오류 검사를 순차 실행한 뒤, 같은 장비의 세 개
-새 브라우저 세션 중앙값을 검토된 다섯 세션 기준선과 비교한다.
+이 명령은 먼저 단위 테스트, 라이브러리·예제 빌드, 라이선스/SBOM과 공백
+검사로 구성된 결정적 제품 게이트를 실행한다. 이어 엄격한 원격 HTTP Range
+사전 검사, 세 렌더러 비교, Autzen·Millsite 카메라 스트림 성능 게이트, cold
+회귀, 설치 tarball의 실제 브라우저 실행, URL·로컬 파일 브라우저 스모크를
+순차 실행한 뒤, 같은 장비의 세 개 새 브라우저 세션 중앙값을 검토된 다섯
+세션 기준선과 비교한다. 외부 호스트나 네트워크가 응답하지 않으면 제품
+회귀로 오인하지 않고 별도 분류 JSON과 종료 코드 2를 남기되, 최종 참가
+장비 게이트 자체는 계속 통과로 처리하지 않는다.
 
 ## 심사 근거 산출물
 
@@ -126,6 +129,8 @@ tarball의 실제 브라우저 실행, URL·로컬 파일 브라우저 스모크
 
 | 산출물 | 의미 |
 | --- | --- |
+| `output/qc/qc-status.json` | 결정적 제품 게이트와 라이브 COPC 증거의 단계별 결과, 실패 단계, 외부 소스 불가/기능 회귀 분류 |
+| `output/live-copc-range/live-copc-range.json` | Autzen·Millsite의 실제 HTTP 206, 정확한 `Content-Range`, 64바이트 길이와 `LASF` 서명 사전 검사 |
 | `output/renderer-benchmark/renderers.json` | 세 Cesium 렌더러의 반복 측정, 실제 WebGL GPU, UTC·소스 지문·브라우저 버전 |
 | `output/smoothness-benchmark/*.json` | 프리셋별 FPS, 프레임 간격, 최초 응답, LoD, 캐시·queue, `runEvidence`, additive closure·missing/stale node를 검사한 `cameraStreamVisualQuality` |
 | `output/playwright/smoke-example-autzen-stream.png` | Autzen 색상 점군 스트리밍 가시화 증거 |

@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
 import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 import { isInteractiveRenderReady } from "./interactive-render-status-policy.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
@@ -39,8 +40,7 @@ const playwrightConfigPath = path.join(
   scriptDir,
   "playwright.high-performance-gpu.json",
 );
-const localFileSampleUrl =
-  "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz";
+const localFileSampleUrl = LIVE_COPC_SAMPLE_URLS.autzenClassified;
 const localFileSamplePath = path.join(
   localFileSampleRoot,
   "autzen-classified.copc.laz",

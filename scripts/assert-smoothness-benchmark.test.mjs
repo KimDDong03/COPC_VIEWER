@@ -251,12 +251,63 @@ test("accepts measured terminal refinement frames within the interactive frame g
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
+    result.report.thresholds.maxTerminalRefinementFramesOver100Milliseconds,
+    0,
+  );
+  assert.equal(
     result.report.checkedResults[0].terminalRefinementDurationMilliseconds,
     120,
   );
   assert.deepEqual(
     result.report.checkedResults[0].terminalRefinementSummary,
     createTerminalRefinementSummary(),
+  );
+});
+
+test("allows one bounded cold terminal tail frame but rejects a second or a frame above 150 ms", async () => {
+  const coldEnvironment = {
+    COPC_SMOOTHNESS_ASSERT_MAX_FRAME_MS: "150",
+    COPC_SMOOTHNESS_ASSERT_MAX_TERMINAL_REFINEMENT_FRAMES_OVER_100: "1",
+  };
+  const oneTailFrame = createBenchmark(1);
+  setTerminalRefinementFrames(oneTailFrame, [
+    ...Array(999).fill(16),
+    120,
+  ]);
+  const accepted = await runAssertion(oneTailFrame, coldEnvironment);
+
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(
+    accepted.report.thresholds
+      .maxTerminalRefinementFramesOver100Milliseconds,
+    1,
+  );
+
+  const twoTailFrames = createBenchmark(1);
+  setTerminalRefinementFrames(twoTailFrames, [
+    ...Array(998).fill(16),
+    120,
+    120,
+  ]);
+  const tooMany = await runAssertion(twoTailFrames, coldEnvironment);
+
+  assert.equal(tooMany.status, 1);
+  assert.match(
+    tooMany.report.failures.join("\n"),
+    /terminal refinement 2 frames over 100 ms > 1/,
+  );
+
+  const severeTailFrame = createBenchmark(1);
+  setTerminalRefinementFrames(severeTailFrame, [
+    ...Array(999).fill(16),
+    151,
+  ]);
+  const tooLong = await runAssertion(severeTailFrame, coldEnvironment);
+
+  assert.equal(tooLong.status, 1);
+  assert.match(
+    tooLong.report.failures.join("\n"),
+    /terminal refinement max frame 151\.0 ms > 150 ms/,
   );
 });
 
@@ -712,6 +763,34 @@ function createTerminalRefinementSummary(frameCount = 7) {
     estimatedAverageFps: 58.33,
     frameDeltasOver50Milliseconds: 0,
     frameDeltasOver100Milliseconds: 0,
+  };
+}
+
+function setTerminalRefinementFrames(benchmark, frameDeltas) {
+  const sorted = [...frameDeltas].sort((left, right) => left - right);
+  const average =
+    frameDeltas.reduce((sum, value) => sum + value, 0) /
+    frameDeltas.length;
+  const percentile = (ratio) =>
+    sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)] ?? 0;
+  const result = benchmark.results[0];
+
+  result.terminalRefinementDurationMilliseconds = frameDeltas.reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  result.terminalRefinementFrameDeltas = frameDeltas;
+  result.terminalRefinementSummary = {
+    frameCount: frameDeltas.length,
+    averageFrameMilliseconds: average,
+    medianFrameMilliseconds: percentile(0.5),
+    p95FrameMilliseconds: percentile(0.95),
+    maxFrameMilliseconds: Math.max(...frameDeltas),
+    estimatedAverageFps: 1000 / average,
+    frameDeltasOver50Milliseconds: frameDeltas.filter((delta) => delta > 50)
+      .length,
+    frameDeltasOver100Milliseconds: frameDeltas.filter((delta) => delta > 100)
+      .length,
   };
 }
 

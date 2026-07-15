@@ -8,6 +8,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
+import { classifyLiveCopcExecutionFailure } from "./live-copc-range-check.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -36,6 +38,16 @@ const regressionOutputPath = path.join(
   benchmarkRoot,
   "smoothness-regression.json",
 );
+const liveRangeEvidencePath = path.join(
+  benchmarkRoot,
+  "smoothness-regression-live-range.json",
+);
+const runStatusPath = path.join(
+  benchmarkRoot,
+  "smoothness-regression-run-status.json",
+);
+const liveSourceUrl = LIVE_COPC_SAMPLE_URLS.millsiteReservoir;
+const liveRangeOnly = process.argv.includes("--live-range-only");
 const createBaselineCandidate = process.argv.includes(
   "--create-baseline-candidate",
 );
@@ -84,6 +96,40 @@ if (createBaselineCandidate && sessionCount < 5) {
   throw new Error("Baseline candidates require at least 5 independent sessions.");
 }
 
+mkdirSync(benchmarkRoot, { recursive: true });
+const preflightResult = runNodeScriptCapture("scripts/live-copc-range-qc.mjs", [
+  "--source",
+  `millsite-reservoir=${liveSourceUrl}`,
+  "--output",
+  liveRangeEvidencePath,
+]);
+
+if (preflightResult.status !== 0) {
+  const classification =
+    preflightResult.status === 2
+      ? "external-source-unavailable"
+      : "live-source-contract-failure";
+  finishClassifiedFailure({
+    classification,
+    stage: "live-range-preflight",
+    exitCode: preflightResult.status === 2 ? 2 : 1,
+    detail:
+      classification === "external-source-unavailable"
+        ? "The Millsite live source or network was unavailable before performance capture. No code-regression verdict was produced."
+        : "The Millsite live source did not satisfy the strict HTTP 206/COPC source contract.",
+  });
+}
+
+if (liveRangeOnly) {
+  writeRunStatus({
+    status: "passed",
+    classification: "live-range-verified",
+    stage: "live-range-preflight",
+  });
+  console.log("Live Millsite HTTP Range evidence passed; performance sessions were not requested.");
+  process.exit(0);
+}
+
 rmSync(sessionRoot, { force: true, recursive: true });
 mkdirSync(sessionRoot, { recursive: true });
 
@@ -91,11 +137,44 @@ const captures = [];
 
 for (let sessionIndex = 1; sessionIndex <= sessionCount; sessionIndex += 1) {
   console.log(`\n== Warm smoothness regression session ${sessionIndex}/${sessionCount} ==`);
-  runNodeScript("scripts/smoothness-qc.mjs", ["--warm-zoom-detail"]);
+  const sessionResult = runNodeScriptCapture("scripts/smoothness-qc.mjs", [
+    "--warm-zoom-detail",
+  ]);
 
-  const rawReport = readJson(rawBenchmarkPath);
-  const assertionReport = readJson(rawAssertionPath);
-  validateCapture(rawReport, assertionReport, captures[0], sessionIndex);
+  if (sessionResult.status !== 0) {
+    const classification = classifyLiveCopcExecutionFailure(
+      sessionResult.output,
+    );
+    finishClassifiedFailure({
+      classification,
+      stage: "warm-performance-session",
+      sessionIndex,
+      exitCode: classification === "external-source-unavailable" ? 2 : 1,
+      detail:
+        classification === "external-source-unavailable"
+          ? `The external Millsite source became unavailable during session ${sessionIndex}; no performance-regression verdict was produced.`
+          : classification === "performance-regression"
+            ? `Warm performance session ${sessionIndex} failed its unchanged absolute assertions.`
+            : `Warm performance session ${sessionIndex} failed before a valid assertion report was produced.`,
+    });
+  }
+
+  let rawReport;
+  let assertionReport;
+
+  try {
+    rawReport = readJson(rawBenchmarkPath);
+    assertionReport = readJson(rawAssertionPath);
+    validateCapture(rawReport, assertionReport, captures[0], sessionIndex);
+  } catch (error) {
+    finishClassifiedFailure({
+      classification: "benchmark-execution-failure",
+      stage: "session-evidence-validation",
+      sessionIndex,
+      exitCode: 1,
+      detail: `Warm performance session ${sessionIndex} produced invalid evidence: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
 
   const sessionStem = `smoothness-warm-zoom-detail-session-${sessionIndex}`;
   const sessionRawPath = path.join(sessionRoot, `${sessionStem}.json`);
@@ -153,15 +232,39 @@ if (createBaselineCandidate) {
     ].join("\n"),
   );
 } else {
-  runNodeScript("scripts/assert-smoothness-regression.mjs", [
-    "--input",
-    bundleOutputPath,
-    "--baseline",
-    baselinePath,
-    "--output",
-    regressionOutputPath,
-  ]);
+  const regressionResult = runNodeScriptCapture(
+    "scripts/assert-smoothness-regression.mjs",
+    [
+      "--input",
+      bundleOutputPath,
+      "--baseline",
+      baselinePath,
+      "--output",
+      regressionOutputPath,
+    ],
+  );
+
+  if (regressionResult.status !== 0) {
+    finishClassifiedFailure({
+      classification: "performance-regression",
+      stage: "relative-performance-assertion",
+      exitCode: 1,
+      detail:
+        "The fresh-session bundle failed the unchanged same-device relative performance assertions.",
+    });
+  }
 }
+
+writeRunStatus({
+  status: "passed",
+  classification: createBaselineCandidate
+    ? "baseline-candidate-captured"
+    : "performance-regression-passed",
+  stage: createBaselineCandidate
+    ? "baseline-candidate-self-check"
+    : "relative-performance-assertion",
+  sessionCount,
+});
 
 console.log(
   `Captured ${sessionCount} fresh-browser smoothness session(s): ${bundleOutputPath}`,
@@ -466,4 +569,78 @@ function runNodeScript(relativeScriptPath, args = []) {
       `${relativeScriptPath} failed with exit code ${result.status}.`,
     );
   }
+}
+
+function runNodeScriptCapture(relativeScriptPath, args = []) {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, relativeScriptPath), ...args],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+
+  process.stdout.write(stdout);
+  process.stderr.write(stderr);
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  return {
+    status: result.status ?? 1,
+    output: `${stdout}\n${stderr}`,
+  };
+}
+
+function finishClassifiedFailure({
+  classification,
+  stage,
+  exitCode,
+  detail,
+  sessionIndex,
+}) {
+  const status =
+    classification === "external-source-unavailable" ? "unavailable" : "failed";
+  writeRunStatus({
+    status,
+    classification,
+    stage,
+    detail,
+    sessionIndex,
+  });
+  console.error(
+    [
+      `Smoothness regression ${status}: ${classification}.`,
+      detail,
+      `Classification evidence: ${runStatusPath}`,
+    ].join("\n"),
+  );
+  process.exit(exitCode);
+}
+
+function writeRunStatus(fields) {
+  mkdirSync(path.dirname(runStatusPath), { recursive: true });
+  writeFileSync(
+    runStatusPath,
+    `${JSON.stringify(
+      {
+        schema: "copc-viewer.smoothness-regression-run-status",
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        liveSource: {
+          id: "millsite-reservoir",
+          url: liveSourceUrl,
+          rangeEvidencePath: liveRangeEvidencePath,
+        },
+        ...fields,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }

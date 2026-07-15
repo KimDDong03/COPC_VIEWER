@@ -4,8 +4,7 @@ import {
   type CopcCoordinateTransformFactory,
   type CopcSourceInput,
 } from "copc-cesium";
-
-const HOBU_LIDAR_SAMPLE_ROOT = "https://s3.amazonaws.com/hobu-lidar";
+import { LIVE_COPC_SAMPLE_URLS } from "../../../config/live-copc-sources.mjs";
 
 export interface CopcSourceConfig {
   readonly label: string;
@@ -28,7 +27,7 @@ export const SAMPLE_COPC_SOURCES = [
   {
     id: "autzen-classified",
     label: "Autzen classified",
-    url: `${HOBU_LIDAR_SAMPLE_ROOT}/autzen-classified.copc.laz`,
+    url: LIVE_COPC_SAMPLE_URLS.autzenClassified,
     description:
       "CC BY 4.0 Autzen COPC: Aaron Reyna/Watershed Sciences (2010 source), Max Sampson/Hobu (2021 classification), PDAL/data; license: https://github.com/PDAL/data/blob/main/LICENSE. Uses EPSG:2992 coordinates.",
     coordinateTransforms: createDefaultCopcCoordinateTransforms,
@@ -36,7 +35,7 @@ export const SAMPLE_COPC_SOURCES = [
   {
     id: "millsite-reservoir",
     label: "Millsite Reservoir (USGS 3DEP)",
-    url: `${HOBU_LIDAR_SAMPLE_ROOT}/millsite.copc.laz`,
+    url: LIVE_COPC_SAMPLE_URLS.millsiteReservoir,
     description:
       "Hobu-hosted COPC matching the public-domain USGS 3DEP Millsite collection, using NAD83(2011) / UTM zone 12N coordinates detected from its WKT metadata.",
     coordinateTransforms: createDefaultCopcCoordinateTransforms,

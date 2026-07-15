@@ -132,4 +132,45 @@ describe("published package contract", () => {
     );
     assert.match(source, /tarballSha256,/);
   });
+
+  test("drives a bounded real wheel sequence to deterministic terminal LOD evidence", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("smoke-package.mjs", import.meta.url)),
+      "utf8",
+    );
+
+    assert.doesNotMatch(source, /page\.mouse\.wheel\(0, -300\)/);
+    assert.match(
+      source,
+      /zoomTargetCameraHeightMeters = Math\.min\(\s*650,\s*overviewCameraHeightMeters \* 0\.25,\s*\);/,
+    );
+    assert.match(source, /const minimumZoomInputCount = 3;/);
+    assert.match(source, /const maximumZoomInputCount = 20;/);
+    assert.match(source, /await page\.mouse\.wheel\(0, -60\);/);
+    assert.match(
+      source,
+      /__COPC_PACKAGE_SMOKE_READ_CAMERA_HEIGHT_METERS__\?: \(\) => number \| undefined;/,
+    );
+    assert.match(
+      source,
+      /layer\.getCameraHeightAbovePointCloudMeters\(\s*viewer\.camera\.positionCartographic\.height,\s*\)/,
+    );
+    assert.match(
+      source,
+      /isMeaningfulZoomRefinement \? "passed" : "ready"/,
+      "an intermediate terminal must remain non-fatal while the input sequence approaches its target",
+    );
+    assert.match(
+      source,
+      /streamEvidence\.selectedDepth > overviewStream\.selectedDepth/,
+    );
+    assert.match(
+      source,
+      /streamEvidence\.renderedPointCount >=\s*overviewStream\.renderedPointCount \* 1\.25/,
+    );
+    assert.match(
+      source,
+      /streamEvidence\.normalizedDensity > overviewStream\.normalizedDensity/,
+    );
+  });
 });

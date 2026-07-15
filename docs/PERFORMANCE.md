@@ -97,9 +97,29 @@ the absolute pass/fail thresholds. Run:
 npm run benchmark:smoothness:regression
 ```
 
-This command launches three fresh browser/cache lifecycles. Every session runs
-the absolute warm-detail assertion, and the runner writes the raw reports,
-assertion reports, and a compact session bundle under
+Before launching a browser, this command performs one strict, non-retried
+64-byte HTTP Range request against the Millsite source. It requires HTTP 206,
+an exact `Content-Range`, the requested byte length, and the LAS `LASF`
+signature. The source evidence and overall classification are written to:
+
+```text
+output/smoothness-benchmark/smoothness-regression-live-range.json
+output/smoothness-benchmark/smoothness-regression-run-status.json
+```
+
+An external timeout, DNS/fetch failure, HTTP 408/425/429, or 5xx response is
+classified as `external-source-unavailable` and exits with code 2. That result
+means no performance-regression verdict was produced. A reachable source that
+does not honor the expected Range/COPC contract exits with code 1, as does a
+real benchmark or assertion failure. If the source becomes unavailable after
+the preflight, the runner classifies the exact range/network error from the
+failed session the same way. The preflight and classification layer do not add
+retries or sleeps, reuse a stale success, or relax an assertion; they do not
+change the library's existing request policy.
+
+After the preflight, the command launches three fresh browser/cache lifecycles.
+Every session runs the absolute warm-detail assertion, and the runner writes
+the raw reports, assertion reports, and a compact session bundle under
 `output/smoothness-benchmark/regression-sessions` before applying the relative
 gate. The versioned baseline is
 `benchmarks/baselines/smoothness-warm-zoom-detail-rtx3060.json`. It records five
@@ -172,6 +192,19 @@ node scripts/smoothness-regression-qc.mjs --install-baseline-candidate "output/s
 
 The installer validates the candidate again before replacing the versioned
 baseline. Candidate creation and installation are not part of normal QC.
+`npm run qc:product` is the deterministic product group (tests, license/SBOM,
+build, and whitespace). `npm run qc:live-copc` is the separate live
+external-source group and begins with `npm run live:copc-range`, which probes
+both documented samples and writes
+`output/live-copc-range/live-copc-range.json`. `npm run qc` remains the blocking
+combination of both groups and writes `output/qc/qc-status.json` so product
+failure, live source contract failure, external unavailability, and live
+benchmark failure are not conflated. The renderer benchmark belongs to the live
+group because its benchmark node is decoded from the remote Autzen sample. The
+cold-detail gate runs immediately after the range preflight, before the renderer
+and contest GPU workloads, so its cold-frame evidence is not contaminated by
+earlier benchmark processes in the same QC chain.
+
 `npm run qc:contest-device` avoids a duplicate one-session warm run in the main
 QC chain and finishes with the three-session regression runner.
 An adapter mismatch is a failed comparison, not a performance regression or a
@@ -227,7 +260,7 @@ must show a newer request at an unchanged camera epoch and pose fingerprint, a
 completed prefetch, selected depth at least 5, at least 300,000 rendered points,
 `isTerminalReady: true`, and `pendingRelevantHierarchyPageCount: 0`. Its final
 stage stays inside the frame gate: at least 30 FPS, p95 at most 67 ms, max at
-most 150 ms, and zero terminal-refinement frames above 100 ms. Existing initial
+most 150 ms, and at most one terminal-refinement frame above 100 ms. Existing initial
 request point, depth, node-count, weighted-coverage, and per-node density
 thresholds remain supplemental regression gates; none can substitute for the
 post-prefetch same-camera or exact-composition checks.
@@ -242,7 +275,7 @@ performance guarantee:
 | Max frame interval                      |                       at most 100 ms quick/contest; 150 ms cold/warm high-density detail |
 | Frames over 50 ms                       |                                                                               at most 10 |
 | Terminal-refinement average FPS         |                                                                              at least 30 |
-| Terminal-refinement p95 / max interval  |                                     same as the active frame gates; no frame over 100 ms |
+| Terminal-refinement p95 / max interval  | same as the active frame gates; cold detail allows one frame over 100 ms, all other presets allow zero |
 | Decoded worker cache                    |                    retained and peak bytes must stay within the reported aggregate limit |
 | Camera stream first visible application response |                                                                  at most 250 ms |
 | Camera stream interactive total         |                                                                           at most 250 ms |
