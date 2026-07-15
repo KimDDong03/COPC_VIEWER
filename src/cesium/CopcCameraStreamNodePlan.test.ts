@@ -10,6 +10,7 @@ import {
   filterAncestorCoveredCopcNodeKeys,
   isCopcNodeKeyAncestorOf,
   maxCopcNodeKeyDepth,
+  orderCopcCameraStreamNodeKeysForAdditiveProgress,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
   readCopcNodeKeyDepth,
   selectDistributedCopcCameraStreamNodeKeys,
@@ -130,6 +131,25 @@ describe("COPC camera stream node planning", () => {
     ).toEqual(["0-0-0-0", "1-1-0-0", "2-2-1-0", "3-5-2-0"]);
   });
 
+  it("omits zero-point hierarchy entries from the additive render set", () => {
+    expect(
+      createCopcCameraStreamRenderNodeKeys(
+        [
+          { key: "2-0-0-0", pointCount: 10, pointDataLength: 100 },
+          { key: "2-1-0-0", pointCount: 0, pointDataLength: 0 },
+        ],
+        {
+          nodes: [
+            { key: "0-0-0-0", pointCount: 10, pointDataLength: 100 },
+            { key: "1-0-0-0", pointCount: 0, pointDataLength: 0 },
+            { key: "2-0-0-0", pointCount: 10, pointDataLength: 100 },
+            { key: "2-1-0-0", pointCount: 0, pointDataLength: 0 },
+          ],
+        },
+      ),
+    ).toEqual(["0-0-0-0", "2-0-0-0"]);
+  });
+
   it("selects shallow coverage nodes for deep camera selections", () => {
     expect(
       createCopcCameraStreamCoverageNodeKeys(
@@ -178,6 +198,26 @@ describe("COPC camera stream node planning", () => {
     ).toEqual(["4-0-0-0", "4-4-0-0", "4-1-0-0", "4-5-0-0"]);
   });
 
+  it("loads additive node sets from coarse to fine while spreading each depth", () => {
+    expect(
+      orderCopcCameraStreamNodeKeysForAdditiveProgress([
+        "4-0-0-0",
+        "0-0-0-0",
+        "4-1-0-0",
+        "2-0-0-0",
+        "4-4-0-0",
+        "4-5-0-0",
+      ]),
+    ).toEqual([
+      "0-0-0-0",
+      "2-0-0-0",
+      "4-0-0-0",
+      "4-4-0-0",
+      "4-1-0-0",
+      "4-5-0-0",
+    ]);
+  });
+
   it("limits preview nodes by count and compressed point-data budget", () => {
     const coverageNodeKeys = ["2-0-0-0", "2-1-0-0", "2-2-0-0"];
     const hierarchy = hierarchyWithNodeLengths([
@@ -223,12 +263,7 @@ describe("COPC camera stream node planning", () => {
           ["5-3-0-0", 80_000],
         ]),
         {
-          detailNodeKeys: [
-            "5-0-0-0",
-            "5-1-0-0",
-            "5-2-0-0",
-            "5-3-0-0",
-          ],
+          detailNodeKeys: ["5-0-0-0", "5-1-0-0", "5-2-0-0", "5-3-0-0"],
           maxNodeCount: 4,
           maxPointDataLength: 256_000,
         },
@@ -315,9 +350,7 @@ function hierarchyWithNodeLengths(
   entries: ReadonlyArray<readonly [string, number]>,
 ): CopcCameraStreamHierarchyLike {
   return {
-    nodes: entries.map(([key, pointDataLength]) =>
-      node(key, pointDataLength),
-    ),
+    nodes: entries.map(([key, pointDataLength]) => node(key, pointDataLength)),
   };
 }
 

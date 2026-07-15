@@ -9,6 +9,8 @@ export interface CopcPointDataSample {
   readonly y: number;
   readonly z: number;
   readonly color?: CopcPointColor;
+  readonly classification?: number;
+  readonly intensity?: number;
 }
 
 export type CopcPointSampleFormat = "objects" | "typed";
@@ -20,6 +22,8 @@ export interface CopcPointDataSampleArrays {
   readonly red?: Uint8Array;
   readonly green?: Uint8Array;
   readonly blue?: Uint8Array;
+  readonly classification?: Uint8Array;
+  readonly intensity?: Uint16Array;
 }
 
 export interface CopcNodePointSampleResult {

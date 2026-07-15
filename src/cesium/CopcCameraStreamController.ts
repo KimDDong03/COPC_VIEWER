@@ -35,6 +35,24 @@ export interface CopcCameraStreamNodeSampleLike {
   readonly sampledPointCount: number;
 }
 
+export interface CopcCameraStreamCommittedRenderReuseOptions<
+  TNodeSample extends CopcCameraStreamNodeSampleLike,
+> {
+  readonly requiredNodeKeys: readonly string[];
+  readonly renderedNodeSamples: readonly TNodeSample[];
+  readonly maxPointCountPerNode: number;
+  readonly previousMaxPointCountPerNode: number;
+  readonly renderedPointBudget: number;
+  readonly previousRenderedPointBudget: number;
+}
+
+export interface CopcCameraStreamProgressRenderDecisionOptions {
+  readonly candidateRenderedPointCount: number;
+  readonly currentRendererPointCount: number;
+  readonly retainsCurrentRendererFrame: boolean;
+  readonly isComplete: boolean;
+}
+
 export interface CopcCameraStreamNodeSampleCacheOptions<TNodeSample> {
   readonly maxSampleSetCount: number;
   readonly canRenderNodeSample?: (nodeSample: TNodeSample) => boolean;
@@ -153,6 +171,25 @@ export class CopcCameraStreamRequestController {
 
     this.#addReusedAbortController(previousRequest.abortController);
     this.#trimReusedRequests();
+  }
+
+  /**
+   * Aborts every superseded request while preserving the current request.
+   * Use this before a new render-capable task starts; background reuse is only
+   * safe for load-only work that cannot mutate a shared renderer.
+   */
+  abortSupersededRenderRequests(
+    previousRequest?: CopcCameraStreamPreviousRequest,
+  ): void {
+    if (previousRequest) {
+      this.#clearReusedAbortController(previousRequest.abortController);
+      previousRequest.abortController.abort();
+    }
+
+    for (const abortController of [...this.#reusedAbortControllers.keys()]) {
+      this.#clearReusedAbortController(abortController);
+      abortController.abort();
+    }
   }
 
   queueRender(delayMilliseconds: number, render: () => void): void {
@@ -410,6 +447,67 @@ export function hasFreshCopcCameraStreamNodeSamples<
   });
 }
 
+/**
+ * Returns true when an already committed renderer frame is exactly equivalent
+ * to the newly planned terminal composition and density constraints.
+ *
+ * Callers must additionally verify renderer/layer identity. This helper only
+ * proves that the node composition and point-budget contract are unchanged;
+ * it does not inspect external renderer state.
+ */
+export function canReuseCopcCameraStreamCommittedRender<
+  TNodeSample extends CopcCameraStreamNodeSampleLike,
+>(
+  options: CopcCameraStreamCommittedRenderReuseOptions<TNodeSample>,
+): boolean {
+  if (
+    options.maxPointCountPerNode !==
+      options.previousMaxPointCountPerNode ||
+    options.renderedPointBudget !== options.previousRenderedPointBudget
+  ) {
+    return false;
+  }
+
+  const requiredNodeKeys = uniqueNonEmptyNodeKeys(options.requiredNodeKeys);
+  const renderedNodeKeys = uniqueNonEmptyNodeKeys(
+    options.renderedNodeSamples.map((nodeSample) => nodeSample.nodeKey),
+  );
+
+  if (
+    requiredNodeKeys.length === 0 ||
+    requiredNodeKeys.length !== renderedNodeKeys.length
+  ) {
+    return false;
+  }
+
+  const renderedNodeKeySet = new Set(renderedNodeKeys);
+
+  return (
+    requiredNodeKeys.every((nodeKey) => renderedNodeKeySet.has(nodeKey)) &&
+    hasFreshCopcCameraStreamNodeSamples(
+      requiredNodeKeys,
+      options.renderedNodeSamples,
+      options.maxPointCountPerNode,
+    )
+  );
+}
+
+/**
+ * Keeps an already committed dense frame until progressive detail either
+ * completes or preserves its point count. A previous-request frame must only
+ * be supplied when the caller proves that the same-view frame is intentionally
+ * retained and still matches the layer's renderer revision.
+ */
+export function shouldRenderCopcCameraStreamProgress(
+  options: CopcCameraStreamProgressRenderDecisionOptions,
+): boolean {
+  return (
+    !options.retainsCurrentRendererFrame ||
+    options.isComplete ||
+    options.candidateRenderedPointCount >= options.currentRendererPointCount
+  );
+}
+
 export function mergeCopcCameraStreamNodeSamples<
   TNodeSample extends CopcCameraStreamNodeSampleLike,
 >(
@@ -495,6 +593,10 @@ function normalizeGraceMilliseconds(value: number | undefined): number {
   }
 
   return Math.max(0, value);
+}
+
+function uniqueNonEmptyNodeKeys(nodeKeys: readonly string[]): readonly string[] {
+  return [...new Set(nodeKeys.filter((nodeKey) => nodeKey.length > 0))];
 }
 
 function isDefined<T>(value: T | undefined): value is T {

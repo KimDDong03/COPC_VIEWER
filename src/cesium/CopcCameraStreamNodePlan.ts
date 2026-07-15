@@ -1,5 +1,6 @@
 export interface CopcCameraStreamNodeSummaryLike {
   readonly key: string;
+  readonly pointCount?: number;
   readonly pointDataLength: number;
 }
 
@@ -13,9 +14,7 @@ export interface CopcCameraStreamPreviewNodeKeyOptions {
   readonly maxPointDataLength: number;
 }
 
-export function createCopcNodeAncestorKeys(
-  nodeKey: string,
-): readonly string[] {
+export function createCopcNodeAncestorKeys(nodeKey: string): readonly string[] {
   const [depth, x, y, z] = nodeKey.split("-").map(Number);
 
   if (
@@ -143,12 +142,13 @@ export function createCopcCameraStreamRenderNodeKeys(
   hierarchy: CopcCameraStreamHierarchyLike | undefined,
 ): readonly string[] {
   const availableNodeKeys = new Set(
-    hierarchy?.nodes.map((node) => node.key) ??
-      selectedNodes.map((node) => node.key),
+    (hierarchy?.nodes ?? selectedNodes)
+      .filter(isRenderableCopcCameraStreamNode)
+      .map((node) => node.key),
   );
   const renderNodeKeys = new Set<string>();
 
-  selectedNodes.forEach((node) => {
+  selectedNodes.filter(isRenderableCopcCameraStreamNode).forEach((node) => {
     createCopcNodeAncestorKeys(node.key).forEach((nodeKey) => {
       if (availableNodeKeys.has(nodeKey)) {
         renderNodeKeys.add(nodeKey);
@@ -161,6 +161,15 @@ export function createCopcCameraStreamRenderNodeKeys(
   });
 
   return [...renderNodeKeys];
+}
+
+export function isRenderableCopcCameraStreamNode(
+  node: CopcCameraStreamNodeSummaryLike,
+): boolean {
+  return (
+    node.pointDataLength > 0 &&
+    (node.pointCount === undefined || node.pointCount > 0)
+  );
 }
 
 export function createCopcCameraStreamCoverageNodeKeys(
@@ -290,7 +299,8 @@ function selectCopcCameraStreamPreviewNodeKeySet(
   return {
     nodeKeys: fallbackNodeKey,
     pointDataLength: fallbackNodeKey.reduce(
-      (total, nodeKey) => total + (nodesByKey.get(nodeKey)?.pointDataLength ?? 0),
+      (total, nodeKey) =>
+        total + (nodesByKey.get(nodeKey)?.pointDataLength ?? 0),
       0,
     ),
   };
@@ -305,8 +315,7 @@ export function filterAncestorCoveredCopcNodeKeys(
     (nodeKey) =>
       !uniqueNodeKeys.some(
         (candidate) =>
-          candidate !== nodeKey &&
-          isCopcNodeKeyAncestorOf(nodeKey, candidate),
+          candidate !== nodeKey && isCopcNodeKeyAncestorOf(nodeKey, candidate),
       ),
   );
 }
@@ -351,6 +360,23 @@ export function orderCopcCameraStreamNodeKeysForProgressiveCoverage(
   }
 
   return orderedNodeKeys;
+}
+
+export function orderCopcCameraStreamNodeKeysForAdditiveProgress(
+  nodeKeys: readonly string[],
+): readonly string[] {
+  const uniqueNodeKeys = [...new Set(nodeKeys)];
+  const depths = [...new Set(uniqueNodeKeys.map(readCopcNodeKeyDepth))].sort(
+    (left, right) => left - right,
+  );
+
+  return depths.flatMap((depth) =>
+    orderCopcCameraStreamNodeKeysForProgressiveCoverage(
+      uniqueNodeKeys.filter(
+        (nodeKey) => readCopcNodeKeyDepth(nodeKey) === depth,
+      ),
+    ),
+  );
 }
 
 export function maxCopcNodeKeyDepth(nodeKeys: readonly string[]): number {

@@ -3,8 +3,10 @@ import {
   CopcCameraStreamNodeSampleCache,
   CopcCameraStreamPrefetchController,
   CopcCameraStreamRequestController,
+  canReuseCopcCameraStreamCommittedRender,
   hasFreshCopcCameraStreamNodeSamples,
   mergeCopcCameraStreamNodeSamples,
+  shouldRenderCopcCameraStreamProgress,
   type CopcCameraStreamNodeSampleLike,
   type CopcCameraStreamTimeoutScheduler,
 } from "./CopcCameraStreamController";
@@ -116,6 +118,29 @@ describe("CopcCameraStreamRequestController", () => {
 
     expect(firstRequest.abortController.signal.aborted).toBe(true);
     expect(controller.reusedRequestCount).toBe(0);
+  });
+
+  it("aborts every superseded render request while preserving the current request", () => {
+    const controller = createRequestController();
+    const firstRequest = controller.startRequest();
+    controller.setActiveNodeKeys(["3-4-0-0"]);
+    const secondRequest = controller.startRequest();
+    controller.reconcilePreviousRequestForNodeReuse(
+      secondRequest.previousRequest,
+      ["3-4-0-0"],
+    );
+    controller.setActiveNodeKeys(["3-4-0-0"]);
+    const thirdRequest = controller.startRequest();
+
+    controller.abortSupersededRenderRequests(thirdRequest.previousRequest);
+
+    expect(firstRequest.signal.aborted).toBe(true);
+    expect(secondRequest.signal.aborted).toBe(true);
+    expect(thirdRequest.signal.aborted).toBe(false);
+    expect(controller.reusedRequestCount).toBe(0);
+    expect(
+      controller.isCurrentRequest(thirdRequest.requestId, thirdRequest.signal),
+    ).toBe(true);
   });
 
   it("aborts family-overlapping previous requests when exact overlap is too low", () => {
@@ -451,6 +476,118 @@ describe("CopcCameraStreamNodeSampleCache", () => {
       ["4-2-0-0", 3_000],
       ["4-3-0-0", 1_000],
     ]);
+  });
+});
+
+describe("canReuseCopcCameraStreamCommittedRender", () => {
+  const completeRender = [
+    nodeSample("4-1-0-0", 10_000, 8_000),
+    nodeSample("4-2-0-0", 4_000, 4_000),
+  ];
+
+  it("reuses an exact fresh terminal composition with unchanged budgets", () => {
+    expect(
+      canReuseCopcCameraStreamCommittedRender({
+        requiredNodeKeys: ["4-2-0-0", "4-1-0-0"],
+        renderedNodeSamples: completeRender,
+        maxPointCountPerNode: 8_000,
+        previousMaxPointCountPerNode: 8_000,
+        renderedPointBudget: 360_000,
+        previousRenderedPointBudget: 360_000,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "missing node",
+      requiredNodeKeys: ["4-1-0-0", "4-2-0-0", "4-3-0-0"],
+      renderedNodeSamples: completeRender,
+      maxPointCountPerNode: 8_000,
+      previousMaxPointCountPerNode: 8_000,
+      renderedPointBudget: 360_000,
+      previousRenderedPointBudget: 360_000,
+    },
+    {
+      name: "unexpected node",
+      requiredNodeKeys: ["4-1-0-0"],
+      renderedNodeSamples: completeRender,
+      maxPointCountPerNode: 8_000,
+      previousMaxPointCountPerNode: 8_000,
+      renderedPointBudget: 360_000,
+      previousRenderedPointBudget: 360_000,
+    },
+    {
+      name: "stale density",
+      requiredNodeKeys: ["4-1-0-0", "4-2-0-0"],
+      renderedNodeSamples: [
+        nodeSample("4-1-0-0", 10_000, 7_999),
+        nodeSample("4-2-0-0", 4_000, 4_000),
+      ],
+      maxPointCountPerNode: 8_000,
+      previousMaxPointCountPerNode: 8_000,
+      renderedPointBudget: 360_000,
+      previousRenderedPointBudget: 360_000,
+    },
+    {
+      name: "changed per-node density",
+      requiredNodeKeys: ["4-1-0-0", "4-2-0-0"],
+      renderedNodeSamples: completeRender,
+      maxPointCountPerNode: 8_000,
+      previousMaxPointCountPerNode: 4_000,
+      renderedPointBudget: 360_000,
+      previousRenderedPointBudget: 360_000,
+    },
+    {
+      name: "changed total budget",
+      requiredNodeKeys: ["4-1-0-0", "4-2-0-0"],
+      renderedNodeSamples: completeRender,
+      maxPointCountPerNode: 8_000,
+      previousMaxPointCountPerNode: 8_000,
+      renderedPointBudget: 360_000,
+      previousRenderedPointBudget: 300_000,
+    },
+  ])("rejects a $name composition", (options) => {
+    expect(canReuseCopcCameraStreamCommittedRender(options)).toBe(false);
+  });
+});
+
+describe("shouldRenderCopcCameraStreamProgress", () => {
+  it("rejects a sparse new-request candidate while a denser previous-request frame is still committed", () => {
+    expect(
+      shouldRenderCopcCameraStreamProgress({
+        candidateRenderedPointCount: 2,
+        currentRendererPointCount: 6,
+        retainsCurrentRendererFrame: true,
+        isComplete: false,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "complete candidate",
+      candidateRenderedPointCount: 2,
+      currentRendererPointCount: 6,
+      retainsCurrentRendererFrame: true,
+      isComplete: true,
+    },
+    {
+      name: "density-preserving candidate",
+      candidateRenderedPointCount: 6,
+      currentRendererPointCount: 6,
+      retainsCurrentRendererFrame: true,
+      isComplete: false,
+    },
+    {
+      name: "unrelated new-view candidate",
+      candidateRenderedPointCount: 2,
+      currentRendererPointCount: 6,
+      retainsCurrentRendererFrame: false,
+      isComplete: false,
+    },
+  ])("accepts a $name", ({ name: _name, ...options }) => {
+    expect(shouldRenderCopcCameraStreamProgress(options)).toBe(true);
   });
 });
 

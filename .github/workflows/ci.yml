@@ -16,19 +16,45 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
+      - name: Use project npm version
+        working-directory: ${{ runner.temp }}
+        run: npm install --global npm@11.16.0
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify license and SPDX evidence
+        run: npm run license:evidence:self-test
+
+      - name: Audit dependency advisories
+        run: npm audit
 
       - name: Run tests
         run: npm test
 
+      - name: Install Playwright browser
+        run: npm run smoke:example:install-browser
+
       - name: Verify packaged install
         run: npm run smoke:package
+
+      - name: Upload package smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-consumer-smoke
+          if-no-files-found: ignore
+          path: |
+            output/package-smoke/*.tgz
+            output/package-smoke/*.sha256
+            output/package-smoke/browser-result.json
+            output/playwright/smoke-package-consumer.png
+            .playwright-cli/

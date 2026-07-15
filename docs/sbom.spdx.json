@@ -1,0 +1,3906 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-07-15T00:11:50.113Z",
+    "creators": [
+      "Tool: npm/cli-11.16.0",
+      "Tool: scripts/generate-license-evidence.mjs"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-Package-copc-cesium-0.1.0"
+  ],
+  "documentNamespace": "https://github.com/KimDDong03/COPC_VIEWER/sbom/spdx/copc-cesium-0.1.0-63cbf4884a7c7f8f0c914f3768be93e84438d0ffb4f844f3ac77a388cde10565",
+  "name": "copc-cesium@0.1.0",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-cesium.engine-26.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5b378911c9860fbfe1b4127c24466df793a066312b3f0507ab2025258fe60b39839bb85fc29bae70b0525218b29d65b7921a814f50bb76189b8dbeed76273ba0"
+        }
+      ],
+      "description": "CesiumJS is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin.",
+      "downloadLocation": "https://registry.npmjs.org/@cesium/engine/-/engine-26.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40cesium/engine@26.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://cesium.com/cesiumjs/",
+      "licenseDeclared": "Apache-2.0",
+      "name": "@cesium/engine",
+      "packageFileName": "node_modules/@cesium/engine",
+      "sourceInfo": "Validated source URL: https://github.com/CesiumGS/cesium",
+      "versionInfo": "26.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cesium.wasm-splats-0.1.0-alpha.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "b7da4c9249efdf586121b2e931af323ef9aa7e9bece549148e0aa542ff5278ef157ab0973989f23fcff8f3a043685af3b4cd00ec531b463b17b4d78abea42084"
+        }
+      ],
+      "description": "Contains high-performance algorithms used in the rendering of Gaussian Splats in CesiumJS.",
+      "downloadLocation": "https://registry.npmjs.org/@cesium/wasm-splats/-/wasm-splats-0.1.0-alpha.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40cesium/wasm-splats@0.1.0-alpha.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://cesium.com/cesiumjs/",
+      "licenseDeclared": "Apache-2.0",
+      "name": "@cesium/wasm-splats",
+      "packageFileName": "node_modules/@cesium/wasm-splats",
+      "sourceInfo": "Validated source URL: https://github.com/CesiumGS/cesium-wasm-utils",
+      "versionInfo": "0.1.0-alpha.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cesium.widgets-16.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "73e8edf05dd8219b36c7af97f874b8ab44bd9ddda355c6cf5528549a5ac32b5b3e0bb22512f5dc7831ab9238af1d11250150b37da58413063583b2e0e4708698"
+        }
+      ],
+      "description": "A widgets library for use with CesiumJS. CesiumJS is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin.",
+      "downloadLocation": "https://registry.npmjs.org/@cesium/widgets/-/widgets-16.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40cesium/widgets@16.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://cesium.com/cesiumjs/",
+      "licenseDeclared": "Apache-2.0",
+      "name": "@cesium/widgets",
+      "packageFileName": "node_modules/@cesium/widgets",
+      "sourceInfo": "Validated source URL: https://github.com/CesiumGS/cesium",
+      "versionInfo": "16.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-esbuild.win32-x64-0.28.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "6e6e0ca30aeff865cc969597fbe11c5f0fe22f2775a37f9b2640b60e4597615be0642a83fdb4a3f5cb59780302ddc2318234554760ee7da8aee183f1af9816d4"
+        }
+      ],
+      "description": "The Windows 64-bit binary for esbuild, a JavaScript bundler.",
+      "downloadLocation": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.28.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40esbuild/win32-x64@0.28.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "@esbuild/win32-x64",
+      "packageFileName": "node_modules/@esbuild/win32-x64",
+      "sourceInfo": "Validated source URL: https://github.com/evanw/esbuild",
+      "versionInfo": "0.28.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jridgewell.sourcemap-codec-1.5.5",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "71843ddf5d20aeac6e7966e5f96b885086a251a0dc8fb58eab97d58449633558117ce52163d7f2db34ef7e8a96b2779b87c4a5ef45527056c80af2672ca0743a"
+        }
+      ],
+      "description": "Encode/decode sourcemap mappings",
+      "downloadLocation": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec",
+      "licenseDeclared": "MIT",
+      "name": "@jridgewell/sourcemap-codec",
+      "packageFileName": "node_modules/@jridgewell/sourcemap-codec",
+      "sourceInfo": "Validated source URL: https://github.com/jridgewell/sourcemaps",
+      "versionInfo": "1.5.5"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-playwright.cli-0.1.17",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "541c3acb7a7c7aa3aa9a32a0d3b2245923c6289929221311343148e83398b030fa7c07dc2355d811630b5b2852650d01fce73628de3d7aae17a84eb83d43c706"
+        }
+      ],
+      "description": "Playwright CLI",
+      "downloadLocation": "https://registry.npmjs.org/@playwright/cli/-/cli-0.1.17.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40playwright/cli@0.1.17",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://playwright.dev",
+      "licenseDeclared": "Apache-2.0",
+      "name": "@playwright/cli",
+      "packageFileName": "node_modules/@playwright/cli",
+      "sourceInfo": "Validated source URL: https://github.com/microsoft/playwright-cli",
+      "versionInfo": "0.1.17"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup.pluginutils-4.2.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "88a9c55ebecd91d640207888584f815f950b8bfb9c5456160fa4db015fab65cb624536363cbeadb082a1a0839aa2c922580920bbe56c6d781454334b1dff889d"
+        }
+      ],
+      "description": "A set of utility functions commonly used by Rollup plugins",
+      "downloadLocation": "https://registry.npmjs.org/@rollup/pluginutils/-/pluginutils-4.2.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40rollup/pluginutils@4.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/rollup/plugins/tree/master/packages/pluginutils#readme",
+      "licenseDeclared": "MIT",
+      "name": "@rollup/pluginutils",
+      "packageFileName": "node_modules/@rollup/pluginutils",
+      "sourceInfo": "Validated source URL: https://github.com/rollup/plugins",
+      "versionInfo": "4.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup.rollup-win32-x64-gnu-4.62.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "4fac6beae716485b68f9519a8c0f181f6e8b7691d1b8fe182c710a02d096bc90ce967996703655088d899a3afe2051c396ddb345a4c0284e2d7e34da58b80906"
+        }
+      ],
+      "description": "Native bindings for Rollup",
+      "downloadLocation": "https://registry.npmjs.org/@rollup/rollup-win32-x64-gnu/-/rollup-win32-x64-gnu-4.62.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40rollup/rollup-win32-x64-gnu@4.62.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://rollupjs.org/",
+      "licenseDeclared": "MIT",
+      "name": "@rollup/rollup-win32-x64-gnu",
+      "packageFileName": "node_modules/@rollup/rollup-win32-x64-gnu",
+      "sourceInfo": "Validated source URL: https://github.com/rollup/rollup",
+      "versionInfo": "4.62.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup.rollup-win32-x64-msvc-4.62.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "05fcc49c324eb7d4fc33df3dfe5037ec470981ab74d702d19e88b97507f7433387ee3ce9a930337436d57d196356be6bfa3ccaaa96c77b239f01a5f101dd0f00"
+        }
+      ],
+      "description": "Native bindings for Rollup",
+      "downloadLocation": "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.62.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40rollup/rollup-win32-x64-msvc@4.62.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://rollupjs.org/",
+      "licenseDeclared": "MIT",
+      "name": "@rollup/rollup-win32-x64-msvc",
+      "packageFileName": "node_modules/@rollup/rollup-win32-x64-msvc",
+      "sourceInfo": "Validated source URL: https://github.com/rollup/rollup",
+      "versionInfo": "4.62.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-spz-loader.core-0.3.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "f2a275588057689bbc1e39c9023627884d2461caf49027b91e9ee40f3622195bef77bcf2ace0706c5e629a85b99afc31d506dad21c4610ae51f6312868728914"
+        }
+      ],
+      "description": ".spz Gaussian Splatting file loader",
+      "downloadLocation": "https://registry.npmjs.org/@spz-loader/core/-/core-0.3.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40spz-loader/core@0.3.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/drumath2237/spz-loader",
+      "licenseDeclared": "Apache-2.0",
+      "name": "@spz-loader/core",
+      "packageFileName": "node_modules/@spz-loader/core",
+      "sourceInfo": "Validated source URL: https://github.com/drumath2237/spz-loader",
+      "versionInfo": "0.3.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-standard-schema.spec-1.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "976685cb98c02e19e21b91e0aab0fa8d72e2feb516acabea37fa89c7aca826c80a85b95577e8aaa94e110976af9bf8cf8adc83a394c2bca327a632a73ab8b2d3"
+        }
+      ],
+      "description": "A family of specs for interoperable TypeScript",
+      "downloadLocation": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40standard-schema/spec@1.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://standardschema.dev",
+      "licenseDeclared": "MIT",
+      "name": "@standard-schema/spec",
+      "packageFileName": "node_modules/@standard-schema/spec",
+      "sourceInfo": "Validated source URL: https://github.com/standard-schema/standard-schema",
+      "versionInfo": "1.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tweenjs.tween.js-25.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5ca2c0eacc9e05468fcf1e23deac0cab3ceaf95e2ea3bd819e56ce8e6ba58cbad1a9db1ddea9f3bd9668c6f307676de776c452e1ab9f53a24e658a426d4e93d4"
+        }
+      ],
+      "description": "Simple and fast tweening engine with optimised Robert Penner's equations.",
+      "downloadLocation": "https://registry.npmjs.org/@tweenjs/tween.js/-/tween.js-25.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40tweenjs/tween.js@25.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/tweenjs/tween.js",
+      "licenseDeclared": "MIT",
+      "name": "@tweenjs/tween.js",
+      "packageFileName": "node_modules/@tweenjs/tween.js",
+      "sourceInfo": "Validated source URL: https://github.com/tweenjs/tween.js",
+      "versionInfo": "25.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types.chai-5.2.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "330e79f28780f5f15bbfae7fcb8987b570ecf5b3e714c6402ff8f174f154a4e1c72175fdd667201076d2e4b6a1afea7064547c03b19095e456788e9c1850b650"
+        }
+      ],
+      "description": "TypeScript definitions for chai",
+      "downloadLocation": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40types/chai@5.2.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/chai",
+      "licenseDeclared": "MIT",
+      "name": "@types/chai",
+      "packageFileName": "node_modules/@types/chai",
+      "sourceInfo": "Validated source URL: https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "versionInfo": "5.2.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types.deep-eql-4.0.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "73d87d75554c8a030f7386f04ef0b9771aada8967040f78fb168cf96948e9e88dba2bea91aa764e78d657c0ec0a8542be6907505176ad23b98f5d6fcd41c3217"
+        }
+      ],
+      "description": "TypeScript definitions for deep-eql",
+      "downloadLocation": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40types/deep-eql@4.0.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/deep-eql",
+      "licenseDeclared": "MIT",
+      "name": "@types/deep-eql",
+      "packageFileName": "node_modules/@types/deep-eql",
+      "sourceInfo": "Validated source URL: https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "versionInfo": "4.0.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types.emscripten-1.41.5",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "70c426ee9c6ee81c6d1f2a89ee6419da45d657948b9ae8326c57470816c9e5e1f33a8e95841724120013dfffeb3f91703c734f7848aae12990e6e701c2c3a8e1"
+        }
+      ],
+      "description": "TypeScript definitions for emscripten",
+      "downloadLocation": "https://registry.npmjs.org/@types/emscripten/-/emscripten-1.41.5.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40types/emscripten@1.41.5",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/emscripten",
+      "licenseDeclared": "MIT",
+      "name": "@types/emscripten",
+      "packageFileName": "node_modules/@types/emscripten",
+      "sourceInfo": "Validated source URL: https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "versionInfo": "1.41.5"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types.estree-1.0.9",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1a174f832d5e978fc898fd395f4e54c38730dbf33ddc10949a712f599352b650b310a304e05924f98a680393a21cd426a12ec269f6fc5dadcfc9af26d50af37a"
+        }
+      ],
+      "description": "TypeScript definitions for estree",
+      "downloadLocation": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40types/estree@1.0.9",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree",
+      "licenseDeclared": "MIT",
+      "name": "@types/estree",
+      "packageFileName": "node_modules/@types/estree",
+      "sourceInfo": "Validated source URL: https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "versionInfo": "1.0.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-types.trusted-types-2.0.7",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "49c68f767d5d41cce06e5d101537933a65471542eddfde17260390368c95859eabdaf2e730b25f04f779dd2079d93ff71b7e95235fe0d8c65a5f47300ee5ec7f"
+        }
+      ],
+      "description": "TypeScript definitions for trusted-types",
+      "downloadLocation": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40types/trusted-types@2.0.7",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types",
+      "licenseDeclared": "MIT",
+      "name": "@types/trusted-types",
+      "packageFileName": "node_modules/@types/trusted-types",
+      "sourceInfo": "Validated source URL: https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "versionInfo": "2.0.7"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.expect-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "62c0a7faa024d465a340e58512c11c2f680d434ce656642edd3d37a8fe94ca386d99db70b5bb88f830129ffee2401dc71935e4741c0675dcf13e59a2aa5e6f94"
+        }
+      ],
+      "description": "Jest's expect matchers as a Chai plugin",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/expect@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vitest.dev/api/expect",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/expect",
+      "packageFileName": "node_modules/@vitest/expect",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.mocker-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "bf4c5a7b3b7e0ca12629f6b1835df795dcc00ebc0b19ded97b531f4104d87efb3c3aa648c1bc72c5a614462bf057bb16cb97ea9f7ac7e6e3ab4a9d3b6e9e383b"
+        }
+      ],
+      "description": "Vitest module mocker implementation",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/mocker@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/mocker",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/mocker",
+      "packageFileName": "node_modules/@vitest/mocker",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.pretty-format-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5b51ec8d21f831743d61f9a684b0282187f51d17de9100869e078881c7a2e8c3f941019651ed20928a5d6506950853be24324cac0246c1ae69469369bf2e0ff1"
+        }
+      ],
+      "description": "Fork of pretty-format with support for ESM",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/pretty-format@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/pretty-format",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/pretty-format",
+      "packageFileName": "node_modules/@vitest/pretty-format",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.runner-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "20a23a929207f8b9a944ea65c8bc0105a09f32039938cb328156ba040443e9a840d38551b8949ae8e6951bb911bd210c0fcef455df75ad24b0d1e7a0b56c8b1a"
+        }
+      ],
+      "description": "Vitest test runner",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/runner@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vitest.dev/api/advanced/runner",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/runner",
+      "packageFileName": "node_modules/@vitest/runner",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.snapshot-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c5191f393d6aa53022fd38b86352ed7d1737904baac46c39f5e3768cdf6945632d4bf5c37af7a485c152aaf42a8d434692c7e3309bb763ea09fb86299f639a27"
+        }
+      ],
+      "description": "Vitest snapshot manager",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/snapshot@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vitest.dev/guide/snapshot",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/snapshot",
+      "packageFileName": "node_modules/@vitest/snapshot",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.spy-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "3cb7ff520be8ab9c0efdbe2bc18091d61d8f488757cfbc2791014c894a4b76d33b97aa6a545710201107c93d7e97e723ee637001f647cea5ea0f28ef3aec1b0f"
+        }
+      ],
+      "description": "Lightweight Jest compatible spy implementation",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/spy@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vitest.dev/api/mock",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/spy",
+      "packageFileName": "node_modules/@vitest/spy",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest.utils-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "7f2f5a9bf1d6c5b686b7f49ac2ba7dd2fb7a63a8d0c1fd515fbedccf7bb0a09c0954c962fded4813044f9cc349eef29f3d3c28d1d89789f9293efc07f6fee718"
+        }
+      ],
+      "description": "Shared Vitest utility functions",
+      "downloadLocation": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40vitest/utils@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/utils",
+      "licenseDeclared": "MIT",
+      "name": "@vitest/utils",
+      "packageFileName": "node_modules/@vitest/utils",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-zip.js.zip.js-2.8.26",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "450e21f45e833a21f1a5da1c503ace97ac4133ec8eb73f8b914a25e3b01559c7de6c6043a59ef0ed7bf3f4f4b6e09817bcb1a25d7cd201f742755cb5b4f95a14"
+        }
+      ],
+      "description": "A JavaScript library to zip and unzip files in the browser, Deno and Node.js",
+      "downloadLocation": "https://registry.npmjs.org/@zip.js/zip.js/-/zip.js-2.8.26.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/%40zip.js/zip.js@2.8.26",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://gildas-lormeau.github.io/zip.js",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "@zip.js/zip.js",
+      "packageFileName": "node_modules/@zip.js/zip.js",
+      "sourceInfo": "Validated source URL: https://github.com/gildas-lormeau/zip.js",
+      "versionInfo": "2.8.26"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-assertion-error-2.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "2338bc45071f7ea09e3558058a02a58b5b2c92521ba479c261ce809275c662807a82b26ac9e6f2ee3bf5d895108264c09c80e76dc935bb192c4f87733773d604"
+        }
+      ],
+      "description": "Error constructor for test and validation frameworks that implements standardized AssertionError specification.",
+      "downloadLocation": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/assertion-error@2.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "assertion-error",
+      "packageFileName": "node_modules/assertion-error",
+      "sourceInfo": "Validated source URL: https://github.com/chaijs/assertion-error",
+      "versionInfo": "2.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-at-least-node-1.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "faafedec492fd440d8da5e8675ae8b2e25f5e2b53d4d5db459ade87de426c0f1596ce328f435eb2db3a315a69c9645ca5a27486a8a7000e6d00eac16b46523aa"
+        }
+      ],
+      "description": "Lightweight Node.js version sniffing/comparison",
+      "downloadLocation": "https://registry.npmjs.org/at-least-node/-/at-least-node-1.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/at-least-node@1.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/RyanZim/at-least-node#readme",
+      "licenseDeclared": "ISC",
+      "name": "at-least-node",
+      "packageFileName": "node_modules/at-least-node",
+      "sourceInfo": "Validated source URL: https://github.com/RyanZim/at-least-node",
+      "versionInfo": "1.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-autolinker-4.1.5",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "bc47d864f9af54e22e139ebb5c1542b31f12060398b63076f92d6201a27e1e01fe0cd8c072b1de9b686601e0bdc9a34659aca272fe3247ef54689964177a6fb7"
+        }
+      ],
+      "description": "Utility to automatically link the URLs, email addresses, phone numbers, hashtags, and mentions (Twitter, Instagram) in a given block of text/HTML",
+      "downloadLocation": "https://registry.npmjs.org/autolinker/-/autolinker-4.1.5.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/autolinker@4.1.5",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/gregjacobs/Autolinker.js",
+      "licenseDeclared": "MIT",
+      "name": "autolinker",
+      "packageFileName": "node_modules/autolinker",
+      "sourceInfo": "Validated source URL: https://github.com/gregjacobs/Autolinker.js",
+      "versionInfo": "4.1.5"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-bitmap-sdf-1.0.4",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "d46dd4e27e4913a4408802ccc6ed29d5799e6644de0b018aca4cec2d30aa5737d20da37a4bb7ca9e42247de8e8833fa2c2a0567345180082a728734dee949f0e"
+        }
+      ],
+      "description": "Calculate SDF for image/bw-data/array",
+      "downloadLocation": "https://registry.npmjs.org/bitmap-sdf/-/bitmap-sdf-1.0.4.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/bitmap-sdf@1.0.4",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/dfcreative/bitmap-sdf#readme",
+      "licenseDeclared": "MIT",
+      "name": "bitmap-sdf",
+      "packageFileName": "node_modules/bitmap-sdf",
+      "sourceInfo": "Validated source URL: https://github.com/dfcreative/bitmap-sdf",
+      "versionInfo": "1.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cesium-1.143.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "107cfad4d069ff650f604e2258267e60af4971bd1dda1cd17ea923e0345a50cddc26603d844d854e670f3d9da22fbc3e5b461449c23481cf577924d794f210b4"
+        }
+      ],
+      "description": "CesiumJS is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin.",
+      "downloadLocation": "https://registry.npmjs.org/cesium/-/cesium-1.143.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/cesium@1.143.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "http://cesium.com/cesiumjs/",
+      "licenseDeclared": "Apache-2.0",
+      "name": "cesium",
+      "packageFileName": "node_modules/cesium",
+      "sourceInfo": "Validated source URL: https://github.com/CesiumGS/cesium",
+      "versionInfo": "1.143.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-chai-6.2.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "3543d196e39f3a24ca04abd63ed483e0f845bd60aa3a2d01192b4d5ace7b5fd8eced7193a6b4a6168cf9174b56851e163e335e47d8d7a9d0bbfd4a522539e546"
+        }
+      ],
+      "description": "BDD/TDD assertion library for node.js and the browser. Test framework agnostic.",
+      "downloadLocation": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/chai@6.2.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "http://chaijs.com",
+      "licenseDeclared": "MIT",
+      "name": "chai",
+      "packageFileName": "node_modules/chai",
+      "sourceInfo": "Validated source URL: https://github.com/chaijs/chai",
+      "versionInfo": "6.2.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-commander-2.20.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1a956498cf2f176bd05248f62ef6660f7e49c5e24e2c2c09f5c524ba0ca4da7ba16efdfe989be92d862dfb4f9448cc44fa88fe7b2fe52449e1670ef9c7f38c71"
+        }
+      ],
+      "description": "the complete solution for node.js command-line programs",
+      "downloadLocation": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/commander@2.20.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "commander",
+      "packageFileName": "node_modules/commander",
+      "sourceInfo": "Validated source URL: https://github.com/tj/commander.js",
+      "versionInfo": "2.20.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-convert-source-map-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "2afa78e7d1eb576144275080b22d4abbe318de46ac1f5f53172913cf6c5698c7aae9b936354dd75ef7c9f90eb59b4c64b56c2dfb51d261fdc966c4e6b3769126"
+        }
+      ],
+      "description": "Converts a source-map from/to  different formats and allows adding/changing properties.",
+      "downloadLocation": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/convert-source-map@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/thlorenz/convert-source-map",
+      "licenseDeclared": "MIT",
+      "name": "convert-source-map",
+      "packageFileName": "node_modules/convert-source-map",
+      "sourceInfo": "Validated source URL: https://github.com/thlorenz/convert-source-map",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-copc-0.0.8",
+      "attributionTexts": [
+        "MIT License\n\nCopyright (c) 2021 Connor Manning\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "3968df3992a187b12449820c493ff2c667a0330091e46c9edcaa2ade8bf5fa81c5a3305b3f094ad5bb12581f5a35d26b5c495a4e1dfbe1b3613923f1c75c52a2"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: node_modules/copc/license; SHA-256: 8fb5b4508a39ae3e34be45065c2eacbd5353961870e98eba5906c256669fb794. Exact license file distributed in the locked npm package.",
+      "downloadLocation": "https://registry.npmjs.org/copc/-/copc-0.0.8.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/copc@0.0.8",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "copc",
+      "packageFileName": "node_modules/copc",
+      "sourceInfo": "Validated source URL: https://registry.npmjs.org/copc/-/copc-0.0.8.tgz",
+      "versionInfo": "0.0.8"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-copc-cesium-0.1.0",
+      "description": "CesiumJS-native COPC point cloud streaming and visualization library.",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/copc-cesium@0.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/KimDDong03/COPC_VIEWER#readme",
+      "licenseDeclared": "MIT",
+      "name": "copc-cesium",
+      "packageFileName": "",
+      "primaryPackagePurpose": "LIBRARY",
+      "versionInfo": "0.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cross-fetch-3.2.0",
+      "attributionTexts": [
+        "The MIT License (MIT)\n\nCopyright (c) 2017 Leonardo Quixadá\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "43ec5524ba0639e20c5d999b50ae07624fbaf5c407e8bb9d47456efe9466d98954fe10d5f42892d2029431a598e5fd8d7941fd0b59d5ddbb13942a3416c4d5d5"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: node_modules/cross-fetch/LICENSE; SHA-256: 821a6be45c3fd08815688b30b6210fc97848cf88c7a6ed8afb22ae75b83571b4. Exact license file distributed in the locked npm package.",
+      "description": "Universal WHATWG Fetch API for Node, Browsers and React Native",
+      "downloadLocation": "https://registry.npmjs.org/cross-fetch/-/cross-fetch-3.2.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/cross-fetch@3.2.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/lquixada/cross-fetch",
+      "licenseDeclared": "MIT",
+      "name": "cross-fetch",
+      "packageFileName": "node_modules/cross-fetch",
+      "sourceInfo": "Validated source URL: https://github.com/lquixada/cross-fetch",
+      "versionInfo": "3.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-debug-2.6.9",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "6c2ec496b7496899cf6c03fed44a2d62fa99b1bdde725e708ba05f8ba0494d470da30a7a72fb298348d7ce74532838e6fc4ec076014155e00f54c35c286b0730"
+        }
+      ],
+      "description": "small debugging utility",
+      "downloadLocation": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/debug@2.6.9",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "debug",
+      "packageFileName": "node_modules/debug",
+      "sourceInfo": "Validated source URL: https://github.com/visionmedia/debug",
+      "versionInfo": "2.6.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-depd-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "83b9c7e8fe9dc838a8268800006a6b1a90ad5489898693e4feba02cdd6f77c887ad7fb3f9cfb1f47aa27c8cc2408047f3a50b7c810b49444af52840402cb08af"
+        }
+      ],
+      "description": "Deprecate all the things",
+      "downloadLocation": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/depd@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "depd",
+      "packageFileName": "node_modules/depd",
+      "sourceInfo": "Validated source URL: https://github.com/dougwilson/nodejs-depd",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-destroy-1.2.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "dac246253697208691d70e22252368374867318ec6a5cfe7f03e2a482270f10a855977fb72e0209c41f1069c1e69570f7af0b69772a98d80b1dcdca941081a26"
+        }
+      ],
+      "description": "destroy a stream if possible",
+      "downloadLocation": "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/destroy@1.2.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "destroy",
+      "packageFileName": "node_modules/destroy",
+      "sourceInfo": "Validated source URL: https://github.com/stream-utils/destroy",
+      "versionInfo": "1.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-dompurify-3.4.11",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "ce1954575d86b1a47332c7fdab9336e78621038f95b85d1f1be405aaee9a629a0694ab73fb0f3ffe305c195601810911e461e352899e8d8f38015fbfb8f6d677"
+        }
+      ],
+      "description": "DOMPurify is a DOM-only, super-fast, uber-tolerant XSS sanitizer for HTML, MathML and SVG. It runs as JavaScript and works in all modern browsers, as well as in Node.js (via jsdom). DOMPurify is written by security people who have vast background in web attacks and XSS. Fear not.",
+      "downloadLocation": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.11.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/dompurify@3.4.11",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/cure53/DOMPurify",
+      "licenseDeclared": "(MPL-2.0 OR Apache-2.0)",
+      "name": "dompurify",
+      "packageFileName": "node_modules/dompurify",
+      "sourceInfo": "Validated source URL: https://github.com/cure53/DOMPurify",
+      "versionInfo": "3.4.11"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-draco3d-1.5.7",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "9ba5822adfdeac35dcc3eef42095e71bb3376b0c103c0b19bc9197e7363b6de06aa442f0e910c6918554d16e37005c727b8a436798b62dbc9cfcd346ab08d455"
+        }
+      ],
+      "description": "Draco is a library for compressing and decompressing 3D geometric meshes and point clouds. It is intended to improve the storage and transmission of 3D graphics.",
+      "downloadLocation": "https://registry.npmjs.org/draco3d/-/draco3d-1.5.7.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/draco3d@1.5.7",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "draco3d",
+      "packageFileName": "node_modules/draco3d",
+      "sourceInfo": "Validated source URL: https://github.com/google/draco",
+      "versionInfo": "1.5.7"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-earcut-3.0.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5fb86c8506cbc8c27fdd13e1c8e6cb011336b0dc7199100b2cac75f8d54516743d80ace60abc66f7eb8b20074172f73c14d2e972daa543657a004f763a5f540d"
+        }
+      ],
+      "description": "The fastest and smallest JavaScript polygon triangulation library for your WebGL apps",
+      "downloadLocation": "https://registry.npmjs.org/earcut/-/earcut-3.0.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/earcut@3.0.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "earcut",
+      "packageFileName": "node_modules/earcut",
+      "sourceInfo": "Validated source URL: https://github.com/mapbox/earcut",
+      "versionInfo": "3.0.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ee-first-1.1.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "58cc26f4b851528f9651a44dfaf46e113a86f3d22066985548d91d16079beac4bf1383ab0c837bb78f0201ec121d773a0bc95e7c3f0a29faf9bd8eb56eb425a3"
+        }
+      ],
+      "description": "return the first event in a set of ee/event pairs",
+      "downloadLocation": "https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/ee-first@1.1.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ee-first",
+      "packageFileName": "node_modules/ee-first",
+      "sourceInfo": "Validated source URL: https://github.com/jonathanong/ee-first",
+      "versionInfo": "1.1.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-encodeurl-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "4349fd1d18b89ba26e188575785966bc907b644571bbddc8accca232c182d25acc24c5b3460c7a586aaec9f4206556f7d6f8468179df98f34d5e6c673a4441ae"
+        }
+      ],
+      "description": "Encode a URL to a percent-encoded form, excluding already-encoded sequences",
+      "downloadLocation": "https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/encodeurl@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "encodeurl",
+      "packageFileName": "node_modules/encodeurl",
+      "sourceInfo": "Validated source URL: https://github.com/pillarjs/encodeurl",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-es-module-lexer-2.2.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "de51b17535c22df7b53187d3cf5cb692c00050ce0d00e3faacf123c4625528eed3679fadbc709a4161a90b8637217bd6dde71ed02cf57083f81560713a71824d"
+        }
+      ],
+      "description": "Lexes ES modules returning their import/export metadata",
+      "downloadLocation": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.2.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/es-module-lexer@2.2.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/guybedford/es-module-lexer#readme",
+      "licenseDeclared": "MIT",
+      "name": "es-module-lexer",
+      "packageFileName": "node_modules/es-module-lexer",
+      "sourceInfo": "Validated source URL: https://github.com/guybedford/es-module-lexer",
+      "versionInfo": "2.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-esbuild-0.28.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1eb26bbd9bf96b2c41ccf7f0a613a837393338822589fce4d0a26b18ad9cf11e3e2caa4cb6960b41e51d8e7c235affcb665907da569993ee30efca62f7d0f857"
+        }
+      ],
+      "description": "An extremely fast JavaScript and CSS bundler and minifier.",
+      "downloadLocation": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/esbuild@0.28.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "esbuild",
+      "packageFileName": "node_modules/esbuild",
+      "sourceInfo": "Validated source URL: https://github.com/evanw/esbuild",
+      "versionInfo": "0.28.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-escape-html-1.0.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "3624aea59e0e7ae1b0afaf251887b29bf92c219309a1d506392099fc54a74f172b7a46efaab81d53194938ca628da299563009ad6ac6b3fe89cbc38cbb28fda3"
+        }
+      ],
+      "description": "Escape string for use in HTML",
+      "downloadLocation": "https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/escape-html@1.0.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "escape-html",
+      "packageFileName": "node_modules/escape-html",
+      "sourceInfo": "Validated source URL: https://github.com/component/escape-html",
+      "versionInfo": "1.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-estree-walker-2.0.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "45f924fcca7f0cbec95637b7bb5f05c45ba34254cd476aba41f312301ec0bc2071f753468ff6dade409fcdad1fe9d5436f0ed89517ff9c3ae7ee942b082c90ff"
+        }
+      ],
+      "description": "Traverse an ESTree-compliant AST",
+      "downloadLocation": "https://registry.npmjs.org/estree-walker/-/estree-walker-2.0.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/estree-walker@2.0.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "estree-walker",
+      "packageFileName": "node_modules/estree-walker",
+      "sourceInfo": "Validated source URL: https://github.com/Rich-Harris/estree-walker",
+      "versionInfo": "2.0.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-estree-walker-3.0.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "ed150a7d781230c933b7a66e5e6a9aa4ebab2c63cf7e08fa97db9167b9511a896f934cb6ca871cdf92dd731282e4f419767d8332a8a8010d8da1672b4ca9a6ea"
+        }
+      ],
+      "description": "Traverse an ESTree-compliant AST",
+      "downloadLocation": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/estree-walker@3.0.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "estree-walker",
+      "packageFileName": "node_modules/@vitest/mocker/node_modules/estree-walker",
+      "sourceInfo": "Validated source URL: https://github.com/Rich-Harris/estree-walker",
+      "versionInfo": "3.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-etag-1.8.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "6882f9171ee66b055adf4d1a976067104e2236fa35a844f12eb3c8fe8d392fbcfa828edf0b0d49e844266cae05989d804bb920545fca1195ae7c17dd0a531c3e"
+        }
+      ],
+      "description": "Create simple HTTP ETags",
+      "downloadLocation": "https://registry.npmjs.org/etag/-/etag-1.8.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/etag@1.8.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "etag",
+      "packageFileName": "node_modules/etag",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/etag",
+      "versionInfo": "1.8.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-expect-type-1.4.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "29f61b9a9466d156cb8c4bd56bdc86c028bd188df8c6f8bb03f1d761640eeb90920f6bb731ccd4252bb05ca148c651ac801422cd5f6ae49f4d1e3e151b49fea4"
+        }
+      ],
+      "downloadLocation": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/expect-type@1.4.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/mmkal/expect-type#readme",
+      "licenseDeclared": "Apache-2.0",
+      "name": "expect-type",
+      "packageFileName": "node_modules/expect-type",
+      "sourceInfo": "Validated source URL: https://github.com/mmkal/expect-type",
+      "versionInfo": "1.4.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fdir-6.5.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "b486d8b596ee70eb340511aa3c992c84951874bf920c7edd54cf208f2f84469dd60148cb105244fb4da46a7c87b708d63a7c2b298062c0098cd29e242c90275e"
+        }
+      ],
+      "description": "The fastest directory crawler & globbing alternative to glob, fast-glob, & tiny-glob. Crawls 1m files in < 1s",
+      "downloadLocation": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/fdir@6.5.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/thecodrr/fdir#readme",
+      "licenseDeclared": "MIT",
+      "name": "fdir",
+      "packageFileName": "node_modules/fdir",
+      "sourceInfo": "Validated source URL: https://github.com/thecodrr/fdir",
+      "versionInfo": "6.5.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fresh-0.5.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "cc9da6418335f2b1053ae75e57819285318843b45bcc0ee8cdb53d23f5c1a66ee4aa0332c209b294cc171f16499a45686249daf5dda95575573dd6133fd7a3f1"
+        }
+      ],
+      "description": "HTTP response freshness testing",
+      "downloadLocation": "https://registry.npmjs.org/fresh/-/fresh-0.5.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/fresh@0.5.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "fresh",
+      "packageFileName": "node_modules/fresh",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/fresh",
+      "versionInfo": "0.5.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fs-extra-9.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "85c8376667a94b7d3fec1485a91be8a370ce310bbb223ab13b99c20edfb333d5d68dbdf75a0ef388d4fe42fa9bb9cdfe816a733b4d89b9b5729361b866fa3539"
+        }
+      ],
+      "description": "fs-extra contains methods that aren't included in the vanilla Node.js fs package. Such as recursive mkdir, copy, and remove.",
+      "downloadLocation": "https://registry.npmjs.org/fs-extra/-/fs-extra-9.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/fs-extra@9.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/jprichardson/node-fs-extra",
+      "licenseDeclared": "MIT",
+      "name": "fs-extra",
+      "packageFileName": "node_modules/fs-extra",
+      "sourceInfo": "Validated source URL: https://github.com/jprichardson/node-fs-extra",
+      "versionInfo": "9.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-graceful-fs-4.2.11",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "45b279fe398570d342703579a3d7939c12c9fc7b33595d0fef76dcf857f89d2feb263f98692e881b288e2f45680585fe9755ab97793ade1fcaac7fa7849d17bd"
+        }
+      ],
+      "description": "A drop-in replacement for fs, making various improvements.",
+      "downloadLocation": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/graceful-fs@4.2.11",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "graceful-fs",
+      "packageFileName": "node_modules/graceful-fs",
+      "sourceInfo": "Validated source URL: https://github.com/isaacs/node-graceful-fs",
+      "versionInfo": "4.2.11"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-grapheme-splitter-1.0.4",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "6f3879d035bd9133ccd344fccb8a3cbd083cf438bda0b2552d6fca68e1885c958ffe2a8237a58a6246cd385d38bc52c987072961487dc9d87ffb9be93aa57861"
+        }
+      ],
+      "description": "A JavaScript library that breaks strings into their individual user-perceived characters. It supports emojis!",
+      "downloadLocation": "https://registry.npmjs.org/grapheme-splitter/-/grapheme-splitter-1.0.4.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/grapheme-splitter@1.0.4",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/orling/grapheme-splitter",
+      "licenseDeclared": "MIT",
+      "name": "grapheme-splitter",
+      "packageFileName": "node_modules/grapheme-splitter",
+      "sourceInfo": "Validated source URL: https://github.com/orling/grapheme-splitter",
+      "versionInfo": "1.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-http-errors-2.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "e056d17405fe6d2766a3801416e4b458d88fcfc36016dfabf138603569a5ae3423b7543b651f7ecd395c7b6f39f71e0a497af022c69e4ea0e82909ad3fca4b99"
+        }
+      ],
+      "description": "Create HTTP error objects",
+      "downloadLocation": "https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/http-errors@2.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "http-errors",
+      "packageFileName": "node_modules/http-errors",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/http-errors",
+      "versionInfo": "2.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-inherits-2.0.4",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "93fbc6697e3f6256b75b3c8c0af4d039761e207bea38ab67a8176ecd31e9ce9419cc0b2428c859d8af849c189233dcc64a820578ca572b16b8758799210a9ec1"
+        }
+      ],
+      "description": "Browser-friendly inheritance fully compatible with standard node.js inherits()",
+      "downloadLocation": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/inherits@2.0.4",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "inherits",
+      "packageFileName": "node_modules/inherits",
+      "sourceInfo": "Validated source URL: https://github.com/isaacs/inherits",
+      "versionInfo": "2.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-is-reference-1.2.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "53cd8cb175e2148ae308ae28b4b4fea36340d8277683930ba0e5575198c83a12eeaeb471a445f323c3b42991ebdc88cbbe5007d644cf612baa7abe53f5954129"
+        }
+      ],
+      "description": "Determine whether an AST node is a reference",
+      "downloadLocation": "https://registry.npmjs.org/is-reference/-/is-reference-1.2.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/is-reference@1.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/Rich-Harris/is-reference#readme",
+      "licenseDeclared": "MIT",
+      "name": "is-reference",
+      "packageFileName": "node_modules/is-reference",
+      "sourceInfo": "Validated source URL: https://github.com/Rich-Harris/is-reference",
+      "versionInfo": "1.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsep-1.4.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "07ba8f704544dcd56499225b698c6fbf87079155bb0d0b19cf5de950cadf4bccfc43f06e4a137e81c4d7ad494f886a8cdbfb7f104688d37d1ba7132a63c80c97"
+        }
+      ],
+      "description": "a tiny JavaScript expression parser",
+      "downloadLocation": "https://registry.npmjs.org/jsep/-/jsep-1.4.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/jsep@1.4.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://ericsmekens.github.io/jsep/",
+      "licenseDeclared": "MIT",
+      "name": "jsep",
+      "packageFileName": "node_modules/jsep",
+      "sourceInfo": "Validated source URL: https://github.com/EricSmekens/jsep",
+      "versionInfo": "1.4.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsonfile-6.2.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "cf039374bdeb150fe545d0679ed295397ea4e5c289c047351dd8a54fbd41584bbb278d605c8076311a7ebf176e3d2c1924f581c44cefe321f5c182c91941d7e1"
+        }
+      ],
+      "description": "Easily read/write JSON files.",
+      "downloadLocation": "https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/jsonfile@6.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "jsonfile",
+      "packageFileName": "node_modules/jsonfile",
+      "sourceInfo": "Validated source URL: https://github.com/jprichardson/node-jsonfile",
+      "versionInfo": "6.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-kdbush-4.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "7bdbeeaf3ad7250ac55fa724a473f76ef8f997ef429d8ce4c43367350d61d904ea756b1400981788a74635c39ad4463ce5d53c29b43ecff15d41d07b3fef727d"
+        }
+      ],
+      "description": "A very fast static 2D index for points based on kd-tree.",
+      "downloadLocation": "https://registry.npmjs.org/kdbush/-/kdbush-4.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/kdbush@4.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "kdbush",
+      "packageFileName": "node_modules/kdbush",
+      "sourceInfo": "Validated source URL: https://github.com/mourner/kdbush",
+      "versionInfo": "4.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ktx-parse-1.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "98aa77cbe15a62047b9975806f2cb3a5afebd730d679aba71fe20d24ee1fa2ede16f8e57b8d4b06abfbb965ad1cafa4c59a7f14888bdf51345274e4c1de75a25"
+        }
+      ],
+      "description": "KTX 2.0 (.ktx2) parser and serializer.",
+      "downloadLocation": "https://registry.npmjs.org/ktx-parse/-/ktx-parse-1.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/ktx-parse@1.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ktx-parse",
+      "packageFileName": "node_modules/ktx-parse",
+      "sourceInfo": "Validated source URL: https://github.com/donmccurdy/ktx-parse",
+      "versionInfo": "1.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-laz-perf-0.0.7",
+      "attributionTexts": [
+        "\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n   1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n   2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n   3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n   4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n   5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n   6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n   7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n   8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n   9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n   END OF TERMS AND CONDITIONS\n\n   APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n   Copyright 2022 Rapidlasso, GmbH\n\n   Licensed under the Apache License, Version 2.0 (the \"License\");\n   you may not use this file except in compliance with the License.\n   You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n   Unless required by applicable law or agreed to in writing, software\n   distributed under the License is distributed on an \"AS IS\" BASIS,\n   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n   See the License for the specific language governing permissions and\n   limitations under the License.\n"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "db146a9bf7ffd94a834b9aaa9233b20dbeae5488e4570e921a64253284d096255691984f7c86d4253b9b525de64e5a1a5aa29c8e54bfbab98fd42628c5e96c12"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: third_party/licenses/laz-perf-0.0.7-COPYING; SHA-256: 959f77033ba56a3b146faf5c02f9162071f2d0bff4b8b6f1c2193a4b41127d39. Upstream COPYING at gitHead d0d3047e05221421fa0b02b3da4e93797edb2c52 (https://github.com/hobuinc/laz-perf/blob/d0d3047e05221421fa0b02b3da4e93797edb2c52/COPYING); the npm tarball omits this file.",
+      "description": "LAZ implementation compiled to WASM via Emscripten for LAZ support in a browser",
+      "downloadLocation": "https://registry.npmjs.org/laz-perf/-/laz-perf-0.0.7.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/laz-perf@0.0.7",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/hobuinc/laz-perf",
+      "licenseDeclared": "Apache-2.0",
+      "name": "laz-perf",
+      "packageFileName": "node_modules/laz-perf",
+      "sourceInfo": "Validated source URL: https://github.com/hobuinc/laz-perf",
+      "versionInfo": "0.0.7"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-lerc-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "eeaa3532af19366691e144871e6eb5e67116da53de7962776d3ca8a856dddf90cbc742d41fb0baa6db791430930256c8cecdfe58aae4e52909bf0f0014313686"
+        }
+      ],
+      "description": "Rapid decoding of Lerc compressed raster data for any standard pixel type.",
+      "downloadLocation": "https://registry.npmjs.org/lerc/-/lerc-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/lerc@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/Esri/lerc",
+      "licenseDeclared": "Apache-2.0",
+      "name": "lerc",
+      "packageFileName": "node_modules/lerc",
+      "sourceInfo": "Validated source URL: https://github.com/Esri/lerc",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-long-5.3.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "98d0206751a6c8d843ec0baa9d31b7fd5436ea8efad3e65804f2a33efba03bcfa72db61f5fa4d5a493ec781be8a5b758faaa59fe52949e611cd4b799612dd000"
+        }
+      ],
+      "description": "A Long class for representing a 64-bit two's-complement integer value.",
+      "downloadLocation": "https://registry.npmjs.org/long/-/long-5.3.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/long@5.3.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "long",
+      "packageFileName": "node_modules/long",
+      "sourceInfo": "Validated source URL: https://github.com/dcodeIO/long.js",
+      "versionInfo": "5.3.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-magic-string-0.25.9",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "46617402c33382ddb9ab3aaa2dcd7e31b1e685dc74a2317616fb385e73aacf664e057cf3904c1cfdd250642607027eefd636d53a30197caf26b119f80713b855"
+        }
+      ],
+      "description": "Modify strings, generate sourcemaps",
+      "downloadLocation": "https://registry.npmjs.org/magic-string/-/magic-string-0.25.9.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/magic-string@0.25.9",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "magic-string",
+      "packageFileName": "node_modules/magic-string",
+      "sourceInfo": "Validated source URL: https://github.com/rich-harris/magic-string",
+      "versionInfo": "0.25.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-magic-string-0.30.21",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "bddd85e1853211728670b1e8abe4c4c828f1b9e49e1e7171cb28cda7cd328345d5e2f5219c37abfe5bef96a33f6ab0796d740de4adbfde88a7c82472c7c4f609"
+        }
+      ],
+      "description": "Modify strings, generate sourcemaps",
+      "downloadLocation": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/magic-string@0.30.21",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "magic-string",
+      "packageFileName": "node_modules/@vitest/mocker/node_modules/magic-string",
+      "sourceInfo": "Validated source URL: https://github.com/Rich-Harris/magic-string",
+      "versionInfo": "0.30.21"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-mersenne-twister-1.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "994616b0c28dae6e257f280f90bdce7c6cce3d34760c195390134733ffc5ea11a9f1c2d3858f3dedcac0964dff268d7b2c438e8d052b340c7a0ef80eefb40990"
+        }
+      ],
+      "description": "Mersenne twister pseudorandom number generator",
+      "downloadLocation": "https://registry.npmjs.org/mersenne-twister/-/mersenne-twister-1.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/mersenne-twister@1.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/boo1ean/mersenne-twister",
+      "licenseDeclared": "MIT",
+      "name": "mersenne-twister",
+      "packageFileName": "node_modules/mersenne-twister",
+      "sourceInfo": "Validated source URL: https://github.com/boo1ean/mersenne-twister",
+      "versionInfo": "1.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-meshoptimizer-1.2.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "75abd165e2096f126b136e1cc1095eed90ecc63764fcea6134e57cde85fe79f4229f2a0763d25ccb3dcc1db6a81b4ab24996a395d1b3b4d67544dfd3d7d3d9b2"
+        }
+      ],
+      "description": "Mesh optimization library that makes meshes smaller and faster to render",
+      "downloadLocation": "https://registry.npmjs.org/meshoptimizer/-/meshoptimizer-1.2.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/meshoptimizer@1.2.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/zeux/meshoptimizer",
+      "licenseDeclared": "MIT",
+      "name": "meshoptimizer",
+      "packageFileName": "node_modules/meshoptimizer",
+      "sourceInfo": "Validated source URL: https://github.com/zeux/meshoptimizer",
+      "versionInfo": "1.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-mgrs-1.0.0",
+      "attributionTexts": [
+        "Copyright (c) 2012, Mike Adair, Richard Greenwood, Didier Richard, Stephen Irons, Olivier Terral, Calvin Metcalf\n\n Permission is hereby granted, free of charge, to any person obtaining a\n copy of this software and associated documentation files (the \"Software\"),\n to deal in the Software without restriction, including without limitation\n the rights to use, copy, modify, merge, publish, distribute, sublicense,\n and/or sell copies of the Software, and to permit persons to whom the\n Software is furnished to do so, subject to the following conditions:\n\n The above copyright notice and this permission notice shall be included\n in all copies or substantial portions of the Software.\n\n _THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS\n OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL\n THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n DEALINGS IN THE SOFTWARE._"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "6b035b4cea82c4ad430468da94adf1a9622cb4166037a7f1b0c4a25cbb3dfeca6a5a4176a4085bdabad80854acaf5fed4fb3e17031a3667746f125989f46f260"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: node_modules/mgrs/license.md; SHA-256: 069adb09f8be7a8d31415c476b5e25ea2da2f5150e69e32ac69179826f9d33b5. Exact license file distributed in the locked npm package.",
+      "description": "Utility for converting between WGS84 lat/lng and MGRS coordinates",
+      "downloadLocation": "https://registry.npmjs.org/mgrs/-/mgrs-1.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/mgrs@1.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "mgrs",
+      "packageFileName": "node_modules/mgrs",
+      "sourceInfo": "Validated source URL: https://github.com/proj4js/mgrs",
+      "versionInfo": "1.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-mime-1.6.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c74567f2ca48fb0b89d4ee92ee09db69083c3f187834d1dbeca4883661162a23c4e1128ea65be28e7f8d92662699180febc99cef48f611b793151b2bb306907a"
+        }
+      ],
+      "description": "A comprehensive library for mime-type mapping",
+      "downloadLocation": "https://registry.npmjs.org/mime/-/mime-1.6.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/mime@1.6.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "mime",
+      "packageFileName": "node_modules/mime",
+      "sourceInfo": "Validated source URL: https://github.com/broofa/node-mime",
+      "versionInfo": "1.6.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ms-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "4e9a7ad0fe885090d3b8eabfe59f1c76c93326e8dfc2a7ce4e4af02308fb211212a679099d3e92c89e0f08f9c63281630bd75d85a979295218b40b7dee2c74e4"
+        }
+      ],
+      "description": "Tiny milisecond conversion utility",
+      "downloadLocation": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/ms@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ms",
+      "packageFileName": "node_modules/debug/node_modules/ms",
+      "sourceInfo": "Validated source URL: https://github.com/zeit/ms",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ms-2.1.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "e85973b9b4cb646dc9d9afcd542025784863ceae68c601f268253dc985ef70bb2fa1568726afece715c8ebf5d73fab73ed1f7100eb479d23bfb57b45dd645394"
+        }
+      ],
+      "description": "Tiny millisecond conversion utility",
+      "downloadLocation": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/ms@2.1.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ms",
+      "packageFileName": "node_modules/ms",
+      "sourceInfo": "Validated source URL: https://github.com/vercel/ms",
+      "versionInfo": "2.1.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-nanoid-3.3.15",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "cbb5b282fffb9843afc53b8440307c4ad5dd3110567f5911fed961033051505901da37dc2ce0313bf48798e3b6ce0cf5a5580adbdfe4caea67d39f7f6c21dd8c"
+        }
+      ],
+      "description": "A tiny (116 bytes), secure URL-friendly unique string ID generator",
+      "downloadLocation": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/nanoid@3.3.15",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "nanoid",
+      "packageFileName": "node_modules/nanoid",
+      "sourceInfo": "Validated source URL: https://github.com/ai/nanoid",
+      "versionInfo": "3.3.15"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-node-fetch-2.7.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "7381517d49bf75b71667b53ed56ab40300b214bfb79edd9b130d39c1fc52cfe0d6a56b22b609928189b2d9d41d5b2282d7af7810b3ea32cfd8cd448da332edf0"
+        }
+      ],
+      "description": "A light-weight module that brings window.fetch to node.js",
+      "downloadLocation": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.7.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/node-fetch@2.7.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/bitinn/node-fetch",
+      "licenseDeclared": "MIT",
+      "name": "node-fetch",
+      "packageFileName": "node_modules/node-fetch",
+      "sourceInfo": "Validated source URL: https://github.com/bitinn/node-fetch",
+      "versionInfo": "2.7.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-nosleep.js-0.12.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "f5dd476e928b877b1d5a585732153a30c1fec10cca92b81f464615d0405dbedf7d6097e3d2294226b5910d81b6d77d139b81976c4a130b1e5bdf825268ff8784"
+        }
+      ],
+      "description": "Prevent display sleep and enable wake lock in any Android or iOS web browser",
+      "downloadLocation": "https://registry.npmjs.org/nosleep.js/-/nosleep.js-0.12.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/nosleep.js@0.12.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/richtr/NoSleep.js",
+      "licenseDeclared": "MIT",
+      "name": "nosleep.js",
+      "packageFileName": "node_modules/nosleep.js",
+      "sourceInfo": "Validated source URL: https://github.com/richtr/NoSleep.js",
+      "versionInfo": "0.12.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-obug-2.1.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "f6688580cd8e15b6bb841fa9460bed57ce2961305aa131e886f98882246de9d448cdbc0438868d68ff9d2251acd9f345a01d127884acd09cf958555189de97ca"
+        }
+      ],
+      "description": "A lightweight JavaScript debugging utility, forked from debug, featuring TypeScript and ESM support.",
+      "downloadLocation": "https://registry.npmjs.org/obug/-/obug-2.1.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/obug@2.1.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/sxzz/obug#readme",
+      "licenseDeclared": "MIT",
+      "name": "obug",
+      "packageFileName": "node_modules/obug",
+      "sourceInfo": "Validated source URL: https://github.com/sxzz/obug",
+      "versionInfo": "2.1.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-on-finished-2.4.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "a15973920dc4340842936cddbfb209c1dfd0503e33d91c51c2991c198f29b0255c09864dab8c189d55802c733e6ebb6e26378f5a2605fc2966b83afc0a1e7e92"
+        }
+      ],
+      "description": "Execute a callback when a request closes, finishes, or errors",
+      "downloadLocation": "https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/on-finished@2.4.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "on-finished",
+      "packageFileName": "node_modules/on-finished",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/on-finished",
+      "versionInfo": "2.4.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pako-3.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1aea68b54508d26961ba02a352ce1b8cec0bb779eb7a1cbd62cd9dc42d06b6055e7f97272a08240cc99fd9bab6a68082b955e8a563e6aac73d5434f6889532fb"
+        }
+      ],
+      "description": "zlib port to javascript - fast, modularized, with browser support",
+      "downloadLocation": "https://registry.npmjs.org/pako/-/pako-3.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/pako@3.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "(MIT AND Zlib)",
+      "name": "pako",
+      "packageFileName": "node_modules/pako",
+      "sourceInfo": "Validated source URL: https://github.com/nodeca/pako",
+      "versionInfo": "3.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-parseurl-1.3.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "0a2c9e3b1153fc96723799b4cfd3df5f0e1208127a4b2833d43a65d30aa39610c418604fd469ec51510bd29eb78681b57dc8f77c7ca75e2f4d60ee2758e2fea9"
+        }
+      ],
+      "description": "parse a url with memoization",
+      "downloadLocation": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/parseurl@1.3.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "parseurl",
+      "packageFileName": "node_modules/parseurl",
+      "sourceInfo": "Validated source URL: https://github.com/pillarjs/parseurl",
+      "versionInfo": "1.3.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pathe-2.0.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5948c6700a8fd6041a72841ef8e049b0503b2dde03c97b9422367971cef970b1ef27b76d36c4ee8298712000f0b294be02b68051e3c22ab495b4f2c58ff17cf3"
+        }
+      ],
+      "description": "Universal filesystem path utils",
+      "downloadLocation": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/pathe@2.0.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "pathe",
+      "packageFileName": "node_modules/pathe",
+      "sourceInfo": "Validated source URL: https://github.com/unjs/pathe",
+      "versionInfo": "2.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-picocolors-1.1.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c5c787dac9e1b5be4cf658aa0ec984c39ea57b7efa993664117fe311bfd1c4d1727a036e97b78db250973fd1438ff2dcbb45fc284c8c71e3f69eda5a1eb0c454"
+        }
+      ],
+      "description": "The tiniest and the fastest library for terminal output formatting with ANSI colors",
+      "downloadLocation": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/picocolors@1.1.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "picocolors",
+      "packageFileName": "node_modules/picocolors",
+      "sourceInfo": "Validated source URL: https://github.com/alexeyraspopov/picocolors",
+      "versionInfo": "1.1.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-picomatch-2.3.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "57bfaf404274e99f9ce6d4b27bc4be9c751f239d71a172178c743df5c42d294910aaa3b590efca08951f657b81e3b87f60194385a8761f785d5065e7f227b4a0"
+        }
+      ],
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions.",
+      "downloadLocation": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/picomatch@2.3.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/micromatch/picomatch",
+      "licenseDeclared": "MIT",
+      "name": "picomatch",
+      "packageFileName": "node_modules/@rollup/pluginutils/node_modules/picomatch",
+      "sourceInfo": "Validated source URL: https://github.com/micromatch/picomatch",
+      "versionInfo": "2.3.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-picomatch-4.0.4",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "40ff3c0402af31a9bfdcdc47eaf8f6a36d51e8c8f165401dea7970012fe99c6bcdf4854ba1c2c7c46608cc5860e9f510fb9b61e8fe1dbf8796f635f70d2223ec"
+        }
+      ],
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions.",
+      "downloadLocation": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/picomatch@4.0.4",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/micromatch/picomatch",
+      "licenseDeclared": "MIT",
+      "name": "picomatch",
+      "packageFileName": "node_modules/picomatch",
+      "sourceInfo": "Validated source URL: https://github.com/micromatch/picomatch",
+      "versionInfo": "4.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-playwright-1.62.0-alpha-1783623505000",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "e8a57d8783cfde1aaee0d686771c5c8a359f621f4b25c148fd1dac3f84d30b8239705a37a116b0374113956e4c904ddc40480a861a23d0a50dcf8b1fa424f44e"
+        }
+      ],
+      "description": "A high-level API to automate web browsers",
+      "downloadLocation": "https://registry.npmjs.org/playwright/-/playwright-1.62.0-alpha-1783623505000.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/playwright@1.62.0-alpha-1783623505000",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://playwright.dev",
+      "licenseDeclared": "Apache-2.0",
+      "name": "playwright",
+      "packageFileName": "node_modules/playwright",
+      "sourceInfo": "Validated source URL: https://github.com/microsoft/playwright",
+      "versionInfo": "1.62.0-alpha-1783623505000"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-playwright-core-1.62.0-alpha-1783623505000",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "08f25976c03f2864f641095e92257a5adf90950ad91d5499ea888db4e23f6d860e2152ccf237ca1964cce33422c9de1437ee340aae1c03a9719991d96ed3ef25"
+        }
+      ],
+      "description": "A high-level API to automate web browsers",
+      "downloadLocation": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0-alpha-1783623505000.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/playwright-core@1.62.0-alpha-1783623505000",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://playwright.dev",
+      "licenseDeclared": "Apache-2.0",
+      "name": "playwright-core",
+      "packageFileName": "node_modules/playwright-core",
+      "sourceInfo": "Validated source URL: https://github.com/microsoft/playwright",
+      "versionInfo": "1.62.0-alpha-1783623505000"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-postcss-8.5.16",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "beec22965be28a57ca66c8345468f947f630c1c1f1e122ec20e23fecaea64245b1fa5e5c5074e38f983401ab1305cc97b1b7d382bc2c50d99551be71570c8fc2"
+        }
+      ],
+      "description": "Tool for transforming styles with JS plugins",
+      "downloadLocation": "https://registry.npmjs.org/postcss/-/postcss-8.5.16.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/postcss@8.5.16",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://postcss.org/",
+      "licenseDeclared": "MIT",
+      "name": "postcss",
+      "packageFileName": "node_modules/postcss",
+      "sourceInfo": "Validated source URL: https://github.com/postcss/postcss",
+      "versionInfo": "8.5.16"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-proj4-2.20.9",
+      "attributionTexts": [
+        "## Proj4js -- Javascript reprojection library. \n \nAuthors:\n- Mike Adair madairATdmsolutions.ca\n- Richard Greenwood richATgreenwoodmap.com\n- Didier Richard didier.richardATign.fr\n- Stephen Irons stephen.ironsATclear.net.nz\n- Olivier Terral oterralATgmail.com\n- Calvin Metcalf cmetcalfATappgeo.com\n\nCopyright (c) 2014, Mike Adair, Richard Greenwood, Didier Richard, Stephen Irons, Olivier Terral and Calvin Metcalf\n\n Permission is hereby granted, free of charge, to any person obtaining a\n copy of this software and associated documentation files (the \"Software\"),\n to deal in the Software without restriction, including without limitation\n the rights to use, copy, modify, merge, publish, distribute, sublicense,\n and/or sell copies of the Software, and to permit persons to whom the\n Software is furnished to do so, subject to the following conditions:\n\n The above copyright notice and this permission notice shall be included\n in all copies or substantial portions of the Software.\n\n _THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS\n OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL\n THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n DEALINGS IN THE SOFTWARE._\n"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "18b046a9769371d5a7a69adede8d6c326cb80dc306486abf9e0fbd93631335d75aad12ba4af78836a96a6338b7c445eecb4ea58d8d534eb0ba1fd0b87f7eb421"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: node_modules/proj4/LICENSE.md; SHA-256: d514fd8b286fc00a5c97a29f8a99b73f1a4053bbdd00c400aee5f24a1b6b301e. Exact license file distributed in the locked npm package.",
+      "description": "Proj4js is a JavaScript library to transform point coordinates from one coordinate system to another, including datum transformations.",
+      "downloadLocation": "https://registry.npmjs.org/proj4/-/proj4-2.20.9.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/proj4@2.20.9",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://proj4js.github.io/proj4js/",
+      "licenseDeclared": "MIT",
+      "name": "proj4",
+      "packageFileName": "node_modules/proj4",
+      "sourceInfo": "Validated source URL: https://github.com/proj4js/proj4js",
+      "versionInfo": "2.20.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-protobufjs-8.7.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "baee7624dc4b877bec2fbb5753f8748036b2c2e7efb940936c64a2d0d290281676668a649ab59025240efc416aceeff96218b081533caeafdafe2569c78799d2"
+        }
+      ],
+      "description": "Protocol Buffers for JavaScript & TypeScript.",
+      "downloadLocation": "https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/protobufjs@8.7.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "protobufjs",
+      "packageFileName": "node_modules/protobufjs",
+      "sourceInfo": "Validated source URL: https://github.com/protobufjs/protobuf.js",
+      "versionInfo": "8.7.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-quickselect-3.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "5dd8d402b6cae019b97cb2ef966e4aa5314e88e4e181f5962386b10190d683813fd2629d67223db4d11f76cdbba828b5cdefefc13475ea4be6986851adaddcda"
+        }
+      ],
+      "description": "A tiny and fast selection algorithm in JavaScript.",
+      "downloadLocation": "https://registry.npmjs.org/quickselect/-/quickselect-3.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/quickselect@3.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "name": "quickselect",
+      "packageFileName": "node_modules/quickselect",
+      "sourceInfo": "Validated source URL: https://github.com/mourner/quickselect",
+      "versionInfo": "3.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-range-parser-1.2.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1eb82cc7ea2baa8ca09e68456ca68713a736f7a27e1d30105e8c4417a80dba944e9a6189468cb37c6ddc700bdea8206bc2bff6cb143905577f1939796a03b04a"
+        }
+      ],
+      "description": "Range header field string parser",
+      "downloadLocation": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/range-parser@1.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "range-parser",
+      "packageFileName": "node_modules/range-parser",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/range-parser",
+      "versionInfo": "1.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rbush-4.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "20fd14a5f79642e8d80bc260d7adab30d734d517f481630c01bd94c6eb3f434a8e170e2509caba66740467052826a5b250627db61ec98f0238c885a8faebe801"
+        }
+      ],
+      "description": "High-performance 2D spatial index for rectangles (based on R*-tree with bulk loading and bulk insertion algorithms)",
+      "downloadLocation": "https://registry.npmjs.org/rbush/-/rbush-4.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/rbush@4.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/mourner/rbush",
+      "licenseDeclared": "MIT",
+      "name": "rbush",
+      "packageFileName": "node_modules/rbush",
+      "sourceInfo": "Validated source URL: https://github.com/mourner/rbush",
+      "versionInfo": "4.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup-2.80.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "708149383d43112ce98ce065efadcaa75007ed413fd1f71d1deeab65751d43d739d2ebe08a0bd6f7bbb721c49e0703a482a2ff3d73c192d042874284bb92fc5d"
+        }
+      ],
+      "description": "Next-generation ES module bundler",
+      "downloadLocation": "https://registry.npmjs.org/rollup/-/rollup-2.80.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/rollup@2.80.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://rollupjs.org/",
+      "licenseDeclared": "MIT",
+      "name": "rollup",
+      "packageFileName": "node_modules/vite-plugin-cesium/node_modules/rollup",
+      "sourceInfo": "Validated source URL: https://github.com/rollup/rollup",
+      "versionInfo": "2.80.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup-4.62.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "4459eb5b89615c0decddea870d9bcdeb9e20f0e4e3cd17eaa4844961ccc2181e87ce985c915022fd0878b5b3d46d1b838bbb352e5bfc83f36ca4b92db58de04c"
+        }
+      ],
+      "description": "Next-generation ES module bundler",
+      "downloadLocation": "https://registry.npmjs.org/rollup/-/rollup-4.62.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/rollup@4.62.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://rollupjs.org/",
+      "licenseDeclared": "MIT",
+      "name": "rollup",
+      "packageFileName": "node_modules/rollup",
+      "sourceInfo": "Validated source URL: https://github.com/rollup/rollup",
+      "versionInfo": "4.62.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "9a5a7728d6b9b04e12a7d514476ae306bc631bbf4ec99021fd00b5f111c88ccfa26246c1c0d5d2a3c0c744c656b73253ac7f06c50f9226f0933778b5e2e31720"
+        }
+      ],
+      "description": "Transform external imports into global variables like output.globals.",
+      "downloadLocation": "https://registry.npmjs.org/rollup-plugin-external-globals/-/rollup-plugin-external-globals-0.6.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/rollup-plugin-external-globals@0.6.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "rollup-plugin-external-globals",
+      "packageFileName": "node_modules/vite-plugin-cesium/node_modules/rollup-plugin-external-globals",
+      "sourceInfo": "Validated source URL: https://github.com/eight04/rollup-plugin-external-globals",
+      "versionInfo": "0.6.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-send-0.19.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "54c6ccc5b0de7a1031a4eb5625795c512e44f225e1e9098df819115f5180452df045a5c4120cc2701d7481341accee36b69348c9af31232371f1f965d4e14fae"
+        }
+      ],
+      "description": "Better streaming static file server with Range and conditional-GET support",
+      "downloadLocation": "https://registry.npmjs.org/send/-/send-0.19.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/send@0.19.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "send",
+      "packageFileName": "node_modules/send",
+      "sourceInfo": "Validated source URL: https://github.com/pillarjs/send",
+      "versionInfo": "0.19.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-serve-static-1.16.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c74453a907a5ea0e5263b2e0e99ade326b0ece7707154ee786745690a816b8c4eee4d3740d1e68aee72432a46f69c00df5de70e804674415e5f718430a07cc78"
+        }
+      ],
+      "description": "Serve static files",
+      "downloadLocation": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/serve-static@1.16.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "serve-static",
+      "packageFileName": "node_modules/serve-static",
+      "sourceInfo": "Validated source URL: https://github.com/expressjs/serve-static",
+      "versionInfo": "1.16.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-setprototypeof-1.2.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1392c35fb5aba7ce4a8a5e5b859bf8ea3f2339e6e82aae4932660cde05467461fcc45a4f59750cb0dae53830ab928c4c11e362fd7648c2e46f6385cdc18309a7"
+        }
+      ],
+      "description": "A small polyfill for Object.setprototypeof",
+      "downloadLocation": "https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/setprototypeof@1.2.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/wesleytodd/setprototypeof",
+      "licenseDeclared": "ISC",
+      "name": "setprototypeof",
+      "packageFileName": "node_modules/setprototypeof",
+      "sourceInfo": "Validated source URL: https://github.com/wesleytodd/setprototypeof",
+      "versionInfo": "1.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-siginfo-2.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c9bc7458ed7ff1b4812c459766f11dee0316dd29f7245956dd3bd7d674446c32d135035a78d37c58ad26781c0f74068e23b4ed4514499ff12cd7386bac21eeee"
+        }
+      ],
+      "description": "Utility module to print pretty messages on SIGINFO/SIGUSR1",
+      "downloadLocation": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/siginfo@2.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/emilbayes/siginfo#readme",
+      "licenseDeclared": "ISC",
+      "name": "siginfo",
+      "packageFileName": "node_modules/siginfo",
+      "sourceInfo": "Validated source URL: https://github.com/emilbayes/siginfo",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-source-map-js-1.2.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "51758c2a12cec1529bef6f0852d40f5f17d853ebac7726ed52b2bff2e184f0240cbeb84ea70bf30c1c23d108522fb31073bbc8b084811bc550f3e203431a5f40"
+        }
+      ],
+      "description": "Generates and consumes source maps",
+      "downloadLocation": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/source-map-js@1.2.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/7rulnik/source-map-js",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "source-map-js",
+      "packageFileName": "node_modules/source-map-js",
+      "sourceInfo": "Validated source URL: https://github.com/7rulnik/source-map-js",
+      "versionInfo": "1.2.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-sourcemap-codec-1.4.8",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "f4dca4a23579522878960a394a8e5db70f9fd098095f7d0a08d23c830873d89f40d79c03d0c97ab631cac1fe9f4d26ba7c075505d65e34eb3d789ef5a8293cbc"
+        }
+      ],
+      "description": "Encode/decode sourcemap mappings",
+      "downloadLocation": "https://registry.npmjs.org/sourcemap-codec/-/sourcemap-codec-1.4.8.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/sourcemap-codec@1.4.8",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/Rich-Harris/sourcemap-codec",
+      "licenseDeclared": "MIT",
+      "name": "sourcemap-codec",
+      "packageFileName": "node_modules/sourcemap-codec",
+      "sourceInfo": "Validated source URL: https://github.com/Rich-Harris/sourcemap-codec",
+      "versionInfo": "1.4.8"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-stackback-0.0.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "d573091397d0a358c61fa63fede6e7c0f3811242049d3e10177d9de51d7e557757bde334201309b7ccdf6b15f53f7421570ad87bee7bebe8e400db524b69816f"
+        }
+      ],
+      "description": "return list of CallSite objects from a captured stacktrace",
+      "downloadLocation": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/stackback@0.0.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "stackback",
+      "packageFileName": "node_modules/stackback",
+      "sourceInfo": "Validated source URL: https://github.com/shtylman/node-stackback",
+      "versionInfo": "0.0.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-statuses-2.0.2",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "0ef132e795770c1eee927468fb888e193e5f3f5b2547cc10a2155d9278a064f32932cb5a289416870898040089137525da94e70138a18416274616501c606247"
+        }
+      ],
+      "description": "HTTP status utility",
+      "downloadLocation": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/statuses@2.0.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "statuses",
+      "packageFileName": "node_modules/statuses",
+      "sourceInfo": "Validated source URL: https://github.com/jshttp/statuses",
+      "versionInfo": "2.0.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-std-env-4.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "46aef26dc5f646e0b9e6bf6868f5445bbff1bb7b63f2ee067816070560b272116dccc22bf3a03b7b73cf1013d3dfbb074ad297dfe4e25ff16bfc00a624b5652d"
+        }
+      ],
+      "description": "Runtime agnostic JS utils",
+      "downloadLocation": "https://registry.npmjs.org/std-env/-/std-env-4.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/std-env@4.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "std-env",
+      "packageFileName": "node_modules/std-env",
+      "sourceInfo": "Validated source URL: https://github.com/unjs/std-env",
+      "versionInfo": "4.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tinybench-2.9.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "d3e0d4bea58c55a94b9a16ba96be240fc88030ad47cd5d3f68a9c2b566fdbfdeb8d539cffcc15becf7366f1a314234d7004aebc9756050e7efd98a8d965a867a"
+        }
+      ],
+      "downloadLocation": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tinybench@2.9.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "tinybench",
+      "packageFileName": "node_modules/tinybench",
+      "sourceInfo": "Validated source URL: https://github.com/tinylibs/tinybench",
+      "versionInfo": "2.9.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tinyexec-1.2.4",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "4877ffaf8f1beef3ab8ef7bd3f1268dcc379bf9caeca31ef75472b41f7d3dd65cc51f9c69870d56c2e24dec1c96894e0642c29529948680a3900db4cca9dd81e"
+        }
+      ],
+      "description": "A minimal library for executing processes in Node",
+      "downloadLocation": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.2.4.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tinyexec@1.2.4",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/tinylibs/tinyexec#readme",
+      "licenseDeclared": "MIT",
+      "name": "tinyexec",
+      "packageFileName": "node_modules/tinyexec",
+      "sourceInfo": "Validated source URL: https://github.com/tinylibs/tinyexec",
+      "versionInfo": "1.2.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tinyglobby-0.2.17",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c1747f758a5ca8a99f5a911d66388a24ec023459dd0f40cc9eb5bf7188d51adb449017d581c2c51e836b963e3b9a339589cf72c8dbbae5a96c805e0d4324dada"
+        }
+      ],
+      "description": "A fast and minimal alternative to globby and fast-glob",
+      "downloadLocation": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tinyglobby@0.2.17",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://superchupu.dev/tinyglobby",
+      "licenseDeclared": "MIT",
+      "name": "tinyglobby",
+      "packageFileName": "node_modules/tinyglobby",
+      "sourceInfo": "Validated source URL: https://github.com/SuperchupuDev/tinyglobby",
+      "versionInfo": "0.2.17"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tinyrainbow-3.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "05ff882e6060adeb54add271cd73344a05cb6775df89a52e3a3fc82901ee4d78a9fb4e579febb21187558349180e2a5305c2eb095c94cc03f3ed0980adbd269b"
+        }
+      ],
+      "description": "A small library to print colourful messages.",
+      "downloadLocation": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tinyrainbow@3.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/tinylibs/tinyrainbow#readme",
+      "licenseDeclared": "MIT",
+      "name": "tinyrainbow",
+      "packageFileName": "node_modules/tinyrainbow",
+      "sourceInfo": "Validated source URL: https://github.com/tinylibs/tinyrainbow",
+      "versionInfo": "3.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-toidentifier-1.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "a39b123ca12483f0c840d987e37574fee7ab2eba7355e764521f2d18dbda797a5fa6ec2329e9e54a8c7fd8efc14e5654b447be246eece58844cfad3c3e500744"
+        }
+      ],
+      "description": "Convert a string of words to a JavaScript identifier",
+      "downloadLocation": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/toidentifier@1.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "toidentifier",
+      "packageFileName": "node_modules/toidentifier",
+      "sourceInfo": "Validated source URL: https://github.com/component/toidentifier",
+      "versionInfo": "1.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-topojson-client-3.1.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "eb4e6ec52e9b718c465f0f6a8bad97cab57a437c706e776369c866371bbc1d64ed54fc597c424df5f77f4994b5439e129f6cb44ccc8cc458ff70920da861eb2b"
+        }
+      ],
+      "description": "Manipulate TopoJSON and convert it to GeoJSON.",
+      "downloadLocation": "https://registry.npmjs.org/topojson-client/-/topojson-client-3.1.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/topojson-client@3.1.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/topojson/topojson-client",
+      "licenseDeclared": "ISC",
+      "name": "topojson-client",
+      "packageFileName": "node_modules/topojson-client",
+      "sourceInfo": "Validated source URL: https://github.com/topojson/topojson-client",
+      "versionInfo": "3.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tr46-0.0.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "37758cb2ea95eba953df40ab5cd6c48f1e06130968c37bfaaebe2609cbfaa6b9dfc214b4d6b920c857633cd05877d6ebecba57575f849a1d357c79ead86760af"
+        }
+      ],
+      "description": "An implementation of the Unicode TR46 spec",
+      "downloadLocation": "https://registry.npmjs.org/tr46/-/tr46-0.0.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tr46@0.0.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/Sebmaster/tr46.js#readme",
+      "licenseDeclared": "MIT",
+      "name": "tr46",
+      "packageFileName": "node_modules/tr46",
+      "sourceInfo": "Validated source URL: https://github.com/Sebmaster/tr46.js",
+      "versionInfo": "0.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tslib-2.8.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "a0916ef781d06fe29576e49440bef09e99aa9df98bb0e03f9c087a6fa107d30084a0ad3f98f79753a737c0a0d5f373243ae1cf447b525ca294f7d2016b34bfdb"
+        }
+      ],
+      "description": "Runtime library for TypeScript helper functions",
+      "downloadLocation": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/tslib@2.8.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://www.typescriptlang.org/",
+      "licenseDeclared": "0BSD",
+      "name": "tslib",
+      "packageFileName": "node_modules/tslib",
+      "sourceInfo": "Validated source URL: https://github.com/Microsoft/tslib",
+      "versionInfo": "2.8.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typescript-5.9.3",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "8e5d6f6733c38a72ebf5e52ddc9feded5e8580d130f508ef04f772b33f4a7d00c3e357d0ac2d98e2f290762694a454f86d795bd511e12e9a7cc2d9ba3394e04b"
+        }
+      ],
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "downloadLocation": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/typescript@5.9.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://www.typescriptlang.org/",
+      "licenseDeclared": "Apache-2.0",
+      "name": "typescript",
+      "packageFileName": "node_modules/typescript",
+      "sourceInfo": "Validated source URL: https://github.com/microsoft/TypeScript",
+      "versionInfo": "5.9.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-universalify-2.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "829b4735082120d9dcfef4c6224d12385185357c3b255ae5454b42a2725196f6b0e83b97d303b925e928f6c5ab301861f8fb18019ee85c088e9dffd42a88328b"
+        }
+      ],
+      "description": "Make a callback- or promise-based function support both promises and callbacks.",
+      "downloadLocation": "https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/universalify@2.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/RyanZim/universalify#readme",
+      "licenseDeclared": "MIT",
+      "name": "universalify",
+      "packageFileName": "node_modules/universalify",
+      "sourceInfo": "Validated source URL: https://github.com/RyanZim/universalify",
+      "versionInfo": "2.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-urijs-1.19.11",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "1d78050e00e89a6c67e7f6c8bf4727419b0f8470c0f7434f1c3ebe73fbf6d54e7e4b1e61a0ff3e74ff48657054d6021fbdd45f846f1c7a5f5034f7a2a277dc09"
+        }
+      ],
+      "description": "URI.js is a Javascript library for working with URLs.",
+      "downloadLocation": "https://registry.npmjs.org/urijs/-/urijs-1.19.11.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/urijs@1.19.11",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "http://medialize.github.io/URI.js/",
+      "licenseDeclared": "MIT",
+      "name": "urijs",
+      "packageFileName": "node_modules/urijs",
+      "sourceInfo": "Validated source URL: https://github.com/medialize/URI.js",
+      "versionInfo": "1.19.11"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vite-7.3.6",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "e173fad2ca511a349915fd6a607f9d24890adb39cbdf341f97d2a4395f4c924451ff70e5b34771681b103d396811ce412d758f2fdbec3b1a29c722a83260ee7a"
+        }
+      ],
+      "description": "Native-ESM powered web dev build tool",
+      "downloadLocation": "https://registry.npmjs.org/vite/-/vite-7.3.6.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/vite@7.3.6",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vite.dev",
+      "licenseDeclared": "MIT",
+      "name": "vite",
+      "packageFileName": "node_modules/vite",
+      "sourceInfo": "Validated source URL: https://github.com/vitejs/vite",
+      "versionInfo": "7.3.6"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c7d03c6421287a071e5e0fc4f8b9f12abd1706c23d091e1c818590d83777714118c0a7139c74379017e9a25ec151c1ad8109d0a2cfe6b55ad19ae5500571631f"
+        }
+      ],
+      "description": "Cesium library plugin for Vite",
+      "downloadLocation": "https://registry.npmjs.org/vite-plugin-cesium/-/vite-plugin-cesium-1.2.23.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/vite-plugin-cesium@1.2.23",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "vite-plugin-cesium",
+      "packageFileName": "node_modules/vite-plugin-cesium",
+      "sourceInfo": "Validated source URL: https://github.com/nshen/vite-plugin-cesium",
+      "versionInfo": "1.2.23"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-vitest-4.1.10",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "47d8d44dee52e106f41c27784cdaa90bba0672b32cb0c4465cb5bcd2e6e35ac5bd547e4617ccb56344852d8f406ea4a4ea7b743e73b1e07e16349619d771943f"
+        }
+      ],
+      "description": "Next generation testing framework powered by Vite",
+      "downloadLocation": "https://registry.npmjs.org/vitest/-/vitest-4.1.10.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/vitest@4.1.10",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://vitest.dev",
+      "licenseDeclared": "MIT",
+      "name": "vitest",
+      "packageFileName": "node_modules/vitest",
+      "sourceInfo": "Validated source URL: https://github.com/vitest-dev/vitest",
+      "versionInfo": "4.1.10"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-webidl-conversions-3.0.1",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "d89027df3f0047aae32bc4a6f28ad10b487f6dc97f0ea2fbb513dd199e08d428dd17e11a30b998c411f25ee28bf38f5eb9c3c586f068c4cb1f95f39bf24c5a79"
+        }
+      ],
+      "description": "Implements the WebIDL algorithms for converting to and from JavaScript values",
+      "downloadLocation": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-3.0.1.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/webidl-conversions@3.0.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "BSD-2-Clause",
+      "name": "webidl-conversions",
+      "packageFileName": "node_modules/webidl-conversions",
+      "sourceInfo": "Validated source URL: https://github.com/jsdom/webidl-conversions",
+      "versionInfo": "3.0.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-whatwg-url-5.0.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "b1a139ee7ba9c64eafdc7637e7e8f307061ad2b292cb45d1f094b164fc202ebef2b34201ce11af880d7f4d41892e6495aacf296fd027bc809712e3872e9ad84f"
+        }
+      ],
+      "description": "An implementation of the WHATWG URL Standard's URL API and parsing machinery",
+      "downloadLocation": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-5.0.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/whatwg-url@5.0.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "whatwg-url",
+      "packageFileName": "node_modules/whatwg-url",
+      "sourceInfo": "Validated source URL: https://github.com/jsdom/whatwg-url",
+      "versionInfo": "5.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-why-is-node-running-2.3.0",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "854ae669605d543731bd8aa7ca1d3dcee9cacd13968db65388dcbc741123912ede8440d089b5c9ed7be59ad6f0b9372552223237e0b25d00f8566928f1f366f3"
+        }
+      ],
+      "description": "Node is running but you don't know why? why-is-node-running is here to help you.",
+      "downloadLocation": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/why-is-node-running@2.3.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/mafintosh/why-is-node-running",
+      "licenseDeclared": "MIT",
+      "name": "why-is-node-running",
+      "packageFileName": "node_modules/why-is-node-running",
+      "sourceInfo": "Validated source URL: https://github.com/mafintosh/why-is-node-running",
+      "versionInfo": "2.3.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-wkt-parser-1.5.5",
+      "attributionTexts": [
+        "## Proj4js -- Javascript reprojection library. \n \nAuthors:\n- Mike Adair madairATdmsolutions.ca\n- Richard Greenwood richATgreenwoodmap.com\n- Didier Richard didier.richardATign.fr\n- Stephen Irons stephen.ironsATclear.net.nz\n- Olivier Terral oterralATgmail.com\n- Calvin Metcalf cmetcalfATappgeo.com\n\nCopyright (c) 2014, Mike Adair, Richard Greenwood, Didier Richard, Stephen Irons, Olivier Terral and Calvin Metcalf\n\n Permission is hereby granted, free of charge, to any person obtaining a\n copy of this software and associated documentation files (the \"Software\"),\n to deal in the Software without restriction, including without limitation\n the rights to use, copy, modify, merge, publish, distribute, sublicense,\n and/or sell copies of the Software, and to permit persons to whom the\n Software is furnished to do so, subject to the following conditions:\n\n The above copyright notice and this permission notice shall be included\n in all copies or substantial portions of the Software.\n\n _THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS\n OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL\n THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n DEALINGS IN THE SOFTWARE._\n"
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "ff33188bde3fec3edfc5c3929559969fabe738c8f71aae5dd71bd58da60e4bd9fa874a8e27823b61857105661c1f5beaf7eb2e86acd7927d39631e3bcd035420"
+        }
+      ],
+      "comment": "Bundled into the browser runtime distribution. Exact license and copyright text is preserved in attributionTexts and THIRD_PARTY_NOTICES.md. Source: node_modules/wkt-parser/LICENSE.md; SHA-256: d514fd8b286fc00a5c97a29f8a99b73f1a4053bbdd00c400aee5f24a1b6b301e. Exact license file distributed in the locked npm package.",
+      "description": "wkt-parser ===",
+      "downloadLocation": "https://registry.npmjs.org/wkt-parser/-/wkt-parser-1.5.5.tgz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:npm/wkt-parser@1.5.5",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/proj4js/wkt-parser#readme",
+      "licenseDeclared": "MIT",
+      "name": "wkt-parser",
+      "packageFileName": "node_modules/wkt-parser",
+      "sourceInfo": "Validated source URL: https://github.com/proj4js/wkt-parser",
+      "versionInfo": "1.5.5"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-types.chai-5.2.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-assertion-error-2.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fs-extra-9.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-at-least-node-1.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-autolinker-4.1.5"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-bitmap-sdf-1.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cesium-1.143.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "relationshipType": "PREREQUISITE_FOR",
+      "spdxElementId": "SPDXRef-Package-cesium-1.143.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium-1.143.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cesium.engine-26.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.widgets-16.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cesium.engine-26.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cesium.wasm-splats-0.1.0-alpha.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium-1.143.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cesium.widgets-16.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-chai-6.2.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-topojson-client-3.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-commander-2.20.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.utils-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-convert-source-map-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-copc-0.0.8"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-0.0.8",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-cross-fetch-3.2.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-debug-2.6.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-http-errors-2.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-depd-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-depd-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-destroy-1.2.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-dompurify-3.4.11"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-draco3d-1.5.7"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-earcut-3.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-on-finished-2.4.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-ee-first-1.1.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-encodeurl-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-serve-static-1.16.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-encodeurl-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-es-module-lexer-2.2.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-esbuild-0.28.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-esbuild-0.28.1",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-esbuild.win32-x64-0.28.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-escape-html-1.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-serve-static-1.16.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-escape-html-1.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-estree-walker-2.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup.pluginutils-4.2.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-estree-walker-2.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.mocker-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-estree-walker-3.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-etag-1.8.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-expect-type-1.4.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-tinyglobby-0.2.17",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-fdir-6.5.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-fdir-6.5.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-fresh-0.5.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-fs-extra-9.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fs-extra-9.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-graceful-fs-4.2.11"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-jsonfile-6.2.1",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-graceful-fs-4.2.11"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-grapheme-splitter-1.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-http-errors-2.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-http-errors-2.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-inherits-2.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-is-reference-1.2.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-magic-string-0.30.21",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-jridgewell.sourcemap-codec-1.5.5"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-jsep-1.4.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fs-extra-9.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-jsonfile-6.2.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-kdbush-4.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-ktx-parse-1.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-0.0.8",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-laz-perf-0.0.7"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-laz-perf-0.0.7"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-lerc-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-protobufjs-8.7.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-long-5.3.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-magic-string-0.25.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-magic-string-0.30.21"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.mocker-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-magic-string-0.30.21"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.snapshot-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-magic-string-0.30.21"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-mersenne-twister-1.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-meshoptimizer-1.2.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-proj4-2.20.9",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-mgrs-1.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-mime-1.6.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-debug-2.6.9",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-ms-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-ms-2.1.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-postcss-8.5.16",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-nanoid-3.3.15"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cross-fetch-3.2.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-node-fetch-2.7.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.widgets-16.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-nosleep.js-0.12.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-obug-2.1.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-on-finished-2.4.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-pako-3.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-serve-static-1.16.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-parseurl-1.3.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-pathe-2.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.runner-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-pathe-2.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.snapshot-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-pathe-2.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-postcss-8.5.16",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picocolors-1.1.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup.pluginutils-4.2.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picomatch-2.3.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fdir-6.5.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picomatch-4.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-tinyglobby-0.2.17",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picomatch-4.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picomatch-4.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-picomatch-4.0.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-playwright.cli-0.1.17",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-playwright-1.62.0-alpha-1783623505000"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-playwright-1.62.0-alpha-1783623505000",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-playwright-core-1.62.0-alpha-1783623505000"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-playwright.cli-0.1.17",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-playwright-core-1.62.0-alpha-1783623505000"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-playwright.cli-0.1.17"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-postcss-8.5.16"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-proj4-2.20.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium-1.143.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-protobufjs-8.7.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-protobufjs-8.7.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rbush-4.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-quickselect-3.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-range-parser-1.2.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rbush-4.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "relationshipType": "PREREQUISITE_FOR",
+      "spdxElementId": "SPDXRef-Package-rollup-2.80.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rollup-4.62.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-plugin-external-globals-0.6.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rollup.pluginutils-4.2.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-4.62.2",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rollup.rollup-win32-x64-gnu-4.62.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-4.62.2",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-rollup.rollup-win32-x64-msvc-4.62.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-serve-static-1.16.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-send-0.19.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-serve-static-1.16.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-http-errors-2.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-setprototypeof-1.2.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-why-is-node-running-2.3.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-siginfo-2.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-postcss-8.5.16",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-source-map-js-1.2.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-magic-string-0.25.9",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-sourcemap-codec-1.4.8"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-spz-loader.core-0.3.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-why-is-node-running-2.3.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-stackback-0.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-standard-schema.spec-1.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-http-errors-2.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-statuses-2.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-send-0.19.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-statuses-2.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-std-env-4.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinybench-2.9.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyexec-1.2.4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-7.3.6",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyglobby-0.2.17"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyglobby-0.2.17"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyrainbow-3.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyrainbow-3.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.pretty-format-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyrainbow-3.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.utils-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tinyrainbow-3.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-http-errors-2.0.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-toidentifier-1.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-topojson-client-3.1.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-whatwg-url-5.0.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tr46-0.0.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-autolinker-4.1.5",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tslib-2.8.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-tweenjs.tween.js-25.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.chai-5.2.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-types.chai-5.2.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.deep-eql-4.0.2"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.emscripten-1.41.5"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-estree-walker-3.0.3",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.estree-1.0.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-is-reference-1.2.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.estree-1.0.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rollup-4.62.2",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.estree-1.0.9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-dompurify-3.4.11",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-types.trusted-types-2.0.7"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-typescript-5.9.3"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fs-extra-9.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-universalify-2.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-jsonfile-6.2.1",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-universalify-2.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-urijs-1.19.11"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vite-7.3.6"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.mocker-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vite-7.3.6"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vite-7.3.6"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vite-plugin-cesium-1.2.23",
+      "relationshipType": "PREREQUISITE_FOR",
+      "spdxElementId": "SPDXRef-Package-vite-7.3.6"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vite-plugin-cesium-1.2.23"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-copc-cesium-0.1.0",
+      "relationshipType": "DEV_DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.expect-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.mocker-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.pretty-format-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.snapshot-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.pretty-format-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.utils-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.pretty-format-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.runner-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.snapshot-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.spy-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.spy-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.mocker-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.spy-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.utils-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.expect-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.utils-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.runner-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.utils-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest.snapshot-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-vitest.utils-4.1.10"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-whatwg-url-5.0.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-webidl-conversions-3.0.1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-node-fetch-2.7.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-whatwg-url-5.0.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-vitest-4.1.10",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-why-is-node-running-2.3.0"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-proj4-2.20.9",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-wkt-parser-1.5.5"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cesium.engine-26.1.0",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-zip.js.zip.js-2.8.26"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

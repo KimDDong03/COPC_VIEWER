@@ -2,7 +2,9 @@ import type { Camera } from "cesium";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   CopcPointCloudLayerAutomaticRenderResult,
+  CopcPointCloudLayerNodesRenderResult,
   CopcPointCloudLayerProgressiveAutomaticRenderOptions,
+  CopcPointCloudLayerProgressiveRenderNodesOptions,
 } from "./CopcPointCloudLayer";
 import {
   CopcPointCloudCameraStream,
@@ -38,12 +40,16 @@ describe("CopcPointCloudCameraStream", () => {
     expect(calls[0]).toMatchObject({
       camera: camera.camera,
       selectionMode: "coverage",
-      coverageMode: "progressive",
+      coverageMode: "complete-depth",
       expandHierarchy: true,
+      includeAncestorNodes: true,
       includePointsInResult: false,
+      maxActiveProgressiveNodeRequests: 6,
+      maxPointCountPerNode: 180_000,
+      maxRenderedPointCount: 360_000,
       nodeRenderOrder: "selection",
       nodeRequestOrder: "selection",
-      progressBatchNodeCount: 1,
+      progressBatchNodeCount: 2,
       progressRenderMode: "incremental",
       showBounds: false,
     });
@@ -55,6 +61,567 @@ describe("CopcPointCloudCameraStream", () => {
       "complete",
     ]);
     expect(stream.lastResult).toBe(result);
+  });
+
+  it("uses dataset-relative height for a high-altitude point cloud", async () => {
+    const camera = createCameraStub(3_354);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const getCameraHeightAbovePointCloudMeters = vi.fn(() => 550);
+    const layer: CopcPointCloudCameraStreamLayer = {
+      ...createLayerStub(async () => createRenderResult()),
+      getCameraHeightAbovePointCloudMeters,
+    };
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      quality: "balanced",
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(getCameraHeightAbovePointCloudMeters).toHaveBeenCalledWith(3_354);
+    expect(updates.at(-1)?.lodSettings).toEqual(
+      expect.objectContaining({
+        label: "close zoom",
+        cameraHeightMeters: 550,
+      }),
+    );
+  });
+
+  it("uses the shared terminal engine for a real layer capability", async () => {
+    const camera = createCameraStub(3_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const automaticRender = vi.fn(async () => {
+      throw new Error("legacy automatic renderer must not run");
+    });
+    const selectNodesForCamera = vi.fn(async () =>
+      createCameraSelection(["1-0-0-0"]),
+    );
+    const renderNodesProgressively = vi.fn(
+      async (
+        _nodeKeys: readonly string[],
+        options: CopcPointCloudLayerProgressiveRenderNodesOptions,
+      ) => {
+        options.onProgress?.(createNodeRenderResult(["0-0-0-0"]));
+        return createNodeRenderResult(["0-0-0-0", "1-0-0-0"]);
+      },
+    );
+    const layer = {
+      renderAutomaticProgressively: automaticRender,
+      expandHierarchyForCamera: vi.fn(async () => undefined),
+      selectNodesForCamera,
+      renderNodesProgressively,
+      hierarchy: createHierarchy(),
+    } as unknown as CopcPointCloudCameraStreamLayer;
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      quality: "balanced",
+      onUpdate: (update) => updates.push(update),
+    });
+
+    const result = await stream.render();
+
+    expect(automaticRender).not.toHaveBeenCalled();
+    expect(selectNodesForCamera).toHaveBeenCalledWith(
+      expect.objectContaining({
+        camera: camera.camera,
+        coverageMode: "complete-depth",
+        selectionMode: "coverage",
+      }),
+    );
+    expect(renderNodesProgressively).toHaveBeenCalledWith(
+      ["0-0-0-0", "1-0-0-0"],
+      expect.objectContaining({
+        continueLoadingAfterStop: true,
+        postStopLoadingMode: "await",
+        postStopProgressMode: "render",
+      }),
+    );
+    expect(result?.pointSamples.nodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+    ]);
+    expect(updates.map((update) => update.phase)).toEqual([
+      "progress",
+      "complete",
+    ]);
+    expect(updates.map((update) => update.stage)).toEqual([
+      "refining",
+      "terminal",
+    ]);
+    expect(stream.lastVisualQuality?.isTerminalReady).toBe(true);
+  });
+
+  it("settles a hierarchy-disabled engine request without claiming terminal quality", async () => {
+    const camera = createCameraStub(3_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const hierarchy = createHierarchyForKeys(
+      ["0-0-0-0", "1-0-0-0"],
+      ["2-0-0-0"],
+    );
+    const expandHierarchyForCamera = vi.fn();
+    const layer = createEngineLayerStub({
+      getHierarchy: () => hierarchy,
+      expandHierarchyForCamera,
+      selectNodesForCamera: vi.fn(async () =>
+        createCameraSelection(["1-0-0-0"]),
+      ),
+    });
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      renderOptions: { expandHierarchy: false },
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(expandHierarchyForCamera).not.toHaveBeenCalled();
+    expect(updates.some((update) => update.stage === "terminal")).toBe(false);
+    expect(updates.at(-1)).toMatchObject({
+      phase: "complete",
+      stage: "interactive-ready",
+      visualQuality: {
+        isHierarchyCompleteForView: false,
+        isTerminalReady: false,
+        pendingRelevantHierarchyPageCount: 0,
+      },
+    });
+  });
+
+  it("schedules bounded same-camera hierarchy follow-up cycles until the view is terminal", async () => {
+    vi.useFakeTimers();
+    const camera = createCameraStub(3_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    let hierarchy = createHierarchyForKeys(
+      ["0-0-0-0", "1-0-0-0"],
+      ["2-0-0-0"],
+    );
+    let expansionCount = 0;
+    const selectNodesForCamera = vi.fn(async () =>
+      createCameraSelection([
+        hierarchy.nodes.some((node) => node.key === "2-0-0-0")
+          ? "2-0-0-0"
+          : "1-0-0-0",
+      ]),
+    );
+    const expandHierarchyForCamera = vi.fn(async () => {
+      expansionCount += 1;
+
+      if (expansionCount === 1) {
+        hierarchy = createHierarchyForKeys(
+          ["0-0-0-0", "1-0-0-0"],
+          ["2-0-0-0"],
+        );
+        return createHierarchyExpansionResult(hierarchy, {
+          loadedPageKeys: ["1-0-0-0"],
+          pendingRelevantHierarchyPageCount: 1,
+          pendingRelevantHierarchyPageSignature: "2-0-0-0:200:20",
+        });
+      }
+
+      hierarchy = createHierarchyForKeys(
+        ["0-0-0-0", "1-0-0-0", "2-0-0-0"],
+        [],
+      );
+      return createHierarchyExpansionResult(hierarchy, {
+        loadedPageKeys: ["2-0-0-0"],
+        pendingRelevantHierarchyPageCount: 0,
+      });
+    });
+    const layer = createEngineLayerStub({
+      getHierarchy: () => hierarchy,
+      expandHierarchyForCamera,
+      selectNodesForCamera,
+    });
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      debounceMilliseconds: 5,
+      renderOnStart: false,
+      onUpdate: (update) => updates.push(update),
+    });
+
+    stream.start();
+    await stream.render();
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(1);
+    expect(updates.some((update) => update.stage === "terminal")).toBe(false);
+    expect(updates.at(-1)?.visualQuality).toMatchObject({
+      isHierarchyCompleteForView: false,
+      isTerminalReady: false,
+    });
+
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(2);
+    expect(selectNodesForCamera).toHaveBeenCalledTimes(4);
+    expect(updates.at(-1)).toMatchObject({
+      phase: "complete",
+      stage: "terminal",
+      visualQuality: {
+        isHierarchyCompleteForView: true,
+        isTerminalReady: true,
+      },
+    });
+    stream.destroy();
+  });
+
+  it("stops hierarchy follow-up scheduling when the residual page signature makes no progress", async () => {
+    vi.useFakeTimers();
+    const camera = createCameraStub(3_000);
+    const hierarchy = createHierarchyForKeys(
+      ["0-0-0-0", "1-0-0-0"],
+      ["2-0-0-0"],
+    );
+    const expandHierarchyForCamera = vi.fn(async () =>
+      createHierarchyExpansionResult(hierarchy, {
+        loadedPageKeys: ["1-0-0-0"],
+        pendingRelevantHierarchyPageCount: 1,
+        pendingRelevantHierarchyPageSignature: "2-0-0-0:200:20",
+      }),
+    );
+    const layer = createEngineLayerStub({
+      getHierarchy: () => hierarchy,
+      expandHierarchyForCamera,
+      selectNodesForCamera: vi.fn(async () =>
+        createCameraSelection(["1-0-0-0"]),
+      ),
+    });
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      debounceMilliseconds: 5,
+      renderOnStart: false,
+    });
+
+    stream.start();
+    await stream.render();
+    await vi.advanceTimersByTimeAsync(5);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(2);
+    expect(stream.lastVisualQuality).toMatchObject({
+      isHierarchyCompleteForView: false,
+      isTerminalReady: false,
+    });
+    stream.destroy();
+  });
+
+  it("schedules one follow-up for an unseen residual signature after a concurrent page merge", async () => {
+    vi.useFakeTimers();
+    const camera = createCameraStub(3_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const hierarchy = createHierarchyForKeys(
+      ["0-0-0-0", "1-0-0-0"],
+      ["2-0-0-0"],
+    );
+    const expandHierarchyForCamera = vi.fn(async () =>
+      createHierarchyExpansionResult(hierarchy, {
+        // A concurrent waiter can merge the selected page before this request
+        // records its own source-load provenance. The residual signature still
+        // proves that one bounded same-camera refinement cycle is useful.
+        loadedPageKeys: [],
+        pendingRelevantHierarchyPageCount: 1,
+        pendingRelevantHierarchyPageSignature: "2-0-0-0:200:20",
+      }),
+    );
+    const layer = createEngineLayerStub({
+      getHierarchy: () => hierarchy,
+      expandHierarchyForCamera,
+      selectNodesForCamera: vi.fn(async () =>
+        createCameraSelection(["1-0-0-0"]),
+      ),
+    });
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      debounceMilliseconds: 5,
+      renderOnStart: false,
+      onUpdate: (update) => updates.push(update),
+    });
+
+    stream.start();
+    await stream.render();
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(1);
+    expect(updates.at(-1)).toMatchObject({
+      phase: "complete",
+      stage: "interactive-ready",
+    });
+
+    await vi.advanceTimersByTimeAsync(5);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(2);
+    expect(
+      updates
+        .filter((update) => update.phase === "complete")
+        .map((update) => update.requestId),
+    ).toEqual([1, 2]);
+    expect(updates.at(-1)).toMatchObject({
+      phase: "complete",
+      stage: "interactive-ready",
+      visualQuality: {
+        isHierarchyCompleteForView: false,
+        isTerminalReady: false,
+      },
+    });
+    stream.destroy();
+  });
+
+  it("stops an eviction cycle when a previously seen residual signature returns", async () => {
+    vi.useFakeTimers();
+    const camera = createCameraStub(3_000);
+    const hierarchy = createHierarchyForKeys(
+      ["0-0-0-0", "1-0-0-0"],
+      ["2-0-0-0"],
+    );
+    const residualSignatures = [
+      "2-0-0-0:200:20",
+      "2-1-0-0:220:20",
+      "2-0-0-0:200:20",
+    ];
+    const expandHierarchyForCamera = vi.fn(async () => {
+      const callIndex = Math.min(
+        expandHierarchyForCamera.mock.calls.length - 1,
+        residualSignatures.length - 1,
+      );
+
+      return createHierarchyExpansionResult(hierarchy, {
+        loadedPageKeys: [`loaded-${callIndex}`],
+        pendingRelevantHierarchyPageCount: 1,
+        pendingRelevantHierarchyPageSignature:
+          residualSignatures[callIndex],
+      });
+    });
+    const layer = createEngineLayerStub({
+      getHierarchy: () => hierarchy,
+      expandHierarchyForCamera,
+      selectNodesForCamera: vi.fn(async () =>
+        createCameraSelection(["1-0-0-0"]),
+      ),
+    });
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      debounceMilliseconds: 5,
+      renderOnStart: false,
+    });
+
+    stream.start();
+    await stream.render();
+    await vi.advanceTimersByTimeAsync(5);
+    await vi.advanceTimersByTimeAsync(5);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(expandHierarchyForCamera).toHaveBeenCalledTimes(3);
+    expect(stream.lastVisualQuality).toMatchObject({
+      isHierarchyCompleteForView: false,
+      isTerminalReady: false,
+    });
+    stream.destroy();
+  });
+
+  it("does not lower the per-node render cap when zooming from close to near", async () => {
+    const camera = createCameraStub(650);
+    const calls: CopcPointCloudLayerProgressiveAutomaticRenderOptions[] = [];
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer: createLayerStub(async (options) => {
+        calls.push(options);
+        return createRenderResult();
+      }),
+      quality: "balanced",
+    });
+
+    await stream.render();
+    (camera.camera.positionCartographic as { height: number }).height = 300;
+    await stream.render();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].maxPointCountPerNode).toBeGreaterThanOrEqual(
+      calls[0].maxPointCountPerNode ?? Number.POSITIVE_INFINITY,
+    );
+    expect(calls[1].maxRenderedPointCount).toBeGreaterThanOrEqual(
+      calls[0].maxRenderedPointCount ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("lets complete-depth streaming distribute the full zoom render budget", async () => {
+    const camera = createCameraStub(3_000);
+    const calls: CopcPointCloudLayerProgressiveAutomaticRenderOptions[] = [];
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer: createLayerStub(async (options) => {
+        calls.push(options);
+        return createRenderResult();
+      }),
+      quality: "balanced",
+    });
+
+    await stream.render();
+    (camera.camera.positionCartographic as { height: number }).height = 300;
+    await stream.render();
+
+    expect(calls[0]).toMatchObject({
+      coverageMode: "complete-depth",
+      maxPointCountPerNode: 180_000,
+      maxRenderedPointCount: 360_000,
+    });
+    expect(calls[1]).toMatchObject({
+      coverageMode: "complete-depth",
+      maxPointCountPerNode: 180_000,
+      maxRenderedPointCount: 720_000,
+    });
+  });
+
+  it("allows callers to opt into transient progressive selection explicitly", async () => {
+    const camera = createCameraStub(1_000);
+    const calls: CopcPointCloudLayerProgressiveAutomaticRenderOptions[] = [];
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer: createLayerStub(async (options) => {
+        calls.push(options);
+        return createRenderResult();
+      }),
+      renderOptions: {
+        coverageMode: "progressive",
+        includeAncestorNodes: false,
+      },
+    });
+
+    await stream.render();
+
+    expect(calls[0]).toMatchObject({
+      coverageMode: "progressive",
+      includeAncestorNodes: false,
+      maxPointCountPerNode: 6_000,
+    });
+  });
+
+  it("keeps explicit progressive policies on the legacy adapter", async () => {
+    const camera = createCameraStub(1_000);
+    const automaticRender = vi.fn(async () => createRenderResult());
+    const selectNodesForCamera = vi.fn(async () =>
+      createCameraSelection(["1-0-0-0"]),
+    );
+    const layer = {
+      renderAutomaticProgressively: automaticRender,
+      expandHierarchyForCamera: vi.fn(async () => undefined),
+      selectNodesForCamera,
+      renderNodesProgressively: vi.fn(),
+      hierarchy: createHierarchy(),
+    } as unknown as CopcPointCloudCameraStreamLayer;
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      renderOptions: {
+        coverageMode: "progressive",
+        includeAncestorNodes: false,
+      },
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(automaticRender).toHaveBeenCalledTimes(1);
+    expect(selectNodesForCamera).not.toHaveBeenCalled();
+    expect(updates.at(-1)?.phase).toBe("complete");
+    expect(updates.at(-1)?.stage).toBe("preview");
+  });
+
+  it("does not label an ancestor-omitting preview as additive terminal quality", async () => {
+    const camera = createCameraStub(1_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const result = createRenderResult({
+      frontierNodeKeys: ["1-0-0-0"],
+      renderedNodeKeys: ["1-0-0-0"],
+    });
+    const layer = {
+      ...createLayerStub(async () => result),
+      hierarchy: {
+        nodes: [
+          { key: "0-0-0-0", pointCount: 1, pointDataLength: 1 },
+          { key: "1-0-0-0", pointCount: 1, pointDataLength: 1 },
+        ],
+      },
+    } as unknown as CopcPointCloudCameraStreamLayer;
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      renderOptions: {
+        coverageMode: "progressive",
+        includeAncestorNodes: false,
+      },
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(updates.at(-1)?.visualQuality).toMatchObject({
+      isTerminalReady: false,
+      requiredNodeCount: 2,
+      missingRequiredNodeCount: 1,
+      unexpectedRenderedNodeCount: 0,
+    });
+  });
+
+  it("falls back to absolute height for backward-compatible layer mocks", async () => {
+    const camera = createCameraStub(3_500);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer: createLayerStub(async () => createRenderResult()),
+      quality: "balanced",
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(updates.at(-1)?.lodSettings).toEqual(
+      expect.objectContaining({
+        label: "overview",
+        cameraHeightMeters: 3_500,
+      }),
+    );
+  });
+
+  it("reports a verified additive terminal composition for real layer results", async () => {
+    const camera = createCameraStub(3_000);
+    const updates: CopcPointCloudCameraStreamUpdate[] = [];
+    const result = createRenderResult({
+      frontierNodeKeys: ["1-0-0-0"],
+      renderedNodeKeys: ["0-0-0-0", "1-0-0-0"],
+    });
+    const layer = {
+      ...createLayerStub(async () => result),
+      hierarchy: {
+        nodes: [
+          { key: "0-0-0-0", pointCount: 1, pointDataLength: 1 },
+          { key: "1-0-0-0", pointCount: 1, pointDataLength: 1 },
+        ],
+      },
+    } as unknown as CopcPointCloudCameraStreamLayer;
+    const stream = new CopcPointCloudCameraStream({
+      camera: camera.camera,
+      layer,
+      onUpdate: (update) => updates.push(update),
+    });
+
+    await stream.render();
+
+    expect(updates.at(-1)?.visualQuality).toMatchObject({
+      isTerminalReady: true,
+      requiredNodeCount: 2,
+      renderedNodeCount: 2,
+      missingRequiredNodeCount: 0,
+      unexpectedRenderedNodeCount: 0,
+    });
+    expect(stream.lastVisualQuality?.isTerminalReady).toBe(true);
   });
 
   it("debounces camera events and removes listeners when stopped", async () => {
@@ -196,6 +763,146 @@ function createLayerStub(
   };
 }
 
-function createRenderResult(): CopcPointCloudLayerAutomaticRenderResult {
-  return {} as CopcPointCloudLayerAutomaticRenderResult;
+function createRenderResult(options?: {
+  readonly frontierNodeKeys: readonly string[];
+  readonly renderedNodeKeys: readonly string[];
+}): CopcPointCloudLayerAutomaticRenderResult {
+  if (!options) {
+    return {} as CopcPointCloudLayerAutomaticRenderResult;
+  }
+
+  return {
+    cameraSelection: {
+      nodes: options.frontierNodeKeys.map((key) => ({
+        key,
+        pointCount: 1,
+        pointDataLength: 1,
+      })),
+    },
+    pointSamples: {
+      nodeKeys: options.renderedNodeKeys,
+    },
+  } as unknown as CopcPointCloudLayerAutomaticRenderResult;
+}
+
+function createHierarchy() {
+  return {
+    nodes: [
+      { key: "0-0-0-0", pointCount: 60_000, pointDataLength: 1_000 },
+      { key: "1-0-0-0", pointCount: 120_000, pointDataLength: 2_000 },
+    ],
+    pendingPages: [],
+  };
+}
+
+function createCameraSelection(nodeKeys: readonly string[]) {
+  return {
+    nodes: nodeKeys.map((key) => ({
+      key,
+      pointCount: 120_000,
+      pointDataLength: 2_000,
+    })),
+    selectedDepth: 1,
+    targetDepth: 2,
+    coverageMode: "complete-depth",
+  };
+}
+
+function createHierarchyForKeys(
+  nodeKeys: readonly string[],
+  pendingPageKeys: readonly string[],
+) {
+  return {
+    nodes: nodeKeys.map((key) => ({
+      key,
+      pointCount: key === "0-0-0-0" ? 60_000 : 120_000,
+      pointDataLength: 2_000,
+    })),
+    pendingPages: pendingPageKeys.map((key, index) => ({
+      key,
+      depth: Number(key.split("-")[0]),
+      x: 0,
+      y: 0,
+      z: 0,
+      bounds: {
+        minX: 0,
+        minY: 0,
+        minZ: 0,
+        maxX: 100,
+        maxY: 100,
+        maxZ: 100,
+      },
+      pageOffset: (index + 1) * 200,
+      pageLength: 20,
+    })),
+  };
+}
+
+function createHierarchyExpansionResult(
+  hierarchy: ReturnType<typeof createHierarchyForKeys>,
+  options: {
+    readonly loadedPageKeys: readonly string[];
+    readonly pendingRelevantHierarchyPageCount: number;
+    readonly pendingRelevantHierarchyPageSignature?: string;
+  },
+) {
+  return {
+    hierarchy,
+    pageSelection: {
+      pages: hierarchy.pendingPages,
+      reason: "staged hierarchy expansion",
+    },
+    loadedPageKeys: options.loadedPageKeys,
+    pendingRelevantHierarchyPageCount:
+      options.pendingRelevantHierarchyPageCount,
+    pendingRelevantHierarchyPageSignature:
+      options.pendingRelevantHierarchyPageSignature,
+    isHierarchyCompleteForView:
+      options.pendingRelevantHierarchyPageCount === 0,
+  };
+}
+
+function createEngineLayerStub(options: {
+  readonly getHierarchy: () => ReturnType<typeof createHierarchyForKeys>;
+  readonly expandHierarchyForCamera: ReturnType<typeof vi.fn>;
+  readonly selectNodesForCamera: ReturnType<typeof vi.fn>;
+}): CopcPointCloudCameraStreamLayer {
+  return {
+    renderAutomaticProgressively: vi.fn(async () => createRenderResult()),
+    get hierarchy() {
+      return options.getHierarchy();
+    },
+    expandHierarchyForCamera: options.expandHierarchyForCamera,
+    selectNodesForCamera: options.selectNodesForCamera,
+    renderNodesProgressively: vi.fn(
+      async (
+        nodeKeys: readonly string[],
+        renderOptions: CopcPointCloudLayerProgressiveRenderNodesOptions,
+      ) => {
+        renderOptions.onProgress?.(createNodeRenderResult(["0-0-0-0"]));
+        return createNodeRenderResult(nodeKeys);
+      },
+    ),
+  } as unknown as CopcPointCloudCameraStreamLayer;
+}
+
+function createNodeRenderResult(
+  nodeKeys: readonly string[],
+): CopcPointCloudLayerNodesRenderResult {
+  return {
+    nodes: nodeKeys.map((key) => ({
+      key,
+      pointCount: 120_000,
+      pointDataLength: 2_000,
+    })),
+    pointSamples: {
+      nodeKeys,
+      nodeResults: nodeKeys.map((nodeKey) => ({
+        nodeKey,
+        nodePointCount: 120_000,
+        sampledPointCount: 60_000,
+      })),
+      sampledPointCount: nodeKeys.length * 60_000,
+    },
+  } as unknown as CopcPointCloudLayerNodesRenderResult;
 }

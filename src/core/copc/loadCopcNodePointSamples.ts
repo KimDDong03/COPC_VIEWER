@@ -59,7 +59,16 @@ export async function loadCopcNodePointDataView(
     options.node,
     {
       lazPerf: await getSharedLazPerf(),
-      include: ["X", "Y", "Z", "Red", "Green", "Blue"],
+      include: [
+        "X",
+        "Y",
+        "Z",
+        "Red",
+        "Green",
+        "Blue",
+        "Classification",
+        "Intensity",
+      ],
     },
   );
 }
@@ -72,6 +81,8 @@ export function sampleCopcPointDataView(
   const getY = view.getter("Y");
   const getZ = view.getter("Z");
   const colorGetters = getColorGetters(view);
+  const getClassification = getOptionalDimensionGetter(view, "Classification");
+  const getIntensity = getOptionalDimensionGetter(view, "Intensity");
   const sampledPointCount = Math.min(view.pointCount, options.maxPointCount);
   const step = view.pointCount / sampledPointCount;
 
@@ -82,6 +93,8 @@ export function sampleCopcPointDataView(
       getY,
       getZ,
       colorGetters,
+      getClassification,
+      getIntensity,
       nodePointCount: view.pointCount,
       sampledPointCount,
       step,
@@ -101,6 +114,16 @@ export function sampleCopcPointDataView(
       y: getY(pointIndex),
       z: getZ(pointIndex),
       color: colorGetters ? colorAt(colorGetters, pointIndex) : undefined,
+      ...(getClassification
+        ? {
+            classification: normalizeClassification(
+              getClassification(pointIndex),
+            ),
+          }
+        : {}),
+      ...(getIntensity
+        ? { intensity: normalizeIntensity(getIntensity(pointIndex)) }
+        : {}),
     });
   }
 
@@ -124,6 +147,8 @@ function sampleCopcPointDataViewAsTypedArrays(options: {
         readonly blue: (index: number) => number;
       }
     | undefined;
+  readonly getClassification: ((index: number) => number) | undefined;
+  readonly getIntensity: ((index: number) => number) | undefined;
   readonly nodePointCount: number;
   readonly sampledPointCount: number;
   readonly step: number;
@@ -131,6 +156,8 @@ function sampleCopcPointDataViewAsTypedArrays(options: {
   const pointData = createPointDataSampleArrays(
     options.sampledPointCount,
     options.colorGetters !== undefined,
+    options.getClassification !== undefined,
+    options.getIntensity !== undefined,
   );
 
   for (
@@ -162,6 +189,18 @@ function sampleCopcPointDataViewAsTypedArrays(options: {
         options.colorGetters.blue(pointIndex),
       );
     }
+
+    if (pointData.classification && options.getClassification) {
+      pointData.classification[sampleIndex] = normalizeClassification(
+        options.getClassification(pointIndex),
+      );
+    }
+
+    if (pointData.intensity && options.getIntensity) {
+      pointData.intensity[sampleIndex] = normalizeIntensity(
+        options.getIntensity(pointIndex),
+      );
+    }
   }
 
   return {
@@ -176,6 +215,8 @@ function sampleCopcPointDataViewAsTypedArrays(options: {
 function createPointDataSampleArrays(
   pointCount: number,
   includeColor: boolean,
+  includeClassification: boolean,
+  includeIntensity: boolean,
 ): CopcPointDataSampleArrays {
   return {
     x: new Float64Array(pointCount),
@@ -184,7 +225,18 @@ function createPointDataSampleArrays(
     red: includeColor ? new Uint8Array(pointCount) : undefined,
     green: includeColor ? new Uint8Array(pointCount) : undefined,
     blue: includeColor ? new Uint8Array(pointCount) : undefined,
+    classification: includeClassification
+      ? new Uint8Array(pointCount)
+      : undefined,
+    intensity: includeIntensity ? new Uint16Array(pointCount) : undefined,
   };
+}
+
+function getOptionalDimensionGetter(
+  view: CopcPointDataView,
+  name: string,
+): ((index: number) => number) | undefined {
+  return name in view.dimensions ? view.getter(name) : undefined;
 }
 
 function getColorGetters(view: {
@@ -226,4 +278,20 @@ function colorAt(
 function normalizeColor(value: number): number {
   const byteValue = value > 255 ? Math.round(value / 257) : Math.round(value);
   return Math.max(0, Math.min(255, byteValue));
+}
+
+function normalizeClassification(value: number): number {
+  return normalizeUnsignedInteger(value, 255);
+}
+
+function normalizeIntensity(value: number): number {
+  return normalizeUnsignedInteger(value, 65_535);
+}
+
+function normalizeUnsignedInteger(value: number, maximum: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(maximum, Math.round(value)));
 }

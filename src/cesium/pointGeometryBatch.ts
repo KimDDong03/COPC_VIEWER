@@ -6,6 +6,7 @@ import type {
 } from "../core/copc/CopcPointDataSample";
 import type { CopcInspection } from "../core/copc/CopcInspection";
 import type { PointGeometryBatch } from "./CopcPointCloudRenderer";
+import { colorizeCopcPoint } from "./copcPointColorizer";
 import {
   configureKnownCopcProjections,
   EPSG_2992,
@@ -37,6 +38,26 @@ export interface CesiumPointGeometryTransform {
   readonly sourceDefinition?: string;
   readonly targetCrs?: string;
   readonly targetDefinition?: string;
+}
+
+export function getPointGeometryBatchBackingBuffers(
+  batch: PointGeometryBatch,
+): readonly ArrayBufferLike[] {
+  const buffers = new Set<ArrayBufferLike>([
+    batch.positions.buffer,
+    batch.colors.buffer,
+  ]);
+
+  return [...buffers];
+}
+
+export function estimatePointGeometryBatchByteSize(
+  batch: PointGeometryBatch,
+): number {
+  return getPointGeometryBatchBackingBuffers(batch).reduce(
+    (byteSize, buffer) => byteSize + buffer.byteLength,
+    0,
+  );
 }
 
 export function createCesiumPointGeometryTransform(
@@ -108,6 +129,12 @@ export function createPointDataSampleArraysFromPoints(
   points: readonly CopcPointDataSample[],
 ): CopcPointDataSampleArrays {
   const hasAnyColor = points.some((point) => point.color);
+  const hasAnyClassification = points.some(
+    (point) => point.classification !== undefined,
+  );
+  const hasAnyIntensity = points.some(
+    (point) => point.intensity !== undefined,
+  );
   const pointData: CopcPointDataSampleArrays = {
     x: new Float64Array(points.length),
     y: new Float64Array(points.length),
@@ -115,6 +142,10 @@ export function createPointDataSampleArraysFromPoints(
     red: hasAnyColor ? new Uint8Array(points.length) : undefined,
     green: hasAnyColor ? new Uint8Array(points.length) : undefined,
     blue: hasAnyColor ? new Uint8Array(points.length) : undefined,
+    classification: hasAnyClassification
+      ? new Uint8Array(points.length)
+      : undefined,
+    intensity: hasAnyIntensity ? new Uint16Array(points.length) : undefined,
   };
 
   for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
@@ -128,6 +159,14 @@ export function createPointDataSampleArraysFromPoints(
       pointData.red[pointIndex] = color.red;
       pointData.green[pointIndex] = color.green;
       pointData.blue[pointIndex] = color.blue;
+    }
+
+    if (pointData.classification) {
+      pointData.classification[pointIndex] = point.classification ?? 0;
+    }
+
+    if (pointData.intensity) {
+      pointData.intensity[pointIndex] = point.intensity ?? 0;
     }
   }
 
@@ -153,6 +192,12 @@ export function createPointDataSamplesFromArrays(
             blue: pointData.blue[pointIndex],
           }
         : undefined,
+      ...(pointData.classification
+        ? { classification: pointData.classification[pointIndex] }
+        : {}),
+      ...(pointData.intensity
+        ? { intensity: pointData.intensity[pointIndex] }
+        : {}),
     };
   }
 
@@ -204,17 +249,14 @@ function createPointGeometryBatchFromPointData(options: {
     );
     const positionOffset = pointIndex * 3;
     const colorOffset = pointIndex * 4;
+    const packedColor = colorizeCopcPoint(options.pointData, pointIndex);
 
     positions[positionOffset] = position[0];
     positions[positionOffset + 1] = position[1];
     positions[positionOffset + 2] = position[2];
-    colors[colorOffset] =
-      options.pointData.red?.[pointIndex] ?? DEFAULT_GEOMETRY_POINT_COLOR.red;
-    colors[colorOffset + 1] =
-      options.pointData.green?.[pointIndex] ??
-      DEFAULT_GEOMETRY_POINT_COLOR.green;
-    colors[colorOffset + 2] =
-      options.pointData.blue?.[pointIndex] ?? DEFAULT_GEOMETRY_POINT_COLOR.blue;
+    colors[colorOffset] = (packedColor >> 16) & 255;
+    colors[colorOffset + 1] = (packedColor >> 8) & 255;
+    colors[colorOffset + 2] = packedColor & 255;
     colors[colorOffset + 3] = DEFAULT_GEOMETRY_POINT_COLOR.alpha;
   }
 

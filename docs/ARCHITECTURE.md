@@ -41,7 +41,8 @@ COPC URL/File/Blob
 -> CopcSource
 -> COPC metadata and loaded hierarchy pages
 -> optional camera-targeted hierarchy page expansion
--> selected hierarchy node keys
+-> selected complete-depth frontier
+-> available additive ancestor closure
 -> range-read point data
 -> sampled source XYZ points
 -> coordinate transform
@@ -55,36 +56,111 @@ ranges on demand as the camera or selected node set changes. Remote URLs use
 HTTP `Range` requests, while browser-selected files use `Blob.slice` through
 the same `CopcSource` getter boundary.
 
+[COPC](https://copc.io/) uses the [EPT additive octree
+model](https://entwine.io/en/latest/entwine-point-tile.html). A child node adds
+points; it does not replace the unique points stored in its ancestors. The
+terminal scene contract is therefore a frontier plus its complete available
+ancestor closure, not a replacement-style leaf set.
+
 The current implementation includes:
 
 - `createCopcRangeGetter` and `createHttpRangeGetter` wrap exact byte-range
   reads in a small bounded cache. This coalesces duplicate in-flight reads and
   returns copied cached bytes for repeated metadata, hierarchy, or point-data
   ranges while preserving the fail-fast HTTP `206 Partial Content` requirement.
+  Response bodies must match the requested byte count; an exposed
+  `Content-Range` must also match the exact requested range and a valid complete
+  length before bytes enter the COPC parser. A configurable 256 MiB default
+  single-read ceiling applies before allocation, HTTP requests use a 30 second
+  body-inclusive deadline, and Blob reads must stay within the source bounds.
 - `CopcSource.loadHierarchyPage` and `loadNextHierarchyPage` for on-demand COPC hierarchy page range reads from URL or Blob-backed sources.
 - Hierarchy node and pending-page provenance tracking via the source hierarchy page ID, plus bounded page-count and byte-aware hierarchy page eviction that restores evicted non-root leaf pages back to pending page references.
 - `selectHierarchyPagesForTarget` for choosing nearby pending hierarchy pages from their octree bounds.
 - `CopcSource` point sample caching by node key and sample count, with bounded LRU sample-set and estimated decoded-byte limits.
-- `CopcPointCloudLayer.selectNodesForCamera` first culls requested-depth hierarchy node bounds with the Cesium camera frustum, then `selectHierarchyNodesForCamera` applies per-depth nearest-node screen-size estimates, COPC spacing-derived point spacing screen estimates, broad view-direction fallback culling, optional coverage-oriented node ordering, optional progressive coverage/detail mixing, and optional point-count and point-data byte budgets.
+- Point-sample and integrated geometry workers use source-aware, worker-global
+  decoded-view LRU ledgers. A layer-wide optional byte ceiling is divided across
+  both active worker pools, oversized decoded views are used without retention,
+  and cache snapshots keep main-thread affinity and telemetry synchronized with
+  worker evictions.
+- `CopcPointCloudLayer.selectNodesForCamera` first culls requested-depth
+  hierarchy node bounds with the Cesium camera frustum, then
+  `selectHierarchyNodesForCamera` uses the viewport-center COPC target for node
+  priority and the separate camera-eye COPC position for per-depth projected
+  size and spacing estimates. It then applies broad view-direction fallback
+  culling, coverage-oriented ordering, and optional point-count and point-data
+  byte budgets. Coverage selection defaults to the deepest complete same-depth
+  set that fits; mixed-depth progressive selection remains an explicit
+  preview-oriented option.
+- Camera-stream LOD uses camera height above the highest transformed top corner
+  of the loaded COPC bounds, not raw ellipsoid altitude. This keeps the same
+  near/close/overview policy meaningful for both sea-level and high-elevation
+  datasets, including vertical-unit conversion. Pre-load and custom adapter
+  paths keep an absolute-height fallback.
 - `CopcPointCloudLayer.expandHierarchyForCamera` for camera-targeted hierarchy expansion.
 - `CopcPointCloudLayer.renderAutomatic` for selecting and rendering nodes in one call.
 - `CopcPointCloudLayer.selectNodesForCamera` for selecting nodes without immediately rendering.
 - `CopcPointCloudLayer.prepareNodes` for warming selected node data and worker-prepared geometry caches without changing the currently rendered Cesium primitives.
 - Transfer-only retained node results from integrated geometry workers are treated as cache references. If the matching prepared geometry batch has been evicted, the layer falls back to reloading that node instead of trying to render an empty payload.
 - Multi-node render budgets via `maxRenderedPointCount`, which cap total sampled points submitted to Cesium across selected nodes.
+- `progressivePointResultBudget` isolates foreground-first fair allocation and
+  object/typed/geometry payload limiting from the stateful layer. Its tests
+  preserve every typed channel, including Classification and Intensity, when a
+  progressive result is truncated to the current render budget.
 - Optional `pointSampleLoading: "worker"` support that moves COPC point-data reads and LAZ decoding into a Web Worker, with main-thread fallback when a worker cannot be created.
 - A small `maxConcurrentPointSampleWorkerRequests` queue so worker-backed point sampling applies request backpressure before dispatch.
 - `AbortSignal` support for point-sample loading and Cesium render calls so stale camera-stream worker requests can be canceled and late worker responses ignored.
-- Progressive camera-stream renders can stop through a `shouldStopAfterProgress` policy once the current view has enough detail. By default the layer aborts remaining node loads for that render pass, but camera streams can opt into `continueLoadingAfterStop` so the foreground response is considered complete while already queued same-view detail continues filling worker and geometry caches. `postStopProgressMode: "load-only"` lets that tail work warm caches without forcing an additional Cesium scene submission during the same camera update.
+- `CopcPointCloudLayer.getRendererRevision()` exposes a monotonic revision that
+  advances after every successful point-renderer mutation. Application-level
+  orchestration can combine it with exact node/density/budget checks to prove
+  that a previously committed frame is still resident before skipping an
+  equivalent geometry submission.
+- Progressive renders expose `shouldStopAfterProgress` as a low-level policy
+  hook. With `continueLoadingAfterStop`, `postStopLoadingMode: "await"`, and
+  `postStopProgressMode: "render"`, that hook marks interactive readiness while
+  the bounded request windows continue and the layer commits one complete final
+  render. `"background"` plus `"load-only"` remains available for cache-only,
+  explicitly non-terminal workflows.
 - A `CopcPointCloudRenderer` interface with `CesiumPrimitivePointRenderer` as the default typed-array Cesium `Primitive` implementation, plus `CesiumPointPrimitiveRenderer` as the stable `PointPrimitiveCollection` fallback and `CesiumBufferPointRenderer` as an experimental `BufferPointCollection` comparison backend. `CesiumPointRenderer` remains as a compatibility alias.
+- The package peer floor is CesiumJS 1.140.0 because that is where the
+  statically exported experimental `BufferPointCollection` API first exists;
+  the package-consumer smoke pins that lower bound so the declared range is
+  executable rather than aspirational.
 - `renderStats` on Cesium layer render results for CPU-side coordinate transform timing, renderer submission timing, bounds submission timing, rendered point count, estimated coordinate/color payload bytes, aggregate worker timing, and slowest per-node worker timing records.
 - Example quality presets for changing `maxPointCountPerNode`, Auto LOD coverage budget, camera-stream point budget, and renderer point size together, plus manual controls for renderer benchmark runs.
 - Example controls for changing the camera-stream point budget independently from the initial node sample budget.
 - `benchmark:smoothness` for moving the Cesium camera while camera streaming is enabled and recording browser frame intervals plus selected depth, current-view node coverage, hierarchy expansion, hierarchy UI application, node selection, point rendering, and total stream-update timing across multiple samples and stream point budgets.
-- `CopcPointCloudCameraStream` as a reusable high-level Cesium camera binding with debouncing, stale-request cancellation, height-based LOD budgets, hierarchy expansion, and progressive current-view rendering.
-- The basic viewer layers custom preview, retained-node reuse, completion, and predictive-prefetch policies on the lower-level camera-stream helpers. Its initial Auto LOD path also applies quality-specific hierarchy expansion, per-node point-count and compressed point-data caps, starts with a lightweight preview, and starts background camera prefetch after its detail pass succeeds, so the first zoom or pan after load can reuse prepared current-view geometry.
+- `CopcPointCloudCameraStream` as a reusable high-level Cesium camera binding
+  with debouncing, stale-request cancellation, height-based LOD budgets,
+  hierarchy expansion, complete-depth coverage selection, and additive ancestor
+  inclusion by default.
+- An internal, headless `CopcCameraStreamEngine` boundary that prepares one
+  camera snapshot by expanding hierarchy pages, selecting the frontier, and
+  creating its additive render plan and source-point weights before invoking
+  `runCopcCameraStreamTerminalRender()`. The public camera binding owns Cesium
+  event lifecycle and compatibility fallback; the engine owns neither DOM state
+  nor example-specific scheduling and is not exported from the package barrel.
+- The basic viewer layers a quick preview, retained-node reuse, interactive
+  readiness, exact terminal composition, and predictive-prefetch policies on
+  the same render-plan, source-weight, visual-quality, and terminal-executor
+  primitives used by the internal engine. Its DOM status, retained-request,
+  adaptive-budget, and predictive-prefetch policies stay application-owned.
+  Its initial Auto LOD path also applies quality-specific hierarchy expansion
+  and per-node point-count and compressed point-data caps, then starts
+  background prefetch after visible work succeeds.
+  Before each new render-capable request it aborts all superseded render
+  requests, because late progress from an older request could otherwise mutate
+  the shared renderer even when publication is rejected. Load-only prefetch is
+  the only overlap allowed to survive. An exact committed terminal frame can be
+  retained when its layer, renderer revision, node set, density, and budgets all
+  still match. Retained-frame predictive prefetch is skipped during active
+  movement and delayed by at least 350 ms after movement settles.
 
-The current streaming behavior still limits the number of hierarchy pages opened per camera update, but default node selection now prioritizes filling the visible COPC footprint over selecting only the closest nodes.
+The current streaming behavior still limits the number of hierarchy pages
+opened per camera refinement, but spends that budget across hierarchy levels
+revealed by the same camera target before reselecting its frontier. Default node
+selection prioritizes a uniform complete-depth frontier. Preview and
+`interactive-ready` states may be partial; only an exact, stale-free additive
+composition with no remaining relevant hierarchy page is terminal.
 
 ## Coordinate Transforms
 
@@ -104,17 +180,96 @@ Camera-based selection requires both directions:
 
 ## Current Limitations
 
-- Hierarchy page expansion and node selection are camera-targeted; node selection now supports nearest-node ordering, complete-depth coverage, and progressive coverage/detail mixing, but the screen-space error estimate is not yet calibrated against point-density metrics.
+- Hierarchy page expansion and node selection are camera-targeted. Complete-depth
+  coverage is the high-level default; nearest-node ordering and mixed-depth
+  progressive coverage remain available to low-level callers. The screen-space
+  error estimate is not yet calibrated against point-density metrics.
 - Hierarchy page eviction is page-count and byte-limit based, and deliberately keeps the root hierarchy page loaded even if the root page alone exceeds the configured byte limit.
 - Point rendering defaults to a typed-array Cesium `Primitive`. Worker-prepared geometry batches are submitted as stable per-node primitives by default so progressive camera updates do not rebuild earlier completed nodes. The main-thread point-sample fallback still performs coordinate conversion on the main thread, and the typed-array primitive path still relies on Cesium primitive creation rather than a reusable low-level draw-command buffer.
-- The point renderer boundary has three backends. The typed-array primitive backend reduces per-point Cesium object submission and is covered by repeatable Autzen and 364-million-point SoFi source benchmarks, but broader device, browser, CRS, and dataset diversity is still required before a 1.0 stability claim.
+- COPC decode and worker transfer boundaries preserve RGB, Classification, and
+  Intensity. Both typed and object renderers share an allocation-free color
+  policy: RGB, known ASPRS class color, intensity for unclassified/unknown
+  points, neutral gray, then cyan only when no usable attribute exists.
+- The point renderer boundary has three backends. The typed-array primitive backend reduces per-point Cesium object submission and is covered by repeatable Autzen and 374-million-point USGS 3DEP Millsite source benchmarks, but broader device, browser, CRS, and dataset diversity is still required before a 1.0 stability claim.
 - Renderer timing currently measures browser CPU-side submission work. The smoothness benchmark measures browser frame intervals and stream-stage timing during camera movement, but it is still not a full GPU profiler.
 - Renderer payload bytes are an estimated coordinate/color payload size, not full JavaScript heap or GPU memory usage.
 - Point sample cache byte usage is estimated from decoded sample fields, not from JavaScript object heap size.
+- Point geometry cache bytes are measured from distinct retained typed-array
+  backing buffers. Loaded and transformed entries share one ref-counted ledger,
+  so aliases are not double-counted; the basic viewer enforces a 384 MiB
+  per-layer hard cap in addition to entry-count limits.
 - Worker loading currently targets point data and worker-prepared Cesium geometry; hierarchy metadata selection remains on the main thread.
 - Worker cancellation is request-level for queued work and configurable for active integrated COPC geometry work. The default `"soft"` mode preserves a worker and ignores stale responses after the in-flight decode finishes; `"terminate-uncached"` terminates only active workers that have not retained decoded node data, while soft-canceling cache-owning workers so repeated zoom/pan work can reuse decompressed COPC nodes; `"terminate"` always stops the active worker so newer current-view work can start sooner, at the cost of dropping that worker's decoded cache. Queued integrated geometry requests can also carry a `requestPriority`, which the basic viewer uses to keep current-view camera work ahead of background prefetch and retained stale work. Integrated geometry queue dispatch is microtask-batched, so same-tick current-view detail requests can outrank lower-priority warmup requests before either one occupies an idle worker. The pool coalesces identical in-flight integrated geometry requests before they reach a worker, preserving per-caller abort handling while avoiding duplicate decode and geometry work for the same node/sample/transform request. Compatible same-node requests can also share a denser in-flight geometry task; queued lower-density work is upgraded when denser current-view detail arrives before dispatch, and lower-density callers receive a downsampled result.
-- Point-sample workers and integrated COPC geometry workers keep an LRU cache of decoded point-data views. Both worker pools prefer the worker that already owns a decoded view when possible, while allowing unrelated queued nodes to continue dispatching in parallel. Integrated geometry requests use `decodedNodeWorkerFallbackDelayMilliseconds` to choose between current-view latency and strict decoded-cache affinity when that preferred worker is busy with another node; the low-level pool default keeps strict affinity, while `createCopcWorkerPoolSettings()` returns a 120 ms fallback delay for the browser demo after benchmarked immediate fallback increased duplicate decompression. Duplicate active same-node requests still coalesce/wait instead of decompressing the same node twice. Both queued paths honor `requestPriority`, so current-view point reads stay ahead of retained background or warmup work even when the Cesium layer is using the non-integrated sample path. They also coalesce compatible queued same-node density upgrades where a denser request can serve lower-density callers with a downsampled result, and that upgrade is priority-aware so lower-priority dense work cannot delay a higher-priority quick current-view fill. The default decoded-view cache limit is conservative, while applications can raise `maxDecodedPointDataViewsPerWorker` and `maxDecodedPointDataViewBytesPerWorker` when repeated zoom/pan responsiveness is more important than memory. Worker pool sizing is deliberately interactive-first for browser responsiveness: `createCopcWorkerPoolSettings()` keeps browser-derived point-sample concurrency capped at six workers and integrated COPC geometry concurrency capped at eight workers while reserving browser capacity for Cesium rendering. This avoids saturating high-core machines with LAZ decompression when the current view needs a fast visible refinement instead of maximum background throughput.
-- Camera streaming is bounded and regression-tested; it prefetches hierarchy pages in the background, progressively prepares likely next-view COPC geometry without changing the rendered scene, selects a bounded progressive coverage/detail set for the current view, and applies configurable render-point budgets. The basic viewer invalidates stale camera renders immediately, then keeps overlapping previous node-family work alive for only a bounded grace period so near-finished work can populate caches without letting the previous view occupy worker slots for several seconds. Unrelated stale work is aborted immediately. Background prefetch retains completed node results as they arrive, so partial idle work can still help the next zoom or pan. Progressive prepare jobs can also keep only a bounded active request window, so cache warming does not enqueue every missing node ahead of a newer current-view request. Initial Auto LOD success also seeds that same prefetch path, and camera streaming queues low-priority predictive prefetch after visible coverage is available. Auto LOD and camera streaming both cap per-node point count and compressed point-data length so one unusually large COPC node is skipped in favor of cheaper visible coverage before a later denser pass can consider it. Camera-stream LOD profiles reduce per-node source caps as the camera gets closer, while keeping the total source and rendered-point budgets high enough for dense current-view refinement. Final-detail planning also carries a separate LOD-specific per-node sample cap, so close zooms can distribute dense samples across the visible node set without one large node taking the whole foreground budget. Preview planning prefers shallow coverage nodes only while they fit the preview byte budget; otherwise it falls back to distributed current-view detail nodes so close zooms do not block on one oversized parent node before detail starts. Close/near detail completion can finish before every target-depth node arrives because the coverage preview remains underneath the detail layer, but the same current-view node coverage threshold is applied even when retained samples or cache hits have already filled most of the point budget. Slow same-view tail nodes continue as cache/detail refinement after the foreground status is published, but are still canceled when the parent camera request is invalidated. Progressive rendering can display lower-density retained results for the same target nodes before replacing them with denser worker results, and can run a bounded lower-priority warmup for current-view detail nodes so worker-local decoded point-data views are reused. Foreground final-detail rendering keeps only a runtime-configured bounded window of missing nodes active, capped by the integrated geometry worker count, so not-yet-started tail nodes do not occupy worker queues after a later camera move invalidates the view. Capped preview, warmup, and background prefetch subsets are selected across the full ordered node range instead of from the first contiguous prefix, and render point budgets are spread across currently renderable current-view nodes before remaining points go to background coverage. Background prefetch uses the camera-selected source point counts as node weights, so its progressive coverage order warms visually important nodes before tiny tail nodes. The final-detail pass uses the camera-stream selection order by default so active worker windows stay spatially distributed; applications can still opt into source-point-heavy request order for explicit density-first refinement. Defaults remain subject to calibration on additional devices and COPC distributions.
+- Point-sample workers and integrated COPC geometry workers keep a source-aware
+  LRU cache of decoded point-data views. Both worker pools prefer the worker
+  that already owns a decoded view when possible, while allowing unrelated
+  queued nodes to continue dispatching in parallel. Integrated geometry
+  requests use `decodedNodeWorkerFallbackDelayMilliseconds` to choose between
+  current-view latency and strict decoded-cache affinity when that preferred
+  worker is busy with another node; the low-level pool default keeps strict
+  affinity, while `createCopcWorkerPoolSettings()` returns a 120 ms fallback
+  delay for the browser demo after benchmarked immediate fallback increased
+  duplicate decompression. Duplicate active same-node requests still
+  coalesce/wait instead of decompressing the same node twice. Both queued paths
+  honor `requestPriority`, so current-view point reads stay ahead of retained
+  background or warmup work even when the Cesium layer is using the
+  non-integrated sample path. They also coalesce compatible queued same-node
+  density upgrades where a denser request can serve lower-density callers with
+  a downsampled result, and that upgrade is priority-aware so lower-priority
+  dense work cannot delay a higher-priority quick current-view fill. The
+  default per-worker decoded-view limit is conservative; applications can add
+  `maxDecodedPointDataViewBytesAcrossWorkers` to guarantee a layer-wide
+  retained-byte envelope even as worker concurrency changes. Worker pool sizing
+  is deliberately interactive-first for browser responsiveness:
+  `createCopcWorkerPoolSettings()` keeps browser-derived point-sample
+  concurrency capped at six workers and integrated COPC geometry concurrency
+  capped at eight workers while reserving browser capacity for Cesium
+  rendering. This avoids saturating high-core machines with LAZ decompression
+  when the current view needs a fast visible refinement instead of maximum
+  background throughput.
+- Camera streaming is bounded and regression-tested. The default terminal plan
+  keeps the complete-depth frontier intact, expands it to the available additive
+  ancestor closure, orders that closure coarse-to-fine, and distributes the
+  render budget across the whole required set. Progressive final-node count and
+  per-node caps remain available for explicit preview policies but do not
+  truncate a default complete-depth terminal plan.
+- Camera-stream LOD budgets are monotonic from overview to near zoom. Aggregate
+  source and compressed-byte budgets can rise with refinement, while an
+  individual-node limit is never reduced merely because the camera moved
+  closer. This prevents one dense node from rejecting an entire complete-depth
+  frontier. The reference viewer also lowers Cesium's camera-change threshold
+  and keeps hierarchy expansion off the foreground response path. After that
+  fast response owns its terminal composition, background expansion warms the
+  hierarchy and geometry caches and queues a bounded same-camera refinement if
+  the newly available node set changes. A camera-epoch signature guard prevents
+  eviction cycles or no-progress residual pages from spinning indefinitely.
+- The basic viewer can publish preview and `interactive-ready` progress while a
+  bounded active request window advances. Reaching that threshold does not end
+  terminal work: remaining windows are scheduled, post-stop progress is
+  rendered, and the previous preview/background layer is removed only in the
+  complete final commit. The reusable
+  `runCopcCameraStreamTerminalRender()` executor owns this bounded terminal pass
+  and independently verifies the returned final result; request identity,
+  hierarchy expansion, prefetch, and follow-up scheduling remain caller-owned.
+  The internal camera-stream engine supplies that executor with the shared
+  camera selection, additive render plan, and source-point weights, while the
+  basic viewer composes the same primitives with its application-only preview
+  and retained-background policies.
+  `createCopcCameraStreamVisualQualityState()` rejects a
+  frontier with ancestor overlaps, a missing frontier or ancestor node, and any
+  stale or unexpected rendered node. The high-level engine also demotes an
+  otherwise exact render while a relevant current-view hierarchy page remains
+  unopened, then performs bounded same-camera follow-up refinement.
+- Background hierarchy expansion, warmup, and predictive geometry prefetch
+  remain cache-only optimizations. The viewer prioritizes current-view requests,
+  aborts unrelated stale work, and retains only bounded overlapping work for a
+  short grace period. Render-capable superseded work is never retained; the
+  grace period applies only to load-only overlap. Predictive prefetch after an
+  exact retained render is suppressed during active movement and delayed by at
+  least 350 ms after it stops. Cached payload downsampling is deterministic across the
+  full source range, so reducing density does not reuse only a spatially biased
+  prefix. These policies remain subject to calibration on more devices and COPC
+  distributions.
 - WKT-backed CRS handling does not download datum grid files. Sources that require external grids or contain unsupported/malformed WKT should pass an explicit application-provided transform.
 
 ## Near-Term Roadmap

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CesiumCopcPointGeometryWorkerPool } from "./CesiumCopcPointGeometryWorkerPool";
+import type { CopcDecodedPointDataCacheSnapshot } from "../core/copc/CopcDecodedPointDataCache";
 import type {
   CesiumCopcPointGeometryWorkerRequest,
   CesiumCopcPointGeometryWorkerResponse,
@@ -667,6 +668,32 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
     await expect(pool.waitForWarmup()).resolves.toBeUndefined();
   });
 
+  it("does not leave waiters blocked when a worker crashes during warmup", async () => {
+    const workers: RecordingWorker[] = [];
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      createCopcPointGeometryWorker: () => {
+        const worker = new RecordingWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+    });
+
+    pool.warmUp({
+      workerCount: 1,
+      source: {
+        key: "url:https://example.com/a.copc.laz",
+        input: "https://example.com/a.copc.laz",
+      },
+    });
+
+    workers[0].dispatchError(new Error("worker crashed during warmup"));
+
+    await expect(pool.waitForWarmup()).resolves.toBeUndefined();
+    expect(workers[0].terminated).toBe(true);
+  });
+
   it("resets active and queued geometry requests without destroying the pool", async () => {
     const workers: RecordingWorker[] = [];
     const pool = new CesiumCopcPointGeometryWorkerPool({
@@ -828,6 +855,7 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
       pointGeometryLoading: "integrated-worker",
       maxDecodedPointDataViewsPerWorker: 96,
       maxDecodedPointDataViewBytesPerWorker: 256 * 1024 * 1024,
+      maxDecodedPointDataViewBytesAcrossWorkers: 64 * 1024 * 1024,
       createCopcPointGeometryWorker: () => {
         const worker = new RecordingWorker();
         workers.push(worker);
@@ -852,7 +880,7 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
     expect(workers[0]?.messages[0]).toMatchObject({
       type: "loadNodePointGeometry",
       maxDecodedPointDataViews: 96,
-      maxDecodedPointDataViewBytes: 256 * 1024 * 1024,
+      maxDecodedPointDataViewBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -873,6 +901,321 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
         }),
     ).toThrow(
       "maxDecodedPointDataViewBytesPerWorker must be a positive integer.",
+    );
+
+    expect(
+      () =>
+        new CesiumCopcPointGeometryWorkerPool({
+          pointGeometryLoading: "integrated-worker",
+          maxDecodedPointDataViewBytesAcrossWorkers: 0,
+        }),
+    ).toThrow(
+      "maxDecodedPointDataViewBytesAcrossWorkers must be a positive integer.",
+    );
+  });
+
+  it("synchronizes source-aware decoded affinity and cache stats from worker snapshots", async () => {
+    const worker = new RecordingWorker();
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      maxDecodedPointDataViewBytesAcrossWorkers: 4_000,
+      createCopcPointGeometryWorker: () => worker as unknown as Worker,
+    });
+    const firstSource = "https://example.com/first.copc.laz";
+    const secondSource = "https://example.com/second.copc.laz";
+    const firstResult = pool.loadNodePointGeometryBatch({
+      url: firstSource,
+      nodeKey: "1-0-0-0",
+      node: createWorkerNode(),
+      maxPointCount: 5,
+      transform: { kind: "geographic", heightScaleToMeters: 1 },
+    });
+
+    if (!firstResult) {
+      throw new Error("Expected first worker-backed geometry result.");
+    }
+    await waitForScheduledQueueDrain();
+    expect(pool.hasDecodedNodePointData({
+      url: firstSource,
+      nodeKey: "1-0-0-0",
+    })).toBe(false);
+    worker.dispatchMessage({
+      id: 1,
+      type: "loadNodePointGeometry:success",
+      result: createWorkerResult("1-0-0-0"),
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 1_600,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 1,
+        requestedNodeRetained: true,
+      }),
+    });
+    await firstResult;
+    expect(pool.hasDecodedNodePointData({
+      url: firstSource,
+      nodeKey: "1-0-0-0",
+    })).toBe(true);
+
+    const secondResult = pool.prefetchNodePointData({
+      url: secondSource,
+      nodeKey: "1-0-0-0",
+      node: createWorkerNode(),
+    });
+    if (!secondResult) {
+      throw new Error("Expected second worker-backed prefetch result.");
+    }
+    await waitForScheduledQueueDrain();
+    worker.dispatchMessage({
+      id: 2,
+      type: "prefetchNodePointData:success",
+      result: { nodeKey: "1-0-0-0" },
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: true,
+        evictedNodeKeys: [
+          {
+            sourceKey: `url:${firstSource}`,
+            nodeKey: "1-0-0-0",
+          },
+        ],
+      }),
+    });
+    await secondResult;
+
+    expect(pool.hasDecodedNodePointData({
+      url: firstSource,
+      nodeKey: "1-0-0-0",
+    })).toBe(false);
+    expect(pool.hasDecodedNodePointData({
+      url: secondSource,
+      nodeKey: "1-0-0-0",
+    })).toBe(true);
+    expect(pool.getDecodedPointDataCacheStats()).toEqual({
+      workerCount: 1,
+      retainedViewCount: 1,
+      retainedBytes: 800,
+      peakRetainedBytes: 1_600,
+      cacheHitCount: 0,
+      cacheMissCount: 2,
+      cacheEvictionCount: 1,
+      oversizedEntrySkipCount: 0,
+      affinityEntryCount: 1,
+      maxDecodedPointDataViewBytesPerWorker: 4_000,
+      maxDecodedPointDataViewBytesAcrossWorkers: 4_000,
+    });
+  });
+
+  it("does not create decoded affinity for an oversized unretained response", async () => {
+    const worker = new RecordingWorker();
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      createCopcPointGeometryWorker: () => worker as unknown as Worker,
+    });
+    const result = pool.prefetchNodePointData({
+      url: "https://example.com/a.copc.laz",
+      nodeKey: "0-0-0-0",
+      node: createWorkerNode(),
+    });
+    if (!result) {
+      throw new Error("Expected worker-backed prefetch result.");
+    }
+    await waitForScheduledQueueDrain();
+    worker.dispatchMessage({
+      id: 1,
+      type: "prefetchNodePointData:success",
+      result: { nodeKey: "0-0-0-0" },
+      cache: createDecodedPointDataCacheSnapshot({
+        cacheMissCount: 1,
+        oversizedEntrySkipCount: 1,
+        requestedNodeRetained: false,
+      }),
+    });
+    await result;
+
+    expect(pool.hasDecodedNodePointData({
+      url: "https://example.com/a.copc.laz",
+      nodeKey: "0-0-0-0",
+    })).toBe(false);
+    expect(pool.getDecodedPointDataCacheStats()).toEqual(
+      expect.objectContaining({
+        retainedViewCount: 0,
+        oversizedEntrySkipCount: 1,
+        affinityEntryCount: 0,
+      }),
+    );
+  });
+
+  it("applies error snapshots without creating affinity for the failed request", async () => {
+    const worker = new RecordingWorker();
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      createCopcPointGeometryWorker: () => worker as unknown as Worker,
+    });
+    const sourceUrl = "https://example.com/a.copc.laz";
+    const firstResult = pool.prefetchNodePointData({
+      url: sourceUrl,
+      nodeKey: "0-0-0-0",
+      node: createWorkerNode(),
+    });
+    if (!firstResult) {
+      throw new Error("Expected first worker-backed prefetch result.");
+    }
+    await waitForScheduledQueueDrain();
+    worker.dispatchMessage({
+      id: 1,
+      type: "prefetchNodePointData:success",
+      result: { nodeKey: "0-0-0-0" },
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 1_600,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 1,
+        requestedNodeRetained: true,
+      }),
+    });
+    await firstResult;
+
+    const failedResult = pool.loadNodePointGeometryBatch({
+      url: sourceUrl,
+      nodeKey: "1-0-0-0",
+      node: createWorkerNode(),
+      maxPointCount: 5,
+      transform: { kind: "geographic", heightScaleToMeters: 1 },
+    });
+    if (!failedResult) {
+      throw new Error("Expected failed worker-backed geometry result.");
+    }
+    await waitForScheduledQueueDrain();
+    worker.dispatchMessage({
+      id: 2,
+      type: "loadNodePointGeometry:error",
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: true,
+        evictedNodeKeys: [
+          {
+            sourceKey: `url:${sourceUrl}`,
+            nodeKey: "0-0-0-0",
+          },
+        ],
+      }),
+      error: { message: "geometry failed" },
+    });
+    await expect(failedResult).rejects.toThrow("geometry failed");
+
+    expect(pool.hasDecodedNodePointData({
+      url: sourceUrl,
+      nodeKey: "0-0-0-0",
+    })).toBe(false);
+    expect(pool.hasDecodedNodePointData({
+      url: sourceUrl,
+      nodeKey: "1-0-0-0",
+    })).toBe(false);
+    expect(pool.getDecodedPointDataCacheStats()).toEqual(
+      expect.objectContaining({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        affinityEntryCount: 0,
+      }),
+    );
+  });
+
+  it("applies soft-cancel snapshots and retains affinity for decoded data", async () => {
+    const worker = new RecordingWorker();
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      createCopcPointGeometryWorker: () => worker as unknown as Worker,
+    });
+    const sourceUrl = "https://example.com/a.copc.laz";
+    const firstResult = pool.prefetchNodePointData({
+      url: sourceUrl,
+      nodeKey: "0-0-0-0",
+      node: createWorkerNode(),
+    });
+    if (!firstResult) {
+      throw new Error("Expected first worker-backed prefetch result.");
+    }
+    await waitForScheduledQueueDrain();
+    worker.dispatchMessage({
+      id: 1,
+      type: "prefetchNodePointData:success",
+      result: { nodeKey: "0-0-0-0" },
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 1_600,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 1,
+        requestedNodeRetained: true,
+      }),
+    });
+    await firstResult;
+
+    const abortController = new AbortController();
+    const canceledResult = pool.prefetchNodePointData({
+      url: sourceUrl,
+      nodeKey: "1-0-0-0",
+      node: createWorkerNode(),
+      signal: abortController.signal,
+    });
+    if (!canceledResult) {
+      throw new Error("Expected canceled worker-backed prefetch result.");
+    }
+    await waitForScheduledQueueDrain();
+    const rejects = expect(canceledResult).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    abortController.abort();
+    await rejects;
+    worker.dispatchMessage({
+      id: 2,
+      type: "prefetchNodePointData:canceled",
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: true,
+        evictedNodeKeys: [
+          {
+            sourceKey: `url:${sourceUrl}`,
+            nodeKey: "0-0-0-0",
+          },
+        ],
+      }),
+    });
+
+    expect(pool.hasDecodedNodePointData({
+      url: sourceUrl,
+      nodeKey: "0-0-0-0",
+    })).toBe(false);
+    expect(pool.hasDecodedNodePointData({
+      url: sourceUrl,
+      nodeKey: "1-0-0-0",
+    })).toBe(true);
+    expect(pool.getDecodedPointDataCacheStats()).toEqual(
+      expect.objectContaining({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        affinityEntryCount: 1,
+      }),
     );
   });
 
@@ -2362,12 +2705,20 @@ class RecordingWorker {
   terminated = false;
   private readonly listeners = new Map<
     string,
-    Array<(event: { readonly data: CesiumCopcPointGeometryWorkerResponse }) => void>
+    Array<
+      (event: {
+        readonly data?: CesiumCopcPointGeometryWorkerResponse;
+        readonly error?: unknown;
+      }) => void
+    >
   >();
 
   addEventListener(
     type: string,
-    listener: (event: { readonly data: CesiumCopcPointGeometryWorkerResponse }) => void,
+    listener: (event: {
+      readonly data?: CesiumCopcPointGeometryWorkerResponse;
+      readonly error?: unknown;
+    }) => void,
   ): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
@@ -2383,6 +2734,12 @@ class RecordingWorker {
   dispatchMessage(response: CesiumCopcPointGeometryWorkerResponse): void {
     this.listeners.get("message")?.forEach((listener) => {
       listener({ data: response });
+    });
+  }
+
+  dispatchError(error: Error): void {
+    this.listeners.get("error")?.forEach((listener) => {
+      listener({ error });
     });
   }
 }
@@ -2429,6 +2786,23 @@ function createWorkerResult(
       positions,
       colors,
     },
+  };
+}
+
+function createDecodedPointDataCacheSnapshot(
+  overrides: Partial<CopcDecodedPointDataCacheSnapshot> = {},
+): CopcDecodedPointDataCacheSnapshot {
+  return {
+    retainedViewCount: 0,
+    retainedBytes: 0,
+    peakRetainedBytes: 0,
+    cacheHitCount: 0,
+    cacheMissCount: 0,
+    cacheEvictionCount: 0,
+    oversizedEntrySkipCount: 0,
+    requestedNodeRetained: false,
+    evictedNodeKeys: [],
+    ...overrides,
   };
 }
 

@@ -12,6 +12,10 @@ import {
   type CopcPointDataView,
 } from "../core/copc/loadCopcNodePointSamples";
 import type { CopcNodePointSampleResult } from "../core/copc/CopcPointDataSample";
+import type {
+  CopcDecodedPointDataCacheNodeKey,
+  CopcDecodedPointDataCacheSnapshot,
+} from "../core/copc/CopcDecodedPointDataCache";
 import type { PointGeometryBatch } from "./CopcPointCloudRenderer";
 import type {
   CesiumCopcPointGeometryWorkerLoadRequest,
@@ -25,13 +29,14 @@ import {
 } from "./pointGeometryBatch";
 
 interface WorkerCopcSource {
+  readonly sourceKey: string;
   readonly getter: Getter;
   readonly copc: Promise<CopcData>;
-  readonly decodedNodeViews: Map<string, WorkerDecodedNodeViewEntry>;
-  decodedNodeViewBytes: number;
 }
 
 interface WorkerDecodedNodeViewEntry {
+  readonly sourceKey: string;
+  readonly nodeKey: string;
   readonly view: Promise<CopcPointDataView>;
   readonly estimatedByteSize: number;
 }
@@ -39,6 +44,7 @@ interface WorkerDecodedNodeViewEntry {
 interface WorkerPointDataViewResult {
   readonly view: CopcPointDataView;
   readonly cacheHit: boolean;
+  readonly cache: CopcDecodedPointDataCacheSnapshot;
 }
 
 interface WorkerDecodedNodeViewCacheLimits {
@@ -50,7 +56,14 @@ const CANCELED_REQUEST_TTL_MS = 60_000;
 const DEFAULT_MAX_DECODED_NODE_VIEW_COUNT = 48;
 const DEFAULT_MAX_DECODED_NODE_VIEW_BYTES = 192 * 1024 * 1024;
 const copcSources = new Map<string, WorkerCopcSource>();
+const decodedNodeViews = new Map<string, WorkerDecodedNodeViewEntry>();
 const canceledRequestIds = new Set<number>();
+let decodedNodeViewBytes = 0;
+let peakDecodedNodeViewBytes = 0;
+let decodedNodeViewCacheHitCount = 0;
+let decodedNodeViewCacheMissCount = 0;
+let decodedNodeViewCacheEvictionCount = 0;
+let oversizedDecodedNodeViewSkipCount = 0;
 const workerScope = globalThis as unknown as {
   addEventListener(
     type: "message",
@@ -71,6 +84,8 @@ workerScope.addEventListener("message", (event) => {
 async function handleRequest(
   request: CesiumCopcPointGeometryWorkerRequest,
 ): Promise<void> {
+  let cacheSnapshot: CopcDecodedPointDataCacheSnapshot | undefined;
+
   try {
     if (request.type === "warmup") {
       await getSharedLazPerf();
@@ -93,19 +108,27 @@ async function handleRequest(
     }
 
     if (isRequestCanceled(request.id)) {
-      postCanceledResponse(request);
+      postCanceledResponse(request, cacheSnapshot);
       return;
     }
 
     if (request.type === "prefetchNodePointData") {
-      await handlePrefetchNodePointDataRequest(request);
+      await handlePrefetchNodePointDataRequest(request, (snapshot) => {
+        cacheSnapshot = snapshot;
+      });
       return;
     }
 
     const workerStartedAt = nowMilliseconds();
     const source = getWorkerCopcSource(readWorkerRequestSource(request));
     const pointDataViewStartedAt = nowMilliseconds();
-    const pointDataView = await loadWorkerPointDataView(source, request);
+    const pointDataView = await loadWorkerPointDataView(
+      source,
+      request,
+      (snapshot) => {
+        cacheSnapshot = snapshot;
+      },
+    );
     const pointDataViewEndedAt = nowMilliseconds();
     const sampleStartedAt = nowMilliseconds();
     const pointSamplesWithData = sampleCopcPointDataView({
@@ -117,7 +140,7 @@ async function handleRequest(
     const sampleEndedAt = nowMilliseconds();
 
     if (isRequestCanceled(request.id)) {
-      postCanceledResponse(request);
+      postCanceledResponse(request, cacheSnapshot);
       return;
     }
 
@@ -135,7 +158,7 @@ async function handleRequest(
     const pointSamples = stripTransferOnlyPointData(pointSamplesWithData);
 
     if (isRequestCanceled(request.id)) {
-      postCanceledResponse(request);
+      postCanceledResponse(request, cacheSnapshot);
       return;
     }
 
@@ -163,6 +186,7 @@ async function handleRequest(
             ),
           },
         },
+        cache: pointDataView.cache,
       },
       getPointGeometryBatchTransferables(geometryBatch),
     );
@@ -181,7 +205,7 @@ async function handleRequest(
     }
 
     if (isRequestCanceled(request.id)) {
-      postCanceledResponse(request);
+      postCanceledResponse(request, cacheSnapshot);
       return;
     }
 
@@ -191,6 +215,7 @@ async function handleRequest(
         request.type === "prefetchNodePointData"
           ? "prefetchNodePointData:error"
           : "loadNodePointGeometry:error",
+      cache: cacheSnapshot,
       error: serializeError(error),
     });
   }
@@ -198,15 +223,20 @@ async function handleRequest(
 
 async function handlePrefetchNodePointDataRequest(
   request: CesiumCopcPointGeometryWorkerPrefetchRequest,
+  onCacheSnapshot: (snapshot: CopcDecodedPointDataCacheSnapshot) => void,
 ): Promise<void> {
   const workerStartedAt = nowMilliseconds();
   const source = getWorkerCopcSource(readWorkerRequestSource(request));
   const pointDataViewStartedAt = nowMilliseconds();
-  const pointDataView = await loadWorkerPointDataView(source, request);
+  const pointDataView = await loadWorkerPointDataView(
+    source,
+    request,
+    onCacheSnapshot,
+  );
   const pointDataViewEndedAt = nowMilliseconds();
 
   if (isRequestCanceled(request.id)) {
-    postCanceledResponse(request);
+    postCanceledResponse(request, pointDataView.cache);
     return;
   }
 
@@ -227,6 +257,7 @@ async function handlePrefetchNodePointDataRequest(
         ),
       },
     },
+    cache: pointDataView.cache,
   });
 }
 
@@ -244,6 +275,7 @@ function isRequestCanceled(id: number): boolean {
 function postCanceledResponse(
   request: CesiumCopcPointGeometryWorkerLoadRequest |
     CesiumCopcPointGeometryWorkerPrefetchRequest,
+  cache: CopcDecodedPointDataCacheSnapshot | undefined,
 ): void {
   canceledRequestIds.delete(request.id);
   workerScope.postMessage({
@@ -252,6 +284,7 @@ function postCanceledResponse(
       request.type === "prefetchNodePointData"
         ? "prefetchNodePointData:canceled"
         : "loadNodePointGeometry:canceled",
+    cache,
   });
 }
 
@@ -292,10 +325,9 @@ function getWorkerCopcSource(
   if (!source) {
     const getter = createCopcRangeGetter(descriptor.input);
     source = {
+      sourceKey: descriptor.key,
       getter,
       copc: Copc.create(getter),
-      decodedNodeViews: new Map(),
-      decodedNodeViewBytes: 0,
     };
     copcSources.set(descriptor.key, source);
   }
@@ -339,48 +371,98 @@ async function loadWorkerPointDataView(
   request:
     | CesiumCopcPointGeometryWorkerLoadRequest
     | CesiumCopcPointGeometryWorkerPrefetchRequest,
+  onCacheSnapshot: (snapshot: CopcDecodedPointDataCacheSnapshot) => void,
 ): Promise<WorkerPointDataViewResult> {
-  const cached = source.decodedNodeViews.get(request.nodeKey);
+  const cacheKey = createDecodedNodeViewKey(source.sourceKey, request.nodeKey);
+  const limits = readDecodedNodeViewCacheLimits(request);
+  const evictedNodeKeys: CopcDecodedPointDataCacheNodeKey[] = [];
+  let requestedEntry: WorkerDecodedNodeViewEntry | undefined;
 
-  if (cached) {
-    touchDecodedNodeView(source, request.nodeKey, cached);
-    return {
-      view: await cached.view,
-      cacheHit: true,
-    };
-  }
+  try {
+    const cached = decodedNodeViews.get(cacheKey);
 
-  const copc = await source.copc;
-  const estimatedByteSize =
-    request.node.pointCount * copc.header.pointDataRecordLength;
-  const view = loadCopcNodePointDataView({
-    getter: source.getter,
-    copc,
-    node: request.node,
-  }).catch((error: unknown) => {
-    const existing = source.decodedNodeViews.get(request.nodeKey);
-
-    if (existing?.view === view) {
-      deleteDecodedNodeView(source, request.nodeKey, existing);
+    if (cached) {
+      if (!canRetainDecodedNodeView(cached.estimatedByteSize, limits)) {
+        deleteDecodedNodeView(cacheKey, cached, true, evictedNodeKeys);
+      } else {
+        requestedEntry = cached;
+        decodedNodeViewCacheHitCount += 1;
+        touchDecodedNodeView(cacheKey, cached);
+        evictDecodedNodeViewsToLimits(limits, evictedNodeKeys);
+        const view = await cached.view;
+        const cache = createDecodedNodeViewCacheSnapshot(
+          cacheKey,
+          cached,
+          evictedNodeKeys,
+        );
+        onCacheSnapshot(cache);
+        return {
+          view,
+          cacheHit: true,
+          cache,
+        };
+      }
     }
 
-    throw error;
-  });
-  const entry = {
-    view,
-    estimatedByteSize,
-  };
+    decodedNodeViewCacheMissCount += 1;
+    const copc = await source.copc;
+    const estimatedByteSize =
+      request.node.pointCount * copc.header.pointDataRecordLength;
+    const view = loadCopcNodePointDataView({
+      getter: source.getter,
+      copc,
+      node: request.node,
+    }).catch((error: unknown) => {
+      const existing = decodedNodeViews.get(cacheKey);
 
-  source.decodedNodeViews.set(request.nodeKey, entry);
-  source.decodedNodeViewBytes += estimatedByteSize;
-  evictDecodedNodeViewsIfNeeded(
-    source,
-    readDecodedNodeViewCacheLimits(request),
-  );
-  return {
-    view: await view,
-    cacheHit: false,
-  };
+      if (existing?.view === view) {
+        deleteDecodedNodeView(cacheKey, existing, false);
+      }
+
+      throw error;
+    });
+    const entry = {
+      sourceKey: source.sourceKey,
+      nodeKey: request.nodeKey,
+      view,
+      estimatedByteSize,
+    };
+    requestedEntry = entry;
+
+    if (canRetainDecodedNodeView(estimatedByteSize, limits)) {
+      evictDecodedNodeViewsToFit(entry, limits, evictedNodeKeys);
+      decodedNodeViews.set(cacheKey, entry);
+      decodedNodeViewBytes += estimatedByteSize;
+      peakDecodedNodeViewBytes = Math.max(
+        peakDecodedNodeViewBytes,
+        decodedNodeViewBytes,
+      );
+    } else {
+      oversizedDecodedNodeViewSkipCount += 1;
+    }
+
+    const loadedView = await view;
+    const cache = createDecodedNodeViewCacheSnapshot(
+      cacheKey,
+      entry,
+      evictedNodeKeys,
+    );
+    onCacheSnapshot(cache);
+    return {
+      view: loadedView,
+      cacheHit: false,
+      cache,
+    };
+  } catch (error) {
+    onCacheSnapshot(
+      createDecodedNodeViewCacheSnapshot(
+        cacheKey,
+        requestedEntry,
+        evictedNodeKeys,
+      ),
+    );
+    throw error;
+  }
 }
 
 function nowMilliseconds(): number {
@@ -388,12 +470,11 @@ function nowMilliseconds(): number {
 }
 
 function touchDecodedNodeView(
-  source: WorkerCopcSource,
-  nodeKey: string,
+  cacheKey: string,
   entry: WorkerDecodedNodeViewEntry,
 ): void {
-  source.decodedNodeViews.delete(nodeKey);
-  source.decodedNodeViews.set(nodeKey, entry);
+  decodedNodeViews.delete(cacheKey);
+  decodedNodeViews.set(cacheKey, entry);
 }
 
 function readDecodedNodeViewCacheLimits(
@@ -410,41 +491,120 @@ function readDecodedNodeViewCacheLimits(
   };
 }
 
-function evictDecodedNodeViewsIfNeeded(
-  source: WorkerCopcSource,
+function canRetainDecodedNodeView(
+  estimatedByteSize: number,
   limits: WorkerDecodedNodeViewCacheLimits,
+): boolean {
+  return (
+    limits.maxDecodedNodeViewCount > 0 &&
+    estimatedByteSize <= limits.maxDecodedNodeViewBytes
+  );
+}
+
+function evictDecodedNodeViewsToLimits(
+  limits: WorkerDecodedNodeViewCacheLimits,
+  evictedNodeKeys: CopcDecodedPointDataCacheNodeKey[],
 ): void {
   while (
-    source.decodedNodeViews.size > limits.maxDecodedNodeViewCount ||
-    source.decodedNodeViewBytes > limits.maxDecodedNodeViewBytes
+    decodedNodeViews.size > limits.maxDecodedNodeViewCount ||
+    decodedNodeViewBytes > limits.maxDecodedNodeViewBytes
   ) {
-    const oldestNodeKey = source.decodedNodeViews.keys().next().value;
-
-    if (!oldestNodeKey) {
+    if (!evictOldestDecodedNodeView(evictedNodeKeys)) {
       return;
     }
-
-    const oldestEntry = source.decodedNodeViews.get(oldestNodeKey);
-
-    if (!oldestEntry) {
-      source.decodedNodeViews.delete(oldestNodeKey);
-      continue;
-    }
-
-    deleteDecodedNodeView(source, oldestNodeKey, oldestEntry);
   }
 }
 
-function deleteDecodedNodeView(
-  source: WorkerCopcSource,
-  nodeKey: string,
+function evictDecodedNodeViewsToFit(
   entry: WorkerDecodedNodeViewEntry,
+  limits: WorkerDecodedNodeViewCacheLimits,
+  evictedNodeKeys: CopcDecodedPointDataCacheNodeKey[],
 ): void {
-  source.decodedNodeViews.delete(nodeKey);
-  source.decodedNodeViewBytes = Math.max(
-    0,
-    source.decodedNodeViewBytes - entry.estimatedByteSize,
+  while (
+    decodedNodeViews.size >= limits.maxDecodedNodeViewCount ||
+    decodedNodeViewBytes + entry.estimatedByteSize >
+      limits.maxDecodedNodeViewBytes
+  ) {
+    if (!evictOldestDecodedNodeView(evictedNodeKeys)) {
+      return;
+    }
+  }
+}
+
+function evictOldestDecodedNodeView(
+  evictedNodeKeys: CopcDecodedPointDataCacheNodeKey[],
+): boolean {
+  const oldestCacheKey = decodedNodeViews.keys().next().value;
+
+  if (!oldestCacheKey) {
+    return false;
+  }
+
+  const oldestEntry = decodedNodeViews.get(oldestCacheKey);
+
+  if (!oldestEntry) {
+    decodedNodeViews.delete(oldestCacheKey);
+    return true;
+  }
+
+  deleteDecodedNodeView(
+    oldestCacheKey,
+    oldestEntry,
+    true,
+    evictedNodeKeys,
   );
+  return true;
+}
+
+function deleteDecodedNodeView(
+  cacheKey: string,
+  entry: WorkerDecodedNodeViewEntry,
+  countEviction: boolean,
+  evictedNodeKeys?: CopcDecodedPointDataCacheNodeKey[],
+): void {
+  if (!decodedNodeViews.delete(cacheKey)) {
+    return;
+  }
+
+  decodedNodeViewBytes = Math.max(
+    0,
+    decodedNodeViewBytes - entry.estimatedByteSize,
+  );
+
+  if (countEviction) {
+    decodedNodeViewCacheEvictionCount += 1;
+    evictedNodeKeys?.push({
+      sourceKey: entry.sourceKey,
+      nodeKey: entry.nodeKey,
+    });
+  }
+}
+
+function createDecodedNodeViewCacheSnapshot(
+  requestedCacheKey: string,
+  requestedEntry: WorkerDecodedNodeViewEntry | undefined,
+  evictedNodeKeys: readonly CopcDecodedPointDataCacheNodeKey[],
+): CopcDecodedPointDataCacheSnapshot {
+  return {
+    retainedViewCount: decodedNodeViews.size,
+    retainedBytes: decodedNodeViewBytes,
+    peakRetainedBytes: peakDecodedNodeViewBytes,
+    cacheHitCount: decodedNodeViewCacheHitCount,
+    cacheMissCount: decodedNodeViewCacheMissCount,
+    cacheEvictionCount: decodedNodeViewCacheEvictionCount,
+    oversizedEntrySkipCount: oversizedDecodedNodeViewSkipCount,
+    requestedNodeRetained:
+      requestedEntry !== undefined &&
+      decodedNodeViews.get(requestedCacheKey) === requestedEntry,
+    evictedNodeKeys: [...evictedNodeKeys],
+  };
+}
+
+function createDecodedNodeViewKey(
+  sourceKey: string,
+  nodeKey: string,
+): string {
+  return `${sourceKey.length}:${sourceKey}${nodeKey}`;
 }
 
 function serializeError(error: unknown): {

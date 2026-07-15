@@ -1,4 +1,4 @@
-import type { Scene } from "cesium";
+import type { Primitive, Scene } from "cesium";
 import { describe, expect, it } from "vitest";
 import type { CopcBounds, CopcInspection } from "../core";
 import { CesiumBoundsRenderer } from "./CesiumBoundsRenderer";
@@ -156,6 +156,37 @@ describe("Cesium renderer lifecycle", () => {
     expect(() => renderer.setPoints([])).toThrow(
       "CesiumPrimitivePointRenderer has been destroyed.",
     );
+  });
+
+  it("uses opaque depth-writing appearances unless point alpha requires blending", () => {
+    const { addedPrimitives, scene } = createSceneStub();
+    const renderer = new CesiumPrimitivePointRenderer(scene);
+
+    renderer.setPoints([
+      {
+        longitudeDegrees: 127,
+        latitudeDegrees: 37,
+        heightMeters: 10,
+        color: { red: 1, green: 2, blue: 3, alpha: 255 },
+      },
+    ]);
+
+    const opaqueAppearance = (addedPrimitives[0] as Primitive).appearance;
+    expect(opaqueAppearance.translucent).toBe(false);
+    expect(opaqueAppearance.renderState.depthMask).toBe(true);
+
+    renderer.setPoints([
+      {
+        longitudeDegrees: 127,
+        latitudeDegrees: 37,
+        heightMeters: 10,
+        color: { red: 1, green: 2, blue: 3, alpha: 128 },
+      },
+    ]);
+
+    const translucentAppearance = (addedPrimitives[1] as Primitive).appearance;
+    expect(translucentAppearance.translucent).toBe(true);
+    expect(translucentAppearance.renderState.depthMask).toBe(false);
   });
 
   it("reuses typed-array primitive chunks for unchanged node batches", () => {

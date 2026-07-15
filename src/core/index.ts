@@ -20,6 +20,11 @@ export type {
   CopcPointSampleCacheStats,
   CopcPointSampleFormat,
 } from "./copc/CopcPointDataSample";
+export type {
+  CopcDecodedPointDataCacheNodeKey,
+  CopcDecodedPointDataCacheSnapshot,
+  CopcDecodedPointDataCacheStats,
+} from "./copc/CopcDecodedPointDataCache";
 export {
   CopcSource,
   type CopcSourceDescriptor,
@@ -27,6 +32,7 @@ export {
   type CopcPointSampleLoadingMode,
   type CopcPointSampleWorkerWarmupOptions,
   type CopcSourceOptions,
+  type LoadHierarchyOptions,
   type LoadHierarchyPagesResult,
   type LoadNodePointSamplesOptions,
   type LoadNodesPointSamplesOptions,
@@ -40,7 +46,10 @@ export {
   createCopcRangeGetter,
   type CopcRangeGetterOptions,
 } from "./copc/createCopcRangeGetter";
-export { createHttpRangeGetter } from "./copc/createHttpRangeGetter";
+export {
+  createHttpRangeGetter,
+  type CopcHttpRangeGetterOptions,
+} from "./copc/createHttpRangeGetter";
 export type {
   CopcPointSampleWorkerRequest,
   CopcPointSampleWorkerResponse,

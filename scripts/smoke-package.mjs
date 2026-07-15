@@ -1,19 +1,55 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { summarizeRecoveredHttpRangeResponses } from "./http-range-response-policy.mjs";
+import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
+import {
+  createRunEvidence,
+  validateRunEvidence,
+  validateRunEvidenceSourceState,
+} from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
+const playwrightCliPath = resolveLocalPackageBinary(
+  repoRoot,
+  "@playwright/cli",
+  "playwright-cli",
+);
 const outputRoot = path.join(repoRoot, "output");
 const smokeRoot = path.join(outputRoot, "package-smoke");
 const consumerRoot = path.join(smokeRoot, "consumer");
+const screenshotRoot = path.join(outputRoot, "playwright");
+const browserFlowPath = path.join(smokeRoot, "smoke-package-browser-flow.mjs");
+const browserResultPath = path.join(smokeRoot, "browser-result.json");
+const browserScreenshotPath = path.join(
+  screenshotRoot,
+  "smoke-package-consumer.png",
+);
+const playwrightConfigPath = path.join(
+  scriptDir,
+  "playwright.high-performance-gpu.json",
+);
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
-const npxCommand = "npx";
 const MAX_PACKAGE_TARBALL_BYTES = 600 * 1024;
 const MAX_PACKED_WORKER_ASSET_BYTES = 600 * 1024;
+
+const runEvidence = await createRunEvidence({ repoRoot });
+const runEvidenceFailures = validateRunEvidence(
+  runEvidence,
+  "packageSmoke.runEvidence",
+);
+
+if (runEvidenceFailures.length > 0) {
+  throw new Error(
+    `Package smoke run evidence is invalid:\n${runEvidenceFailures.join("\n")}`,
+  );
+}
 
 function assertInside(parent, target) {
   const relative = path.relative(parent, target);
@@ -58,14 +94,544 @@ function runCapture(command, args, cwd) {
   return result.stdout;
 }
 
+function runNodeBinary(binaryPath, args, cwd) {
+  const result = spawnSync(process.execPath, [binaryPath, ...args], {
+    cwd,
+    shell: false,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error(
+      `${binaryPath} ${args.join(" ")} failed with exit code ${result.status}`,
+    );
+  }
+}
+
+function runPlaywrightCli(args) {
+  const result = spawnSync(
+    process.execPath,
+    [playwrightCliPath, ...args],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const error = new Error(
+      `playwright-cli ${args.join(" ")} failed with exit code ${result.status}`,
+    );
+    error.playwrightStdout = result.stdout;
+    error.playwrightStderr = result.stderr;
+    throw error;
+  }
+
+  if (`${result.stdout}\n${result.stderr}`.includes("### Error")) {
+    const error = new Error(
+      `playwright-cli ${args.join(" ")} reported an error`,
+    );
+    error.playwrightStdout = result.stdout;
+    error.playwrightStderr = result.stderr;
+    throw error;
+  }
+
+  return result.stdout;
+}
+
+function parsePlaywrightResult(output) {
+  const marker = "### Result";
+  const markerIndex = output.lastIndexOf(marker);
+
+  if (markerIndex === -1) {
+    throw new Error("Could not find Playwright result output.");
+  }
+
+  const outputAfterMarker = output.slice(markerIndex + marker.length);
+  const jsonStart = outputAfterMarker.search(/[\[{]/);
+
+  if (jsonStart === -1) {
+    throw new Error("Could not find Playwright result JSON.");
+  }
+
+  const jsonText = outputAfterMarker.slice(jsonStart);
+  let depth = 0;
+  let isInsideString = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < jsonText.length; index += 1) {
+    const character = jsonText[index];
+
+    if (isInsideString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (character === "\\") {
+        isEscaped = true;
+      } else if (character === "\"") {
+        isInsideString = false;
+      }
+
+      continue;
+    }
+
+    if (character === "\"") {
+      isInsideString = true;
+      continue;
+    }
+
+    if (character === "{" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}" || character === "]") {
+      depth -= 1;
+
+      if (depth === 0) {
+        return JSON.parse(jsonText.slice(0, index + 1));
+      }
+    }
+  }
+
+  throw new Error("Could not parse complete Playwright result JSON.");
+}
+
+async function findAvailablePort(startPort) {
+  for (let port = startPort; port < startPort + 50; port += 1) {
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+  }
+
+  throw new Error(`No available package preview port found from ${startPort}.`);
+}
+
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "localhost");
+  });
+}
+
+async function waitForServer(url, serverProcess, serverOutput) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (serverProcess.exitCode !== null) {
+      throw new Error(
+        `Package preview server exited early with code ${serverProcess.exitCode}.\n${serverOutput.join("")}`,
+      );
+    }
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(1_000),
+      });
+
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Retry until the consumer preview server starts listening.
+    }
+
+    await delay(500);
+  }
+
+  throw new Error(`Timed out waiting for package preview server: ${url}`);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function stopServer(serverProcess) {
+  if (!serverProcess.pid || serverProcess.exitCode !== null) {
+    return;
+  }
+
+  if (isWindows) {
+    spawnSync("taskkill", ["/pid", String(serverProcess.pid), "/T", "/F"], {
+      stdio: "ignore",
+    });
+    return;
+  }
+
+  serverProcess.kill("SIGTERM");
+}
+
 function toFileDependency(filePath) {
   return `file:${filePath.replaceAll("\\", "/")}`;
 }
 
+function createPackageBrowserFlow(baseUrl) {
+  return `async (page) => {
+  const failures = [];
+  const consoleProblems = [];
+  const pageErrors = [];
+  const browserSourceRangeRequests = [];
+
+  function recordFailure(condition, message) {
+    if (!condition) {
+      failures.push(message);
+    }
+  }
+
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      consoleProblems.push(message.type() + ": " + message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.stack ?? error.message);
+  });
+  page.on("response", (response) => {
+    if (!response.url().includes("/copc-samples/autzen-classified.copc.laz")) {
+      return;
+    }
+
+    const request = response.request();
+    const requestHeaders = request.headers();
+    const responseHeaders = response.headers();
+    browserSourceRangeRequests.push({
+      contentRange: responseHeaders["content-range"] ?? null,
+      method: request.method(),
+      range: requestHeaders.range ?? null,
+      status: response.status(),
+      url: response.url(),
+    });
+  });
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  let runtimeResult;
+  let cesiumStaticAssets;
+  let packageWorkerResources;
+
+  try {
+    await page.goto(${JSON.stringify(baseUrl)}, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    await page.waitForFunction(
+      () => {
+        const result = window.__COPC_PACKAGE_SMOKE_RESULT__;
+        return result?.status === "ready" || result?.status === "failed";
+      },
+      undefined,
+      { timeout: 120_000 },
+    );
+    const overviewRuntimeResult = await page.evaluate(
+      () => window.__COPC_PACKAGE_SMOKE_RESULT__,
+    );
+    runtimeResult = overviewRuntimeResult;
+    if (overviewRuntimeResult?.status === "failed") {
+      throw new Error(
+        "Installed-package overview stream failed: " +
+          (overviewRuntimeResult.error ?? JSON.stringify(overviewRuntimeResult)),
+      );
+    }
+
+    const overviewRequestId =
+      overviewRuntimeResult?.overviewStream?.requestId;
+    const visibleCanvas = page.locator("#cesium-container canvas:visible");
+    const visibleCanvasCountBeforeWheel = await visibleCanvas.count();
+    const canvasBounds =
+      visibleCanvasCountBeforeWheel === 1
+        ? await visibleCanvas.boundingBox()
+        : undefined;
+
+    if (!canvasBounds || !Number.isSafeInteger(overviewRequestId)) {
+      throw new Error(
+        "Installed-package overview did not expose one visible Cesium canvas and a stream request id.",
+      );
+    }
+
+    await page.mouse.move(
+      canvasBounds.x + canvasBounds.width / 2,
+      canvasBounds.y + canvasBounds.height / 2,
+    );
+    await page.mouse.wheel(0, -300);
+    await page.waitForFunction(
+      (previousRequestId) => {
+        const result = window.__COPC_PACKAGE_SMOKE_RESULT__;
+
+        return (
+          result?.status === "failed" ||
+          (result?.status === "passed" &&
+            (result.wheelZoomStream?.requestId ?? -1) > previousRequestId)
+        );
+      },
+      overviewRequestId,
+      { timeout: 120_000 },
+    );
+    runtimeResult = await page.evaluate(
+      () => window.__COPC_PACKAGE_SMOKE_RESULT__,
+    );
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }),
+    );
+    cesiumStaticAssets = await page.evaluate(async () => {
+      const assetPaths = [
+        "/cesium/Cesium.js",
+        "/cesium/Widgets/widgets.css",
+        "/cesium/Assets/approximateTerrainHeights.json",
+      ];
+
+      return await Promise.all(
+        assetPaths.map(async (assetPath) => {
+          const response = await fetch(assetPath);
+          return {
+            assetPath,
+            contentType: response.headers.get("content-type"),
+            status: response.status,
+            textLength: (await response.text()).length,
+            url: response.url,
+          };
+        }),
+      );
+    });
+    packageWorkerResources = await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .filter(
+          (entry) =>
+            entry instanceof PerformanceResourceTiming &&
+            entry.name.includes("/assets/") &&
+            [
+              "CopcPointSampleWorker-",
+              "CesiumCopcPointGeometryWorker-",
+              "CesiumPointGeometryWorker-",
+            ].some((marker) => entry.name.includes(marker)) &&
+            new URL(entry.name).pathname.endsWith(".js"),
+        )
+        .map((entry) => {
+          const resource = entry;
+
+          return {
+            decodedBodySize: resource.decodedBodySize,
+            duration: resource.duration,
+            encodedBodySize: resource.encodedBodySize,
+            initiatorType: resource.initiatorType,
+            responseStatus: resource.responseStatus,
+            transferSize: resource.transferSize,
+            url: resource.name,
+          };
+        }),
+    );
+  } catch (error) {
+    failures.push(
+      "Browser runtime did not complete: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  const canvasCount = await page.locator("#cesium-container canvas").count();
+  const visibleCanvasCount = await page
+    .locator("#cesium-container canvas:visible")
+    .count();
+
+  try {
+    await page.screenshot({
+      path: ${JSON.stringify(browserScreenshotPath)},
+      fullPage: false,
+    });
+  } catch (error) {
+    failures.push(
+      "Browser screenshot failed: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  recordFailure(
+    runtimeResult?.status === "passed",
+    "Installed-package runtime result did not pass: " +
+      JSON.stringify(runtimeResult),
+  );
+  recordFailure(
+    Number(runtimeResult?.renderedPointCount) > 0,
+    "Installed package did not report a positive rendered point count.",
+  );
+  recordFailure(
+    Number(runtimeResult?.sampledPointCount) > 0,
+    "Installed package did not report a positive sampled point count.",
+  );
+  recordFailure(
+    Number(runtimeResult?.integratedWorkerTimingNodeCount) > 0,
+    "Integrated package worker timing evidence is missing.",
+  );
+  recordFailure(
+    Number(runtimeResult?.pointSampleWorkerWarmupCount) > 0,
+    "Point-sample package worker warmup evidence is missing.",
+  );
+  recordFailure(
+    Number(runtimeResult?.pointSampleWorkerSampledPointCount) > 0,
+    "The installed package point-sample worker did not return real points.",
+  );
+  const overviewStream = runtimeResult?.overviewStream;
+  const wheelZoomStream = runtimeResult?.wheelZoomStream;
+  for (const [label, streamResult] of [
+    ["overview", overviewStream],
+    ["wheel zoom", wheelZoomStream],
+  ]) {
+    recordFailure(
+      streamResult?.coverageMode === "complete-depth",
+      "Installed-package " + label + " stream did not use complete-depth coverage.",
+    );
+    recordFailure(
+      streamResult?.visualQuality?.isTerminalReady === true &&
+        streamResult.visualQuality.frontierDepthSpan === 0 &&
+        streamResult.visualQuality.isFrontierAntichain === true &&
+        streamResult.visualQuality.isAdditiveClosureComplete === true &&
+        streamResult.visualQuality.missingRequiredNodeCount === 0 &&
+        streamResult.visualQuality.unexpectedRenderedNodeCount === 0,
+      "Installed-package " + label + " stream did not commit a clean additive terminal composition: " +
+        JSON.stringify(streamResult?.visualQuality),
+    );
+    recordFailure(
+      Number(streamResult?.renderedPointCount) > 0 &&
+        Number(streamResult?.sampledPointCount) > 0,
+      "Installed-package " + label + " stream rendered no real COPC points.",
+    );
+    recordFailure(
+      Number(streamResult?.integratedWorkerTimingNodeCount) > 0,
+      "Installed-package " + label + " stream exposed no integrated-worker timing evidence.",
+    );
+  }
+  recordFailure(
+    overviewStream?.lodLabel === "overview",
+    "Installed-package initial camera stream was not an overview LOD: " +
+      JSON.stringify(overviewStream),
+  );
+  recordFailure(
+    Number(wheelZoomStream?.requestId) > Number(overviewStream?.requestId),
+    "The real wheel input did not complete a newer public camera-stream request.",
+  );
+  recordFailure(
+    Number(wheelZoomStream?.cameraHeightMeters) <
+      Number(overviewStream?.cameraHeightMeters),
+    "The real wheel input did not lower dataset-relative camera height.",
+  );
+  recordFailure(
+    Number(wheelZoomStream?.selectedDepth) >
+      Number(overviewStream?.selectedDepth),
+    "The real wheel input did not refine to a deeper terminal depth.",
+  );
+  recordFailure(
+    Number(wheelZoomStream?.renderedPointCount) >=
+      Number(overviewStream?.renderedPointCount) * 1.25,
+    "The overview-to-wheel public stream did not increase rendered points by at least 25%.",
+  );
+  recordFailure(
+    Number(wheelZoomStream?.normalizedDensity) >
+      Number(overviewStream?.normalizedDensity),
+    "The real wheel input did not increase normalized current-view density.",
+  );
+  recordFailure(canvasCount > 0, "Cesium did not create a canvas.");
+  recordFailure(visibleCanvasCount > 0, "Cesium canvas is not visible.");
+
+  for (const marker of [
+    "CopcPointSampleWorker-",
+    "CesiumCopcPointGeometryWorker-",
+  ]) {
+    recordFailure(
+      Array.isArray(packageWorkerResources) &&
+        packageWorkerResources.some(
+          (resource) =>
+            resource.url.includes(marker) &&
+            resource.responseStatus === 200 &&
+            resource.decodedBodySize > 0,
+        ),
+      "No successful package worker resource was observed for " + marker,
+    );
+  }
+
+  recordFailure(
+    Array.isArray(runtimeResult?.sourceRangeRequests) &&
+      runtimeResult.sourceRangeRequests.length > 0 &&
+      runtimeResult.sourceRangeRequests.every(
+        (request) =>
+          request.url.startsWith(${JSON.stringify(baseUrl)}) &&
+          request.method === "GET" &&
+          typeof request.range === "string" &&
+          request.range.startsWith("bytes=") &&
+          request.status === 206 &&
+          typeof request.contentRange === "string" &&
+          request.contentRange.startsWith("bytes "),
+      ),
+    "Autzen did not complete same-origin HTTP Range requests with 206 and Content-Range.",
+  );
+  recordFailure(
+    Array.isArray(runtimeResult?.directSourceRequests) &&
+      runtimeResult.directSourceRequests.length === 0,
+    "The consumer bypassed its same-origin COPC proxy: " +
+      (runtimeResult?.directSourceRequests ?? []).join(", "),
+  );
+  recordFailure(
+    Array.isArray(cesiumStaticAssets) &&
+      cesiumStaticAssets.length === 3 &&
+      cesiumStaticAssets.every(
+        (asset) =>
+          asset.status === 200 &&
+          !asset.contentType?.includes("text/html") &&
+          asset.textLength > 0,
+      ),
+    "Documented Cesium static assets were not served by the consumer build.",
+  );
+
+  if (consoleProblems.length > 0) {
+    failures.push("Browser console problems:\\n" + consoleProblems.join("\\n"));
+  }
+  if (pageErrors.length > 0) {
+    failures.push("Page errors:\\n" + pageErrors.join("\\n"));
+  }
+
+  return {
+    status: failures.length === 0 ? "passed" : "failed",
+    failures,
+    runtimeResult,
+    canvasCount,
+    visibleCanvasCount,
+    cesiumStaticAssets,
+    packageWorkerResources,
+    browserSourceRangeRequests,
+    consoleProblems,
+    pageErrors,
+    screenshotPath: ${JSON.stringify(browserScreenshotPath)},
+    userAgent: await page.evaluate(() => navigator.userAgent),
+  };
+}`;
+}
+
 await mkdir(outputRoot, { recursive: true });
 assertInside(outputRoot, smokeRoot);
+assertInside(outputRoot, screenshotRoot);
+assertInside(screenshotRoot, browserScreenshotPath);
 await rm(smokeRoot, { recursive: true, force: true });
 await mkdir(path.join(consumerRoot, "src"), { recursive: true });
+await mkdir(screenshotRoot, { recursive: true });
+await rm(browserScreenshotPath, { force: true });
+
+console.log("Verifying committed license and SPDX evidence...");
+run(npmCommand, ["run", "license:evidence:check"], repoRoot);
 
 console.log("Building library and example...");
 run(npmCommand, ["run", "build"], repoRoot);
@@ -91,10 +657,14 @@ for (const requiredPath of [
   "CHANGELOG.md",
   "LICENSE",
   "README.md",
+  "SECURITY.md",
+  "THIRD_PARTY_NOTICES.md",
   "docs/API.md",
   "docs/ARCHITECTURE.md",
   "docs/COMPETITION.md",
+  "docs/DATASETS.md",
   "docs/PERFORMANCE.md",
+  "docs/sbom.spdx.json",
   "examples/minimal-layer.ts",
 ]) {
   if (!packedPaths.has(requiredPath)) {
@@ -134,6 +704,45 @@ if (!existsSync(tarballPath)) {
   throw new Error(`Packed tarball was not created: ${tarballPath}`);
 }
 
+const tarballBytes = await readFile(tarballPath);
+const tarballSha256 = createHash("sha256").update(tarballBytes).digest("hex");
+
+if (tarballBytes.byteLength !== packResult.size) {
+  throw new Error(
+    `Packed tarball byte length ${tarballBytes.byteLength.toLocaleString()} does not match npm pack metadata ${packResult.size.toLocaleString()}.`,
+  );
+}
+
+const packagedSourceEvidence = await createRunEvidence({ repoRoot });
+const sourceStateFailures = validateRunEvidenceSourceState(
+  runEvidence,
+  packagedSourceEvidence,
+  "packageSmoke.sourceState",
+);
+
+if (sourceStateFailures.length > 0) {
+  throw new Error(
+    `Repository source state changed while creating the package candidate:\n${sourceStateFailures.join("\n")}`,
+  );
+}
+
+const releaseCandidateArtifact = {
+  kind: "npm-tarball",
+  packageName: packResult.name,
+  packageVersion: packResult.version,
+  fileName: tarballName,
+  byteCount: tarballBytes.byteLength,
+  digest: {
+    algorithm: "sha256",
+    value: tarballSha256,
+  },
+};
+const tarballChecksumPath = `${tarballPath}.sha256`;
+await writeFile(
+  tarballChecksumPath,
+  `${tarballSha256}  ${path.basename(tarballPath)}\n`,
+);
+
 await writeFile(
   path.join(consumerRoot, "package.json"),
   `${JSON.stringify(
@@ -145,11 +754,13 @@ await writeFile(
         typecheck: "tsc --noEmit",
       },
       dependencies: {
+        cesium: "1.140.0",
         "copc-cesium": toFileDependency(tarballPath),
       },
       devDependencies: {
         typescript: "^5.9.3",
         vite: "^7.2.7",
+        "vite-plugin-cesium": "1.2.23",
       },
       allowScripts: {
         "esbuild@0.28.1": true,
@@ -169,7 +780,7 @@ await writeFile(
         useDefineForClassFields: true,
         module: "ESNext",
         lib: ["ES2022", "DOM", "DOM.Iterable"],
-        skipLibCheck: true,
+        skipLibCheck: false,
         moduleResolution: "Bundler",
         allowSyntheticDefaultImports: true,
         isolatedModules: true,
@@ -185,13 +796,110 @@ await writeFile(
 );
 
 await writeFile(
+  path.join(consumerRoot, "tsconfig.nodenext.json"),
+  `${JSON.stringify(
+    {
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        lib: ["ES2022", "DOM", "DOM.Iterable"],
+        skipLibCheck: false,
+        moduleResolution: "NodeNext",
+        isolatedModules: true,
+        moduleDetection: "force",
+        noEmit: true,
+        strict: true,
+      },
+      include: ["src/nodenext.ts"],
+    },
+    null,
+    2,
+  )}\n`,
+);
+
+await writeFile(
+  path.join(consumerRoot, "vite.config.ts"),
+  `import { defineConfig, type ProxyOptions } from "vite";
+import cesium from "vite-plugin-cesium";
+
+export default defineConfig({
+  plugins: [cesium()],
+  server: {
+    proxy: createCopcSampleProxy(),
+  },
+  preview: {
+    proxy: createCopcSampleProxy(),
+  },
+});
+
+function createCopcSampleProxy(): Record<string, string | ProxyOptions> {
+  return {
+    "/copc-samples": {
+      target: "https://s3.amazonaws.com",
+      changeOrigin: true,
+      rewrite: (requestPath: string) =>
+        requestPath.replace(/^\\/copc-samples/, "/hobu-lidar"),
+    },
+  };
+}
+`,
+);
+
+await writeFile(
   path.join(consumerRoot, "index.html"),
-  `<div id="app"></div><script type="module" src="/src/main.ts"></script>\n`,
+  `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>Installed copc-cesium package smoke</title>
+    <style>
+      html, body, #cesium-container { width: 100%; height: 100%; margin: 0; }
+      body { overflow: hidden; background: #05070a; }
+      #smoke-status {
+        position: fixed;
+        z-index: 10;
+        top: 12px;
+        left: 12px;
+        max-width: calc(100% - 48px);
+        padding: 8px 12px;
+        border-radius: 6px;
+        color: #f5f7fa;
+        background: rgba(5, 7, 10, 0.86);
+        font: 13px/1.4 system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesium-container"></div>
+    <output id="smoke-status" role="status">Loading installed package...</output>
+    <div id="app" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+`,
+);
+
+await writeFile(
+  path.join(consumerRoot, "src", "nodenext.ts"),
+  `import { CopcPointCloudLayer } from "copc-cesium";
+import { CopcSource } from "copc-cesium/core";
+import { CesiumPrimitivePointRenderer } from "copc-cesium/cesium";
+
+export const nodeNextEntryPointEvidence = [
+  CopcPointCloudLayer,
+  CopcSource,
+  CesiumPrimitivePointRenderer,
+] as const;
+`,
 );
 
 await writeFile(
   path.join(consumerRoot, "src", "main.ts"),
-  `import {
+  `import { Math as CesiumMath, Viewer } from "cesium";
+import "cesium/Build/Cesium/Widgets/widgets.css";
+import {
   CopcPointCloudCameraStream,
   CopcPointCloudLayer,
   CopcCameraStreamNodeSampleCache,
@@ -210,6 +918,8 @@ await writeFile(
   createCopcCameraStreamPrefetchSettings,
   createCopcCameraStreamRenderPlan,
   createCopcCameraStreamRenderNodeKeys,
+  createCopcCameraStreamVisualQualityState,
+  createCopcCameraDestination,
   createDefaultCopcCoordinateTransforms,
   createProj4CoordinateTransforms,
   estimateCopcNodeFamilyOverlapRatio,
@@ -224,6 +934,7 @@ await writeFile(
   maxCopcNodeKeyDepth,
   mergeCopcCameraStreamNodeSamples,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
+  runCopcCameraStreamTerminalRender,
   selectCopcCameraStreamDetailProgressPolicy,
   selectCopcCameraStreamDetailWarmupPolicy,
   selectCopcCameraStreamRequestPriorityOffsets,
@@ -243,6 +954,10 @@ await writeFile(
   type CopcCameraStreamNodeSummaryLike,
   type CopcCameraStreamPrefetchSettings,
   type CopcCameraStreamTimeoutScheduler,
+  type CopcCameraStreamTerminalRenderOptions,
+  type CopcCameraStreamTerminalRenderResult,
+  type CopcCameraStreamTerminalRenderUpdate,
+  type CopcCameraStreamVisualQualityState,
   type CopcWorkerPoolSettings,
   type CopcHierarchyNodeCameraSelection,
   type CopcHierarchyNodeDepthEstimate,
@@ -254,6 +969,7 @@ await writeFile(
   type CopcPointCloudLayerOptions,
   type CopcPointCloudLayerHierarchyExpansionOptions,
   type CopcPointCloudLayerRenderStats,
+  type CopcPointCloudCameraStreamUpdate,
 } from "copc-cesium";
 import {
   CopcSource,
@@ -304,6 +1020,7 @@ const exportedConstructors = [
   createCopcCameraStreamPreviewNodeKeys,
   createCopcCameraStreamPrefetchSettings,
   createCopcCameraStreamRenderNodeKeys,
+  createCopcCameraStreamVisualQualityState,
   estimateCopcNodeFamilyOverlapRatio,
   formatCopcCameraStreamBudgetSummary,
   formatCopcCameraStreamDiagnostics,
@@ -314,6 +1031,7 @@ const exportedConstructors = [
   formatCopcLoadedHierarchyPages,
   maxCopcNodeKeyDepth,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
+  runCopcCameraStreamTerminalRender,
   selectCopcCameraStreamDetailProgressPolicy,
   selectCopcCameraStreamDetailWarmupPolicy,
   selectCopcCameraStreamRequestPriorityOffsets,
@@ -380,6 +1098,11 @@ const streamQualitySettings: CopcCameraStreamLodQualitySettings = {
   cameraStreamTargetNodeScreenPixels: 80,
   cameraStreamTargetPointSpacingScreenPixels: 4,
 };
+const streamTerminalRenderTypeEvidence: {
+  readonly options?: CopcCameraStreamTerminalRenderOptions;
+  readonly result?: CopcCameraStreamTerminalRenderResult;
+  readonly update?: CopcCameraStreamTerminalRenderUpdate;
+} = {};
 const streamLodSettings: CopcCameraStreamLodSettings =
   createCopcCameraStreamLodSettings({
     cameraHeightMeters: 300,
@@ -446,6 +1169,7 @@ const streamPreviewNodeKeys = createCopcCameraStreamPreviewNodeKeys(
 );
 const streamRenderPlan = createCopcCameraStreamRenderPlan({
   cameraSelection: {
+    coverageMode: "complete-depth",
     nodes: streamNodes.map((node) => ({
       ...node,
       depth: 2,
@@ -736,6 +1460,7 @@ if (app) {
     String(hasFreshStreamNodeSamples),
     String(mergedStreamNodeSamples[0]?.sampledPointCount),
     String(streamRequestPriorityOffsets.preview),
+    String(Boolean(streamTerminalRenderTypeEvidence.options)),
     String(streamDetailProgressPolicy.progressBatchNodeCount),
     String(streamDetailWarmupPolicy.maxRenderedPointCount),
     String(didCompleteStreamDetailProgress),
@@ -750,16 +1475,777 @@ if (app) {
     String(streamSourceSummary.selectedSourcePointCount),
   ].join(" | ");
 }
+
+interface SourceRangeRequestEvidence {
+  readonly contentRange: string | null;
+  readonly method: string;
+  readonly range: string | null;
+  readonly status: number;
+  readonly url: string;
+}
+
+interface InstalledPackageCameraStreamEvidence {
+  readonly requestId: number;
+  readonly stage: CopcPointCloudCameraStreamUpdate["stage"];
+  readonly cameraHeightMeters: number;
+  readonly lodLabel: string;
+  readonly maxRenderedPointCount: number;
+  readonly selectedDepth: number;
+  readonly coverageMode: string;
+  readonly frontierNodeKeys: readonly string[];
+  readonly requiredNodeKeys: readonly string[];
+  readonly renderedNodeKeys: readonly string[];
+  readonly renderedPointCount: number;
+  readonly sampledPointCount: number;
+  readonly normalizedDensity: number;
+  readonly integratedWorkerTimingNodeCount: number;
+  readonly pointGeometryWorkerCacheHitCount: number;
+  readonly visualQuality: CopcCameraStreamVisualQualityState;
+}
+
+interface InstalledPackageRuntimeResult {
+  readonly status: "running" | "ready" | "passed" | "failed";
+  readonly sourceUrl: string;
+  readonly elapsedMilliseconds?: number;
+  readonly error?: string;
+  readonly hierarchyNodeCount?: number;
+  readonly integratedWorkerTimingNodeCount?: number;
+  readonly pointGeometryWorkerCacheHitCount?: number;
+  readonly pointSampleWorkerWarmupCount?: number;
+  readonly pointSampleWorkerSampledPointCount?: number;
+  readonly renderedNodeKey?: string;
+  readonly renderedPointCount?: number;
+  readonly sampledPointCount?: number;
+  readonly canvasWidth?: number;
+  readonly canvasHeight?: number;
+  readonly coordinateTransformKind?: string;
+  readonly overviewStream?: InstalledPackageCameraStreamEvidence;
+  readonly wheelZoomStream?: InstalledPackageCameraStreamEvidence;
+  readonly sourceRangeRequests?: readonly SourceRangeRequestEvidence[];
+  readonly directSourceRequests?: readonly string[];
+}
+
+type InstalledPackageSmokeWindow = Window & {
+  __COPC_PACKAGE_SMOKE_RESULT__?: InstalledPackageRuntimeResult;
+};
+
+const runtimeSourceUrl = "/copc-samples/autzen-classified.copc.laz";
+const runtimeWindow = window as InstalledPackageSmokeWindow;
+const runtimeStatus = document.querySelector<HTMLOutputElement>("#smoke-status");
+const runtimeSourceRangeRequests: SourceRangeRequestEvidence[] = [];
+const runtimeDirectSourceRequests: string[] = [];
+const nativeFetch = window.fetch.bind(window);
+let runtimeLayer: CopcPointCloudLayer | undefined;
+let runtimeCameraStream: CopcPointCloudCameraStream | undefined;
+let runtimeViewer: Viewer | undefined;
+
+window.fetch = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  const request = new Request(input, init);
+  const url = request.url;
+  const isAutzenRequest = url.includes(
+    "/copc-samples/autzen-classified.copc.laz",
+  );
+
+  if (
+    url.includes("s3.amazonaws.com/hobu-lidar/") ||
+    url.includes("hobu-lidar.s3.amazonaws.com/")
+  ) {
+    runtimeDirectSourceRequests.push(url);
+  }
+
+  const response = await nativeFetch(request);
+
+  if (isAutzenRequest) {
+    runtimeSourceRangeRequests.push({
+      contentRange: response.headers.get("content-range"),
+      method: request.method,
+      range: request.headers.get("range"),
+      status: response.status,
+      url,
+    });
+  }
+
+  return response;
+};
+
+runtimeWindow.__COPC_PACKAGE_SMOKE_RESULT__ = {
+  status: "running",
+  sourceUrl: runtimeSourceUrl,
+};
+
+void runInstalledPackageRuntimeSmoke();
+
+window.addEventListener("pagehide", () => {
+  destroyInstalledPackageRuntime();
+});
+
+async function runInstalledPackageRuntimeSmoke(): Promise<void> {
+  const startedAt = performance.now();
+
+  try {
+    runtimeStatus?.replaceChildren("Loading Autzen through the installed package...");
+    const viewer = new Viewer("cesium-container", {
+      animation: false,
+      baseLayer: false,
+      baseLayerPicker: false,
+      fullscreenButton: false,
+      geocoder: false,
+      homeButton: false,
+      infoBox: false,
+      navigationHelpButton: false,
+      scene3DOnly: true,
+      sceneModePicker: false,
+      selectionIndicator: false,
+      timeline: false,
+    });
+    runtimeViewer = viewer;
+    viewer.scene.globe.show = false;
+    viewer.camera.percentageChanged = 0.01;
+
+    const layer = new CopcPointCloudLayer(viewer.scene, {
+      url: runtimeSourceUrl,
+      maxPointCountPerNode: 5_000,
+      maxConcurrentPointSampleWorkerRequests: 1,
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      pointSampleLoading: "worker",
+      pointGeometryLoading: "integrated-worker",
+      showBounds: false,
+    });
+    runtimeLayer = layer;
+
+    const loadResult = await layer.load();
+    const coordinateTransforms = createDefaultCopcCoordinateTransforms(
+      loadResult.inspection,
+    );
+    viewer.camera.setView({
+      destination: createCopcCameraDestination(
+        loadResult.inspection,
+        coordinateTransforms.toCesium,
+      ),
+      orientation: {
+        heading: 0,
+        pitch: -CesiumMath.PI_OVER_TWO,
+        roll: 0,
+      },
+    });
+
+    const pointSampleWorkerWarmupCount = layer.warmUpPointSampleWorkers({
+      workerCount: 1,
+    });
+    layer.warmUpPointGeometryWorkers({ workerCount: 1 });
+    await layer.waitForPointGeometryWorkerWarmup();
+
+    if (pointSampleWorkerWarmupCount < 1) {
+      throw new Error("The installed package did not create its point-sample worker.");
+    }
+
+    const renderNode = loadResult.hierarchy.nodes.find(
+      (node) => node.pointCount > 0 && node.pointDataLength > 0,
+    );
+
+    if (!renderNode) {
+      throw new Error("Autzen did not expose a renderable COPC hierarchy node.");
+    }
+
+    const pointSampleSource = new CopcSource(runtimeSourceUrl, {
+      maxConcurrentPointSampleWorkerRequests: 1,
+      pointSampleLoading: "worker",
+    });
+    let pointSampleWorkerSampledPointCount = 0;
+
+    try {
+      const pointSampleWorkerResult =
+        await pointSampleSource.loadNodePointSamples({
+          nodeKey: renderNode.key,
+          maxPointCount: 32,
+          sampleFormat: "typed",
+        });
+      pointSampleWorkerSampledPointCount =
+        pointSampleWorkerResult.sampledPointCount;
+    } finally {
+      pointSampleSource.destroy();
+    }
+
+    if (pointSampleWorkerSampledPointCount <= 0) {
+      throw new Error(
+        "The installed package point-sample worker returned no Autzen points.",
+      );
+    }
+
+    const renderResult = await layer.renderNodes([renderNode.key], {
+      includePointsInResult: false,
+      maxPointCountPerNode: 5_000,
+      maxRenderedPointCount: 5_000,
+      showBounds: false,
+    });
+    const geometryTimings = renderResult.renderStats.pointGeometryTimings;
+    const renderedPointCount = renderResult.renderStats.pointCount;
+    const sampledPointCount = renderResult.pointSamples.sampledPointCount;
+
+    if (renderedPointCount <= 0 || sampledPointCount <= 0) {
+      throw new Error("The installed package rendered no Autzen COPC points.");
+    }
+
+    if (!geometryTimings || geometryTimings.nodeCount <= 0) {
+      throw new Error(
+        "The installed package did not report integrated worker geometry timing.",
+      );
+    }
+
+    viewer.scene.requestRender();
+    await waitForAnimationFrames(2);
+
+    if (viewer.canvas.width <= 0 || viewer.canvas.height <= 0) {
+      throw new Error("The installed-package Cesium canvas has no drawable size.");
+    }
+
+    const baseRuntimeEvidence = {
+      sourceUrl: runtimeSourceUrl,
+      hierarchyNodeCount: loadResult.hierarchy.nodes.length,
+      integratedWorkerTimingNodeCount: geometryTimings.nodeCount,
+      pointGeometryWorkerCacheHitCount: geometryTimings.cacheHitCount,
+      pointSampleWorkerWarmupCount,
+      pointSampleWorkerSampledPointCount,
+      renderedNodeKey: renderNode.key,
+      renderedPointCount,
+      sampledPointCount,
+      canvasWidth: viewer.canvas.width,
+      canvasHeight: viewer.canvas.height,
+      coordinateTransformKind: loadResult.coordinateTransform.kind,
+    };
+    const publishRuntimeResult = (
+      status: InstalledPackageRuntimeResult["status"],
+      additionalEvidence: Partial<InstalledPackageRuntimeResult> = {},
+    ): void => {
+      runtimeWindow.__COPC_PACKAGE_SMOKE_RESULT__ = {
+        ...baseRuntimeEvidence,
+        ...additionalEvidence,
+        status,
+        elapsedMilliseconds: performance.now() - startedAt,
+        sourceRangeRequests: [...runtimeSourceRangeRequests],
+        directSourceRequests: [...runtimeDirectSourceRequests],
+      };
+    };
+    let latestCompleteStream:
+      | InstalledPackageCameraStreamEvidence
+      | undefined;
+    let overviewStream: InstalledPackageCameraStreamEvidence | undefined;
+
+    viewer.camera.setView({
+      destination: createCopcCameraDestination(
+        loadResult.inspection,
+        coordinateTransforms.toCesium,
+        {
+          minHeightAboveCloudMeters: 3_600,
+          extentHeightMultiplier: 0,
+          verticalHeightMultiplier: 0,
+        },
+      ),
+      orientation: {
+        heading: 0,
+        pitch: -CesiumMath.PI_OVER_TWO,
+        roll: 0,
+      },
+    });
+    viewer.scene.requestRender();
+    await waitForAnimationFrames(2);
+
+    const cameraStream = new CopcPointCloudCameraStream({
+      camera: viewer.camera,
+      layer,
+      quality: "balanced",
+      debounceMilliseconds: 30,
+      renderOnStart: false,
+      onUpdate: (update) => {
+        if (update.phase !== "complete") {
+          return;
+        }
+
+        try {
+          const streamEvidence = createInstalledPackageCameraStreamEvidence(
+            layer,
+            update,
+          );
+          assertInstalledPackageTerminalStream(
+            streamEvidence,
+            update.phase,
+            update.stage,
+          );
+          latestCompleteStream = streamEvidence;
+
+          if (
+            overviewStream &&
+            streamEvidence.requestId > overviewStream.requestId &&
+            streamEvidence.cameraHeightMeters < overviewStream.cameraHeightMeters
+          ) {
+            if (streamEvidence.selectedDepth <= overviewStream.selectedDepth) {
+              throw new Error(
+                "Wheel zoom did not refine selected depth from " +
+                  overviewStream.selectedDepth.toLocaleString() +
+                  " to " +
+                  streamEvidence.selectedDepth.toLocaleString() +
+                  ".",
+              );
+            }
+            if (
+              streamEvidence.renderedPointCount <
+              overviewStream.renderedPointCount * 1.25
+            ) {
+              throw new Error(
+                "Wheel zoom did not increase rendered points by at least 25% (" +
+                  overviewStream.renderedPointCount.toLocaleString() +
+                  " to " +
+                  streamEvidence.renderedPointCount.toLocaleString() +
+                  ").",
+              );
+            }
+            if (
+              streamEvidence.normalizedDensity <=
+              overviewStream.normalizedDensity
+            ) {
+              throw new Error(
+                "Wheel zoom did not increase normalized density from " +
+                  overviewStream.normalizedDensity.toLocaleString() +
+                  " to " +
+                  streamEvidence.normalizedDensity.toLocaleString() +
+                  ".",
+              );
+            }
+
+            publishRuntimeResult("passed", {
+              overviewStream,
+              wheelZoomStream: streamEvidence,
+            });
+            runtimeStatus?.replaceChildren(
+              "Installed public camera stream wheel-zoomed from " +
+                overviewStream.renderedPointCount.toLocaleString() +
+                " to " +
+                streamEvidence.renderedPointCount.toLocaleString() +
+                " points with clean additive terminal composition.",
+            );
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.name + ": " + error.message
+              : String(error);
+          publishRuntimeResult("failed", {
+            error: message,
+            overviewStream,
+          });
+          runtimeStatus?.replaceChildren(
+            "Installed public camera stream failed: " + message,
+          );
+          runtimeCameraStream?.stop();
+        }
+      },
+      onError: (error) => {
+        const message =
+          error instanceof Error
+            ? error.name + ": " + error.message
+            : String(error);
+        publishRuntimeResult("failed", {
+          error: message,
+          overviewStream,
+        });
+        runtimeStatus?.replaceChildren(
+          "Installed public camera stream failed: " + message,
+        );
+      },
+    });
+    runtimeCameraStream = cameraStream;
+    const overviewRenderResult = await cameraStream.render();
+
+    if (!overviewRenderResult || !latestCompleteStream) {
+      throw new Error(
+        "Installed public camera stream did not complete its overview render.",
+      );
+    }
+    overviewStream = latestCompleteStream;
+    if (overviewStream.lodLabel !== "overview") {
+      throw new Error(
+        "Installed public camera stream initial LOD was " +
+          overviewStream.lodLabel +
+          '; expected "overview".',
+      );
+    }
+
+    cameraStream.start();
+    publishRuntimeResult("ready", { overviewStream });
+    runtimeStatus?.replaceChildren(
+      "Installed public camera stream rendered an overview terminal frame; waiting for a real wheel zoom.",
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name + ": " + error.message
+        : String(error);
+    runtimeWindow.__COPC_PACKAGE_SMOKE_RESULT__ = {
+      status: "failed",
+      sourceUrl: runtimeSourceUrl,
+      elapsedMilliseconds: performance.now() - startedAt,
+      error: message,
+      sourceRangeRequests: [...runtimeSourceRangeRequests],
+      directSourceRequests: [...runtimeDirectSourceRequests],
+    };
+    runtimeStatus?.replaceChildren("Installed package smoke failed: " + message);
+    destroyInstalledPackageRuntime();
+  }
+}
+
+function createInstalledPackageCameraStreamEvidence(
+  layer: CopcPointCloudLayer,
+  update: CopcPointCloudCameraStreamUpdate,
+): InstalledPackageCameraStreamEvidence {
+  const hierarchy = update.result.hierarchyExpansion?.hierarchy ?? layer.hierarchy;
+
+  if (!hierarchy) {
+    throw new Error(
+      "Installed public camera stream did not expose its hierarchy for terminal verification.",
+    );
+  }
+
+  const frontierNodeKeys = update.result.cameraSelection.nodes
+    .filter((node) => node.pointCount > 0 && node.pointDataLength > 0)
+    .map((node) => node.key);
+  const requiredNodeKeys = createCopcCameraStreamRenderNodeKeys(
+    update.result.cameraSelection.nodes,
+    hierarchy,
+  );
+  const renderedNodeKeys = update.result.pointSamples.nodeKeys;
+  const recomputedVisualQuality = createCopcCameraStreamVisualQualityState({
+    frontierNodeKeys,
+    requiredNodeKeys,
+    renderedNodeKeys,
+  });
+  const visualQuality = update.visualQuality;
+
+  if (!visualQuality) {
+    throw new Error(
+      "Installed public camera stream complete update omitted visualQuality.",
+    );
+  }
+  if (
+    JSON.stringify(visualQuality) !== JSON.stringify(recomputedVisualQuality)
+  ) {
+    throw new Error(
+      "Installed public camera stream visualQuality disagreed with the public structural helpers.",
+    );
+  }
+  const renderedPointCount = update.result.renderStats.pointCount;
+  const sampledPointCount = update.result.pointSamples.sampledPointCount;
+  const integratedWorkerTimings =
+    update.result.renderStats.pointGeometryTimings;
+  const normalizedDensity =
+    visualQuality.frontierNodeCount > 0
+      ? (renderedPointCount / visualQuality.frontierNodeCount) *
+        4 ** update.result.cameraSelection.selectedDepth
+      : 0;
+
+  return {
+    requestId: update.requestId,
+    stage: update.stage,
+    cameraHeightMeters: update.lodSettings.cameraHeightMeters,
+    lodLabel: update.lodSettings.label,
+    maxRenderedPointCount: update.lodSettings.maxRenderedPointCount,
+    selectedDepth: update.result.cameraSelection.selectedDepth,
+    coverageMode:
+      update.result.cameraSelection.coverageMode ?? "progressive",
+    frontierNodeKeys,
+    requiredNodeKeys,
+    renderedNodeKeys,
+    renderedPointCount,
+    sampledPointCount,
+    normalizedDensity,
+    integratedWorkerTimingNodeCount: integratedWorkerTimings?.nodeCount ?? 0,
+    pointGeometryWorkerCacheHitCount:
+      integratedWorkerTimings?.cacheHitCount ?? 0,
+    visualQuality,
+  };
+}
+
+function assertInstalledPackageTerminalStream(
+  evidence: InstalledPackageCameraStreamEvidence,
+  phase: string,
+  stage: CopcPointCloudCameraStreamUpdate["stage"],
+): void {
+  if (stage !== "terminal" || evidence.stage !== "terminal") {
+    throw new Error(
+      "Installed public camera stream settled without the shared terminal-engine stage: " +
+        stage,
+    );
+  }
+  if (evidence.coverageMode !== "complete-depth") {
+    throw new Error(
+      "Installed public camera stream " +
+        phase +
+        " result did not use complete-depth coverage.",
+    );
+  }
+  if (
+    !evidence.visualQuality.isTerminalReady ||
+    evidence.visualQuality.frontierDepthSpan !== 0 ||
+    !evidence.visualQuality.isFrontierAntichain ||
+    !evidence.visualQuality.isAdditiveClosureComplete ||
+    evidence.visualQuality.missingRequiredNodeCount !== 0 ||
+    evidence.visualQuality.unexpectedRenderedNodeCount !== 0
+  ) {
+    throw new Error(
+      "Installed public camera stream " +
+        phase +
+        " result did not reach clean additive terminal quality: " +
+        JSON.stringify(evidence.visualQuality),
+    );
+  }
+  if (evidence.renderedPointCount <= 0 || evidence.sampledPointCount <= 0) {
+    throw new Error(
+      "Installed public camera stream " + phase + " result rendered no points.",
+    );
+  }
+  if (evidence.integratedWorkerTimingNodeCount <= 0) {
+    throw new Error(
+      "Installed public camera stream " +
+        phase +
+        " result exposed no integrated-worker timing evidence.",
+    );
+  }
+}
+
+async function waitForAnimationFrames(frameCount: number): Promise<void> {
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+  }
+}
+
+function destroyInstalledPackageRuntime(): void {
+  runtimeCameraStream?.destroy();
+  runtimeCameraStream = undefined;
+
+  runtimeLayer?.destroy();
+  runtimeLayer = undefined;
+
+  if (runtimeViewer && !runtimeViewer.isDestroyed()) {
+    runtimeViewer.destroy();
+  }
+
+  runtimeViewer = undefined;
+}
 `,
 );
 
 console.log("Installing packed package into temporary consumer...");
 run(npmCommand, ["install"], consumerRoot);
 
+const consumerDependencyTree = JSON.parse(
+  runCapture(npmCommand, ["ls", "cesium", "--depth=0", "--json"], consumerRoot),
+);
+const installedMinimumCesiumVersion =
+  consumerDependencyTree.dependencies?.cesium?.version;
+if (installedMinimumCesiumVersion !== "1.140.0") {
+  throw new Error(
+    `Minimum Cesium consumer resolved ${installedMinimumCesiumVersion ?? "<missing>"}; expected 1.140.0.`,
+  );
+}
+
 console.log("Type-checking temporary consumer...");
-run(npxCommand, ["tsc", "--noEmit"], consumerRoot);
+const consumerTscPath = resolveLocalPackageBinary(
+  consumerRoot,
+  "typescript",
+  "tsc",
+);
+const consumerVitePath = resolveLocalPackageBinary(
+  consumerRoot,
+  "vite",
+  "vite",
+);
+runNodeBinary(consumerTscPath, ["--noEmit"], consumerRoot);
+
+console.log("Type-checking temporary consumer with NodeNext resolution...");
+runNodeBinary(
+  consumerTscPath,
+  ["--project", "tsconfig.nodenext.json"],
+  consumerRoot,
+);
 
 console.log("Building temporary consumer...");
-run(npxCommand, ["vite", "build"], consumerRoot);
+runNodeBinary(consumerVitePath, ["build"], consumerRoot);
 
-console.log(`Package smoke test passed: ${tarballPath}`);
+console.log("Running installed-package browser smoke...");
+const previewPort = await findAvailablePort(4473);
+const previewBaseUrl = `http://localhost:${previewPort}`;
+const serverOutput = [];
+const serverProcess = spawn(
+  process.execPath,
+  [
+    consumerVitePath,
+    "preview",
+    "--config",
+    "vite.config.ts",
+    "--host",
+    "localhost",
+    "--port",
+    String(previewPort),
+    "--strictPort",
+  ],
+  {
+    cwd: consumerRoot,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+  },
+);
+
+serverProcess.stdout.on("data", (data) => {
+  serverOutput.push(data.toString());
+});
+serverProcess.stderr.on("data", (data) => {
+  serverOutput.push(data.toString());
+});
+
+try {
+  await waitForServer(previewBaseUrl, serverProcess, serverOutput);
+  await writeFile(browserFlowPath, createPackageBrowserFlow(previewBaseUrl));
+  runPlaywrightCli([
+    "--config",
+    playwrightConfigPath,
+    "open",
+    "about:blank",
+  ]);
+  const playwrightOutput = runPlaywrightCli([
+    "run-code",
+    "--filename",
+    browserFlowPath,
+  ]);
+  let browserResult = parsePlaywrightResult(playwrightOutput);
+  const browserRangeResponseSummary = summarizeRecoveredHttpRangeResponses(
+    browserResult.browserSourceRangeRequests ?? [],
+    previewBaseUrl,
+  );
+  browserResult = {
+    ...browserResult,
+    browserRangeResponseSummary,
+  };
+  if (!browserRangeResponseSummary.passed) {
+    browserResult = {
+      ...browserResult,
+      status: "failed",
+      failures: [
+        ...(browserResult.failures ?? []),
+        "The browser did not observe valid same-origin Autzen 206 Range responses, or a transient HTTP failure was not recovered by a later identical range request.",
+      ],
+    };
+  }
+  const screenshotByteCount = existsSync(browserScreenshotPath)
+    ? (await readFile(browserScreenshotPath)).byteLength
+    : 0;
+
+  if (screenshotByteCount <= 0) {
+    browserResult = {
+      ...browserResult,
+      status: "failed",
+      failures: [
+        ...(browserResult.failures ?? []),
+        "Installed-package browser screenshot is missing or empty.",
+      ],
+    };
+  }
+
+  const installedVitePluginTree = JSON.parse(
+    runCapture(
+      npmCommand,
+      ["ls", "vite-plugin-cesium", "--depth=0", "--json"],
+      consumerRoot,
+    ),
+  );
+  const packedWorkerAssets = packResult.files
+    .filter(
+      (entry) =>
+        entry.path.includes("/assets/") &&
+        entry.path.includes("Worker-") &&
+        entry.path.endsWith(".js"),
+    )
+    .map((entry) => ({ path: entry.path, size: entry.size }));
+  const evidence = {
+    schemaVersion: 1,
+    status: browserResult.status,
+    generatedAtUtc: new Date().toISOString(),
+    runEvidence,
+    releaseCandidateArtifact,
+    package: {
+      name: packResult.name,
+      version: packResult.version,
+      tarball: tarballName,
+      tarballByteCount: packResult.size,
+      tarballSha256,
+      packedWorkerAssets,
+    },
+    consumer: {
+      cesiumVersion: installedMinimumCesiumVersion,
+      vitePluginCesiumVersion:
+        installedVitePluginTree.dependencies?.["vite-plugin-cesium"]?.version,
+    },
+    artifacts: {
+      browserResultPath,
+      screenshotPath: browserScreenshotPath,
+      screenshotByteCount,
+    },
+    browser: browserResult,
+  };
+  await writeFile(browserResultPath, `${JSON.stringify(evidence, null, 2)}\n`);
+
+  if (browserResult.status !== "passed") {
+    throw new Error(
+      `Installed-package browser smoke failed:\n${(browserResult.failures ?? []).join("\n")}`,
+    );
+  }
+} catch (error) {
+  if (!existsSync(browserResultPath)) {
+    await writeFile(
+      browserResultPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "failed",
+          generatedAtUtc: new Date().toISOString(),
+          runEvidence,
+          releaseCandidateArtifact,
+          package: {
+            name: packResult.name,
+            version: packResult.version,
+            tarball: tarballName,
+            tarballByteCount: packResult.size,
+            tarballSha256,
+          },
+          error: error instanceof Error ? error.message : String(error),
+          playwrightStdout: error?.playwrightStdout,
+          playwrightStderr: error?.playwrightStderr,
+          previewServerOutput: serverOutput,
+          artifacts: {
+            browserResultPath,
+            screenshotPath: browserScreenshotPath,
+            screenshotExists: existsSync(browserScreenshotPath),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
+  throw error;
+} finally {
+  try {
+    runPlaywrightCli(["close"]);
+  } catch {
+    // The browser may already be closed if startup or the flow failed.
+  }
+  stopServer(serverProcess);
+}
+
+console.log(
+  `Package smoke test passed: ${tarballPath} (SHA-256 ${tarballSha256}, checksum ${tarballChecksumPath}, browser evidence ${browserResultPath}, screenshot ${browserScreenshotPath})`,
+);

@@ -6,6 +6,8 @@ import {
   createCopcCameraStreamPrefetchSettings,
   createCopcCameraStreamPreviewPointCountPerNode,
   createCopcCameraStreamRuntimeSettings,
+  isCopcCameraStreamZoomRefinement,
+  resolveCopcCameraStreamHierarchyExpansionDepth,
   type CopcCameraStreamLodQualitySettings,
 } from "./CopcCameraStreamSettings";
 
@@ -47,7 +49,7 @@ describe("createCopcCameraStreamLodSettings", () => {
     });
   });
 
-  it("raises near-camera total detail while capping oversized source nodes", () => {
+  it("raises near-camera detail without reducing per-node source budgets", () => {
     const lod = createCopcCameraStreamLodSettings({
       cameraHeightMeters: 300,
       qualitySettings: balancedQuality,
@@ -63,18 +65,18 @@ describe("createCopcCameraStreamLodSettings", () => {
         targetPointSpacingScreenPixels: 1.5,
         maxRenderedPointCount: 720_000,
         maxSourcePointCount: 1_800_000,
-        maxNodePointCount: 28_000,
+        maxNodePointCount: 80_000,
         maxPointDataLength: 32 * 1024 * 1024,
-        maxNodePointDataLength: 734_003,
+        maxNodePointDataLength: 2 * 1024 * 1024,
         maxHierarchyPages: 5,
-        detailMaxPointCountPerNode: 3_000,
+        detailMaxPointCountPerNode: 6_500,
         detailMinFinalNodeCount: 16,
         detailTargetPointCountPerNode: 1_500,
       }),
     );
   });
 
-  it("keeps close zoom at depth 5 while avoiding oversized tail nodes", () => {
+  it("keeps close zoom at depth 5 without reducing per-node source budgets", () => {
     const lod = createCopcCameraStreamLodSettings({
       cameraHeightMeters: 650,
       qualitySettings: balancedQuality,
@@ -88,11 +90,11 @@ describe("createCopcCameraStreamLodSettings", () => {
         maxDepth: 5,
         targetNodeScreenPixels: 64,
         targetPointSpacingScreenPixels: 2.25,
-        maxRenderedPointCount: 540_000,
-        maxSourcePointCount: 1_350_000,
-        maxNodePointCount: 44_000,
-        maxPointDataLength: 24 * 1024 * 1024,
-        maxNodePointDataLength: 1_153_433,
+        maxRenderedPointCount: 720_000,
+        maxSourcePointCount: 1_800_000,
+        maxNodePointCount: 80_000,
+        maxPointDataLength: 32 * 1024 * 1024,
+        maxNodePointDataLength: 2 * 1024 * 1024,
         maxHierarchyPages: 4,
         detailMaxPointCountPerNode: 6_500,
         detailMinFinalNodeCount: 12,
@@ -109,6 +111,111 @@ describe("createCopcCameraStreamLodSettings", () => {
 
     expect(lod.label).toBe("overview");
     expect(lod.cameraHeightMeters).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("keeps every camera-stream detail limit monotonic from far to near zoom", () => {
+    const farToNearHeights = [
+      Number.POSITIVE_INFINITY,
+      3_500,
+      3_000,
+      1_500,
+      700,
+      350,
+      0,
+    ];
+    const lodLevels = farToNearHeights.map((cameraHeightMeters) =>
+      createCopcCameraStreamLodSettings({
+        cameraHeightMeters,
+        qualitySettings: balancedQuality,
+      }),
+    );
+
+    for (let index = 1; index < lodLevels.length; index += 1) {
+      const farther = lodLevels[index - 1];
+      const nearer = lodLevels[index];
+
+      expect(nearer.maxNodes).toBeGreaterThanOrEqual(farther.maxNodes);
+      expect(nearer.maxDepth).toBeGreaterThanOrEqual(farther.maxDepth);
+      expect(nearer.maxRenderedPointCount).toBeGreaterThanOrEqual(
+        farther.maxRenderedPointCount,
+      );
+      expect(nearer.maxSourcePointCount).toBeGreaterThanOrEqual(
+        farther.maxSourcePointCount,
+      );
+      expect(nearer.maxNodePointCount).toBeGreaterThanOrEqual(
+        farther.maxNodePointCount,
+      );
+      expect(nearer.maxPointDataLength).toBeGreaterThanOrEqual(
+        farther.maxPointDataLength,
+      );
+      expect(nearer.maxNodePointDataLength).toBeGreaterThanOrEqual(
+        farther.maxNodePointDataLength,
+      );
+      expect(nearer.detailMaxPointCountPerNode).toBeGreaterThanOrEqual(
+        farther.detailMaxPointCountPerNode,
+      );
+      expect(nearer.targetNodeScreenPixels).toBeLessThanOrEqual(
+        farther.targetNodeScreenPixels,
+      );
+      expect(nearer.targetPointSpacingScreenPixels).toBeLessThanOrEqual(
+        farther.targetPointSpacingScreenPixels,
+      );
+    }
+  });
+});
+
+describe("resolveCopcCameraStreamHierarchyExpansionDepth", () => {
+  it("does not chase a screen-space depth that the current budget cannot render", () => {
+    expect(resolveCopcCameraStreamHierarchyExpansionDepth(5, 2)).toBe(2);
+    expect(resolveCopcCameraStreamHierarchyExpansionDepth(3, 5)).toBe(3);
+  });
+
+  it("rejects invalid hierarchy depths", () => {
+    expect(() =>
+      resolveCopcCameraStreamHierarchyExpansionDepth(5, -1),
+    ).toThrow("selectedDepth must be a non-negative integer");
+    expect(() =>
+      resolveCopcCameraStreamHierarchyExpansionDepth(1.5, 1),
+    ).toThrow("configuredMaxDepth must be a non-negative integer");
+  });
+});
+
+describe("isCopcCameraStreamZoomRefinement", () => {
+  it("detects a stricter zoom band and a meaningful same-band dolly", () => {
+    const overview = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 3_500,
+      qualitySettings: balancedQuality,
+    });
+    const medium = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 946,
+      qualitySettings: balancedQuality,
+    });
+    const nearerMedium = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 800,
+      qualitySettings: balancedQuality,
+    });
+
+    expect(isCopcCameraStreamZoomRefinement(undefined, overview)).toBe(false);
+    expect(isCopcCameraStreamZoomRefinement(overview, medium)).toBe(true);
+    expect(isCopcCameraStreamZoomRefinement(medium, nearerMedium)).toBe(true);
+  });
+
+  it("does not reset adaptive state for a small height change or zoom-out", () => {
+    const previous = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 1_000,
+      qualitySettings: balancedQuality,
+    });
+    const smallChange = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 950,
+      qualitySettings: balancedQuality,
+    });
+    const zoomOut = createCopcCameraStreamLodSettings({
+      cameraHeightMeters: 2_000,
+      qualitySettings: balancedQuality,
+    });
+
+    expect(isCopcCameraStreamZoomRefinement(previous, smallChange)).toBe(false);
+    expect(isCopcCameraStreamZoomRefinement(previous, zoomOut)).toBe(false);
   });
 });
 
@@ -360,7 +467,7 @@ describe("createCopcCameraStreamRuntimeSettings", () => {
       detailWarmupMaxNodeCount: 64,
       detailWarmupMinInitialCoverageRatio: 0.35,
       detailWarmupPointCountPerNode: 2_000,
-      fastRendererProgressBatchNodeCount: 1,
+      fastRendererProgressBatchNodeCount: 2,
       maxReusedBackgroundStreams: 1,
       reusedBackgroundStreamGraceMilliseconds: 350,
       reuseMinExactNodeOverlapRatio: 0.25,

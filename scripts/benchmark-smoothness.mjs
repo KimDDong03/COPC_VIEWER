@@ -3,16 +3,25 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRunEvidence } from "./run-evidence.mjs";
+import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
+const playwrightCliPath = resolveLocalPackageBinary(
+  repoRoot,
+  "@playwright/cli",
+  "playwright-cli",
+);
+const viteCliPath = resolveLocalPackageBinary(repoRoot, "vite", "vite");
 const outputRoot = path.join(repoRoot, "output");
 const benchmarkRoot = path.join(outputRoot, "smoothness-benchmark");
+const benchmarkArtifactSchema = "copc-viewer.smoothness-benchmark";
+const benchmarkArtifactSchemaVersion = 1;
 const benchmarkOutputName = readBenchmarkOutputName();
-const benchmarkResultPath = path.join(
-  benchmarkRoot,
-  benchmarkOutputName,
-);
+const benchmarkProfile =
+  process.env.COPC_SMOOTHNESS_QC_PRESET?.trim() || undefined;
+const benchmarkResultPath = path.join(benchmarkRoot, benchmarkOutputName);
 const benchmarkFlowPath = path.join(
   benchmarkRoot,
   `${path.parse(benchmarkOutputName).name}-flow.mjs`,
@@ -23,8 +32,6 @@ const playwrightConfigPath = path.join(
 );
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
-const npxCommand = "npx";
-const playwrightCliPackage = "@playwright/cli@0.1.14";
 
 function readBenchmarkOutputName() {
   const outputName =
@@ -55,37 +62,46 @@ const smoothnessSampleCaseById = {
     expectedCoordinateTransformText: "EPSG:2992",
     expectedMinSelectedDepth: 2,
   },
-  "sofi-stadium": {
-    id: "sofi-stadium",
-    label: "SoFi Stadium",
+  "millsite-reservoir": {
+    id: "millsite-reservoir",
+    label: "Millsite Reservoir (USGS 3DEP)",
     kind: "preset",
-    sampleId: "sofi-stadium",
-    expectedSourcePreset: "SoFi Stadium",
-    expectedCoordinateTransformText: "EPSG:32611",
+    sampleId: "millsite-reservoir",
+    expectedSourcePreset: "Millsite Reservoir (USGS 3DEP)",
+    expectedCoordinateTransformText: "EPSG:6341",
     expectedMinSelectedDepth: 2,
   },
-  "custom-sofi": {
-    id: "custom-sofi",
-    label: "Custom SoFi URL",
+  "custom-millsite": {
+    id: "custom-millsite",
+    label: "Custom Millsite URL",
     kind: "custom",
-    url: "https://s3.amazonaws.com/hobu-lidar/sofi.copc.laz",
-    sourceCrs: "EPSG:32611",
+    url: "https://s3.amazonaws.com/hobu-lidar/millsite.copc.laz",
+    sourceCrs: "EPSG:6341",
     sourceDefinition:
-      "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs",
+      "+proj=utm +zone=12 +ellps=GRS80 +units=m +no_defs +type=crs",
     expectedSourcePreset: "Custom URL",
-    expectedCoordinateTransformText: "EPSG:32611 to EPSG:4326",
+    expectedCoordinateTransformText: "EPSG:6341 to EPSG:4326",
     expectedMinSelectedDepth: 2,
   },
 };
-const benchmarkSampleCases = readSampleCasesEnv(
-  "COPC_SMOOTHNESS_SAMPLES",
-  ["autzen-classified", "sofi-stadium", "custom-sofi"],
-);
+const benchmarkSampleCases = readSampleCasesEnv("COPC_SMOOTHNESS_SAMPLES", [
+  "autzen-classified",
+  "millsite-reservoir",
+  "custom-millsite",
+]);
 const benchmarkMaxPointCountPerNode = readPositiveIntegerEnv(
   "COPC_SMOOTHNESS_POINT_COUNT",
   Math.max(...benchmarkStreamPointBudgets),
 );
 const benchmarkRepeats = readPositiveIntegerEnv("COPC_SMOOTHNESS_REPEATS", 2);
+const benchmarkWarmupRuns = readNonNegativeIntegerEnv(
+  "COPC_SMOOTHNESS_WARMUP_RUNS",
+  0,
+);
+const benchmarkWarmupSettleTimeoutMilliseconds = readNonNegativeIntegerEnv(
+  "COPC_SMOOTHNESS_WARMUP_SETTLE_TIMEOUT_MS",
+  30_000,
+);
 const benchmarkDurationMilliseconds = readPositiveIntegerEnv(
   "COPC_SMOOTHNESS_DURATION_MS",
   3000,
@@ -121,6 +137,18 @@ const benchmarkCacheResetMode = readCacheResetModeEnv(
 const benchmarkWaitForFinalDetail = readBooleanEnv(
   "COPC_SMOOTHNESS_WAIT_FOR_FINAL_DETAIL",
   true,
+);
+const benchmarkFinalDetailTimeoutMilliseconds = readPositiveIntegerEnv(
+  "COPC_SMOOTHNESS_FINAL_DETAIL_TIMEOUT_MS",
+  120_000,
+);
+const benchmarkInteractiveTimeoutMilliseconds = readPositiveIntegerEnv(
+  "COPC_SMOOTHNESS_INTERACTIVE_TIMEOUT_MS",
+  120_000,
+);
+const benchmarkPrefetchWaitTimeoutMilliseconds = readPositiveIntegerEnv(
+  "COPC_SMOOTHNESS_PREFETCH_WAIT_TIMEOUT_MS",
+  benchmarkWaitForFinalDetail ? 5_000 : 2_000,
 );
 
 if (benchmarkMaxPointCountPerNode < Math.max(...benchmarkStreamPointBudgets)) {
@@ -161,7 +189,9 @@ function readPositiveIntegerListEnv(name, fallback) {
     values.length === 0 ||
     values.some((value) => !Number.isSafeInteger(value) || value <= 0)
   ) {
-    throw new Error(`${name} must be a comma-separated list of positive integers.`);
+    throw new Error(
+      `${name} must be a comma-separated list of positive integers.`,
+    );
   }
 
   return [...new Set(values)];
@@ -206,7 +236,11 @@ function readPointRendererEnv(name, fallback) {
     return fallback;
   }
 
-  if (rawValue !== "typed" && rawValue !== "primitive" && rawValue !== "buffer") {
+  if (
+    rawValue !== "typed" &&
+    rawValue !== "primitive" &&
+    rawValue !== "buffer"
+  ) {
     throw new Error(`${name} must be one of: typed, primitive, buffer.`);
   }
 
@@ -262,7 +296,9 @@ function readSampleCasesEnv(name, fallbackIds) {
         .filter(Boolean)
     : fallbackIds;
   const uniqueIds = [...new Set(ids)];
-  const unknownIds = uniqueIds.filter((id) => !(id in smoothnessSampleCaseById));
+  const unknownIds = uniqueIds.filter(
+    (id) => !(id in smoothnessSampleCaseById),
+  );
 
   if (unknownIds.length > 0) {
     throw new Error(
@@ -276,7 +312,11 @@ function readSampleCasesEnv(name, fallbackIds) {
 function assertInside(parent, target) {
   const relative = path.relative(parent, target);
 
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error(`Refusing to operate outside ${parent}: ${target}`);
   }
 }
@@ -294,21 +334,19 @@ function run(command, args, cwd) {
   }
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}`,
+    );
   }
 }
 
 function runPlaywrightCli(args) {
-  const result = spawnSync(
-    npxCommand,
-    ["--yes", "--package", playwrightCliPackage, "playwright-cli", ...args],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      shell: isWindows,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const result = spawnSync(process.execPath, [playwrightCliPath, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
@@ -358,14 +396,14 @@ function extractPlaywrightResult(output) {
         isEscaped = false;
       } else if (character === "\\") {
         isEscaped = true;
-      } else if (character === "\"") {
+      } else if (character === '"') {
         isInsideString = false;
       }
 
       continue;
     }
 
-    if (character === "\"") {
+    if (character === '"') {
       isInsideString = true;
       continue;
     }
@@ -460,7 +498,10 @@ function createSmoothnessFlow(
   streamPointBudgets,
   pointRenderer,
   sampleCases,
+  profile,
   repeatCount,
+  warmupRunCount,
+  warmupSettleTimeoutMilliseconds,
   durationMilliseconds,
   cameraSteps,
   moveMeters,
@@ -468,13 +509,19 @@ function createSmoothnessFlow(
   minSelectedDepthOverride,
   cacheResetMode,
   waitForFinalDetail,
+  finalDetailTimeoutMilliseconds,
+  interactiveTimeoutMilliseconds,
+  prefetchWaitTimeoutMilliseconds,
 ) {
   return `async (page) => {
   const maxPointCountPerNode = ${JSON.stringify(maxPointCountPerNode)};
   const streamPointBudgets = ${JSON.stringify(streamPointBudgets)};
   const pointRenderer = ${JSON.stringify(pointRenderer)};
   const sampleCases = ${JSON.stringify(sampleCases)};
+  const profile = ${JSON.stringify(profile)};
   const repeatCount = ${JSON.stringify(repeatCount)};
+  const warmupRunCount = ${JSON.stringify(warmupRunCount)};
+  const warmupSettleTimeoutMilliseconds = ${JSON.stringify(warmupSettleTimeoutMilliseconds)};
   const durationMilliseconds = ${JSON.stringify(durationMilliseconds)};
   const cameraSteps = ${JSON.stringify(cameraSteps)};
   const moveMeters = ${JSON.stringify(moveMeters)};
@@ -482,11 +529,16 @@ function createSmoothnessFlow(
   const minSelectedDepthOverride = ${JSON.stringify(minSelectedDepthOverride)};
   const cacheResetMode = ${JSON.stringify(cacheResetMode)};
   const waitForFinalDetail = ${JSON.stringify(waitForFinalDetail)};
+  const finalDetailTimeoutMilliseconds = ${JSON.stringify(finalDetailTimeoutMilliseconds)};
+  const interactiveTimeoutMilliseconds = ${JSON.stringify(interactiveTimeoutMilliseconds)};
+  const prefetchWaitTimeoutMilliseconds = ${JSON.stringify(prefetchWaitTimeoutMilliseconds)};
   const clearCachesBeforeRun = cacheResetMode !== "none";
   const failures = [];
   const consoleProblems = [];
   const pageErrors = [];
   const results = [];
+  const warmups = [];
+  const hierarchyHolds = [];
 
   async function readBrowserGraphics() {
     return page.evaluate(() => {
@@ -511,6 +563,17 @@ function createSmoothnessFlow(
     });
   }
 
+  async function readBrowserEnvironment() {
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    const version = page.context().browser()?.version() ?? "";
+
+    if (!userAgent || !version) {
+      throw new Error("Browser user agent and version metadata are required.");
+    }
+
+    return { userAgent, version };
+  }
+
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
       consoleProblems.push(\`\${message.type()}: \${message.text()}\`);
@@ -533,9 +596,12 @@ function createSmoothnessFlow(
     const renderedStatusTexts = [
       "Rendered ",
       "Auto LOD rendered",
-      "Camera stream rendered",
+      "Camera stream terminal rendered",
+      "Camera stream hierarchy-refining",
+      "Camera stream interactive-ready",
       "Camera stream previewed",
       "Camera stream partial render",
+      "Camera stream retained",
     ];
 
     try {
@@ -558,39 +624,282 @@ function createSmoothnessFlow(
     }
   }
 
-  async function waitForCameraStreamStatus() {
+  function isExpectedCameraStreamRequest(status, expectedRequestId) {
+    return status?.cameraStreamRequestId === expectedRequestId;
+  }
+
+  function isSameCameraStreamRequestLineage(
+    status,
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+  ) {
+    return (
+      Number.isSafeInteger(status?.cameraStreamRequestId) &&
+      status.cameraStreamRequestId >= expectedRequestId &&
+      status.cameraStreamCameraEpoch === expectedCameraEpoch &&
+      typeof expectedCameraPoseFingerprint === "string" &&
+      expectedCameraPoseFingerprint.length > 0 &&
+      status.cameraStreamCameraPoseFingerprint ===
+        expectedCameraPoseFingerprint
+    );
+  }
+
+  function hasFinalCameraStreamResult(
+    status,
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+  ) {
+    if (
+      !isSameCameraStreamRequestLineage(
+        status,
+        expectedRequestId,
+        expectedCameraEpoch,
+        expectedCameraPoseFingerprint,
+      )
+    ) {
+      return false;
+    }
+
+    return status.cameraStreamVisualQuality?.isTerminalReady === true;
+  }
+
+  function hasInteractiveCameraStreamResult(
+    status,
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+  ) {
+    return (
+      isSameCameraStreamRequestLineage(
+        status,
+        expectedRequestId,
+        expectedCameraEpoch,
+        expectedCameraPoseFingerprint,
+      ) &&
+      isCameraStreamInteractiveStatus(status.status)
+    );
+  }
+
+  function createCameraStreamCompletion(
+    status,
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+    waited,
+  ) {
+    const mode = waitForFinalDetail ? "final-detail" : "interactive";
+    const requestMatched = isExpectedCameraStreamRequest(
+      status,
+      expectedRequestId,
+    );
+    const sameCameraRequestLineage = isSameCameraStreamRequestLineage(
+      status,
+      expectedRequestId,
+      expectedCameraEpoch,
+      expectedCameraPoseFingerprint,
+    );
+    const structuredCompletion =
+      status.cameraStreamVisualQuality?.isTerminalReady;
+    const evidenceSource =
+      waitForFinalDetail && typeof structuredCompletion === "boolean"
+        ? "visual-quality"
+        : "status-text";
+    const isComplete = waitForFinalDetail
+      ? hasFinalCameraStreamResult(
+          status,
+          expectedRequestId,
+          expectedCameraEpoch,
+          expectedCameraPoseFingerprint,
+        )
+      : hasInteractiveCameraStreamResult(
+          status,
+          expectedRequestId,
+          expectedCameraEpoch,
+          expectedCameraPoseFingerprint,
+        );
+
+    return {
+      mode,
+      isComplete,
+      requestMatched,
+      sameCameraRequestLineage,
+      expectedRequestId,
+      expectedCameraEpoch,
+      expectedCameraPoseFingerprint,
+      observedRequestId: status?.cameraStreamRequestId,
+      observedCameraEpoch: status?.cameraStreamCameraEpoch,
+      observedCameraPoseFingerprint:
+        status?.cameraStreamCameraPoseFingerprint,
+      waited,
+      timedOut: false,
+      timeoutMilliseconds: waitForFinalDetail
+        ? finalDetailTimeoutMilliseconds
+        : interactiveTimeoutMilliseconds,
+      statusText: status?.status,
+      evidenceSource,
+    };
+  }
+
+  async function waitForCameraStreamStatus(
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+  ) {
     try {
-      await page.waitForFunction(
-        () => document.querySelector("#copc-status")?.textContent?.includes("Camera stream rendered"),
-        undefined,
-        { timeout: 120_000 },
+      const statusHandle = await page.waitForFunction(
+        ({
+          targetRequestId,
+          targetCameraEpoch,
+          targetCameraPoseFingerprint,
+        }) => {
+          const benchmark = window.__copcBasicViewerBenchmark;
+          const status = benchmark?.getStatus();
+
+          if (
+            !Number.isSafeInteger(status?.cameraStreamRequestId) ||
+            status.cameraStreamRequestId < targetRequestId ||
+            status.cameraStreamCameraEpoch !== targetCameraEpoch ||
+            status.cameraStreamCameraPoseFingerprint !==
+              targetCameraPoseFingerprint
+          ) {
+            return undefined;
+          }
+
+          const isComplete =
+            status.cameraStreamVisualQuality?.isTerminalReady === true;
+          const hasFailed = status.status?.startsWith(
+            "COPC inspection failed:",
+          );
+
+          return isComplete || hasFailed ? status : undefined;
+        },
+        {
+          targetRequestId: expectedRequestId,
+          targetCameraEpoch: expectedCameraEpoch,
+          targetCameraPoseFingerprint: expectedCameraPoseFingerprint,
+        },
+        { timeout: finalDetailTimeoutMilliseconds },
       );
+      const status = await statusHandle.jsonValue();
+      await statusHandle.dispose();
+      if (status?.status?.startsWith("COPC inspection failed:")) {
+        throw new Error(
+          \`Camera stream request \${expectedRequestId} failed before terminal completion: \${status.status}\`,
+        );
+      }
+      return status;
     } catch (error) {
-      const currentStatus = await page.locator("#copc-status").textContent();
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Camera stream request ")
+      ) {
+        throw error;
+      }
+      const currentStatus = await benchmarkStatus();
+      const timeoutEvidence = {
+        expectedRequestId,
+        expectedCameraEpoch,
+        expectedCameraPoseFingerprint,
+        observedRequestId: currentStatus.cameraStreamRequestId,
+        observedCameraEpoch: currentStatus.cameraStreamCameraEpoch,
+        observedCameraPoseFingerprint:
+          currentStatus.cameraStreamCameraPoseFingerprint,
+        sameCameraLineage: isSameCameraStreamRequestLineage(
+          currentStatus,
+          expectedRequestId,
+          expectedCameraEpoch,
+          expectedCameraPoseFingerprint,
+        ),
+        visualQuality: currentStatus.cameraStreamVisualQuality,
+        diagnostics: currentStatus.cameraStreamDiagnosticsData,
+        lod: currentStatus.cameraStreamLodData,
+        prefetch: currentStatus.cameraStreamPrefetchData,
+        hierarchyCache: currentStatus.hierarchyCacheStats,
+        statusText: currentStatus.status,
+      };
       throw new Error(
-        \`Timed out waiting for a camera stream render. Current status: "\${currentStatus}". \${error.message}\`,
+        \`Timed out after \${finalDetailTimeoutMilliseconds} ms waiting for final camera stream lineage from request \${expectedRequestId}. Evidence: \${JSON.stringify(timeoutEvidence)}. \${error.message}\`,
       );
     }
   }
 
-  async function waitForCameraStreamInteractiveStatus() {
+  async function waitForCameraStreamInteractiveStatus(
+    expectedRequestId,
+    expectedCameraEpoch,
+    expectedCameraPoseFingerprint,
+  ) {
+    try {
+      const statusHandle = await page.waitForFunction(
+        ({
+          targetRequestId,
+          targetCameraEpoch,
+          targetCameraPoseFingerprint,
+        }) => {
+          const benchmark = window.__copcBasicViewerBenchmark;
+          const status = benchmark?.getStatus();
+
+          if (
+            !Number.isSafeInteger(status?.cameraStreamRequestId) ||
+            status.cameraStreamRequestId < targetRequestId ||
+            status.cameraStreamCameraEpoch !== targetCameraEpoch ||
+            status.cameraStreamCameraPoseFingerprint !==
+              targetCameraPoseFingerprint
+          ) {
+            return undefined;
+          }
+
+          const statusText = status.status ?? "";
+          const isInteractive =
+            statusText.includes("Camera stream terminal rendered") ||
+            statusText.includes("Camera stream hierarchy-refining") ||
+            statusText.includes("Camera stream interactive-ready") ||
+            statusText.includes("Camera stream previewed") ||
+            statusText.includes("Camera stream partial render") ||
+            statusText.includes("Camera stream retained");
+
+          return isInteractive ? status : undefined;
+        },
+        {
+          targetRequestId: expectedRequestId,
+          targetCameraEpoch: expectedCameraEpoch,
+          targetCameraPoseFingerprint: expectedCameraPoseFingerprint,
+        },
+        { timeout: interactiveTimeoutMilliseconds },
+      );
+      const status = await statusHandle.jsonValue();
+      await statusHandle.dispose();
+      return status;
+    } catch (error) {
+      const currentStatus = await benchmarkStatus();
+      throw new Error(
+        \`Timed out after \${interactiveTimeoutMilliseconds} ms waiting for interactive camera stream lineage from request \${expectedRequestId}. Current request: \${currentStatus.cameraStreamRequestId}; epoch: \${currentStatus.cameraStreamCameraEpoch}; pose match: \${currentStatus.cameraStreamCameraPoseFingerprint === expectedCameraPoseFingerprint}; status: "\${currentStatus.status}". \${error.message}\`,
+      );
+    }
+  }
+
+  async function waitForAnyCameraStreamInteractiveStatus() {
     try {
       await page.waitForFunction(
         () => {
           const status = document.querySelector("#copc-status")?.textContent ?? "";
           return (
-            status.includes("Camera stream rendered") ||
+            status.includes("Camera stream terminal rendered") ||
+            status.includes("Camera stream hierarchy-refining") ||
+            status.includes("Camera stream interactive-ready") ||
             status.includes("Camera stream previewed") ||
-            status.includes("Camera stream partial render")
+            status.includes("Camera stream partial render") ||
+            status.includes("Camera stream retained")
           );
         },
         undefined,
-        { timeout: 120_000 },
+        { timeout: interactiveTimeoutMilliseconds },
       );
     } catch (error) {
       const currentStatus = await page.locator("#copc-status").textContent();
       throw new Error(
-        \`Timed out waiting for an interactive camera stream render. Current status: "\${currentStatus}". \${error.message}\`,
+        \`Timed out after \${interactiveTimeoutMilliseconds} ms waiting for any interactive camera stream render. Current status: "\${currentStatus}". \${error.message}\`,
       );
     }
   }
@@ -636,6 +945,104 @@ function createSmoothnessFlow(
 
       return benchmark.waitForCameraStreamPrefetch(timeoutMilliseconds);
     }, timeoutMilliseconds);
+  }
+
+  function createPostPrefetchRefinementEvidence(
+    status,
+    initialStatus,
+    initialRequestId,
+  ) {
+    const observedRequestId = status?.cameraStreamRequestId;
+    const initialCameraEpoch = initialStatus?.cameraStreamCameraEpoch;
+    const observedCameraEpoch = status?.cameraStreamCameraEpoch;
+    const initialCameraPoseFingerprint =
+      initialStatus?.cameraStreamCameraPoseFingerprint;
+    const observedCameraPoseFingerprint =
+      status?.cameraStreamCameraPoseFingerprint;
+    const diagnostics =
+      status?.cameraStreamDiagnosticsData ??
+      parseCameraStreamDiagnostics(status?.cameraStreamDiagnostics);
+    const visualQuality = status?.cameraStreamVisualQuality;
+    const prefetch = status?.cameraStreamPrefetchData;
+    const requestAdvanced =
+      Number.isSafeInteger(initialRequestId) &&
+      Number.isSafeInteger(observedRequestId) &&
+      observedRequestId > initialRequestId;
+    const sameCameraFollowup =
+      requestAdvanced &&
+      Number.isSafeInteger(initialCameraEpoch) &&
+      observedCameraEpoch === initialCameraEpoch &&
+      typeof initialCameraPoseFingerprint === "string" &&
+      initialCameraPoseFingerprint.length > 0 &&
+      observedCameraPoseFingerprint === initialCameraPoseFingerprint;
+
+    return {
+      timeoutMilliseconds: prefetchWaitTimeoutMilliseconds,
+      initialRequestId,
+      observedRequestId,
+      requestAdvanced,
+      initialCameraEpoch,
+      observedCameraEpoch,
+      initialCameraPoseFingerprint,
+      observedCameraPoseFingerprint,
+      sameCameraFollowup,
+      prefetchCompleted:
+        prefetch?.state === "completed" && prefetch.completed === true,
+      prefetchState: prefetch?.state ?? "not-reported",
+      renderedPointCount: parseCameraStreamPointCount(status?.status),
+      selectedDepth: diagnostics?.selectedDepth,
+      isTerminalReady: visualQuality?.isTerminalReady === true,
+      visualQuality,
+      statusText: status?.status,
+    };
+  }
+
+  async function settleWarmupPrefetch() {
+    const startedAt = Date.now();
+    const status = await waitForCameraStreamPrefetch(
+      warmupSettleTimeoutMilliseconds,
+    );
+    const prefetch = status.cameraStreamPrefetchData;
+    const isComplete =
+      prefetch?.state === "completed" && prefetch.completed === true;
+
+    return {
+      timeoutMilliseconds: warmupSettleTimeoutMilliseconds,
+      durationMilliseconds: Date.now() - startedAt,
+      isComplete,
+      timedOut: prefetch?.state === "pending",
+      state: prefetch?.state ?? "not-reported",
+      statusText: status.cameraStreamPrefetch,
+      prefetch,
+    };
+  }
+
+  async function holdWarmCameraHierarchy() {
+    return page.evaluate(async () => {
+      const benchmark = window.__copcBasicViewerBenchmark;
+
+      if (!benchmark) {
+        throw new Error("Basic viewer benchmark API was not installed.");
+      }
+
+      if (typeof benchmark.holdCameraHierarchyForSmoothness !== "function") {
+        throw new Error("Warm hierarchy hold API was not installed.");
+      }
+
+      return benchmark.holdCameraHierarchyForSmoothness();
+    });
+  }
+
+  async function releaseWarmCameraHierarchy() {
+    await page.evaluate(() => {
+      const benchmark = window.__copcBasicViewerBenchmark;
+
+      if (!benchmark) {
+        throw new Error("Basic viewer benchmark API was not installed.");
+      }
+
+      benchmark.releaseCameraHierarchyForSmoothness?.();
+    });
   }
 
   async function prepareViewer(sampleCase, initialStreamPointBudget) {
@@ -758,7 +1165,7 @@ function createSmoothnessFlow(
 
       checkbox.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await waitForCameraStreamInteractiveStatus();
+    await waitForAnyCameraStreamInteractiveStatus();
 
     return {
       sampleId: sampleCase.id,
@@ -787,7 +1194,7 @@ function createSmoothnessFlow(
 
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }, streamPointBudget);
-    await waitForCameraStreamInteractiveStatus();
+    await waitForAnyCameraStreamInteractiveStatus();
   }
 
   function average(values) {
@@ -801,6 +1208,19 @@ function createSmoothnessFlow(
   }
 
   function summarizeFrames(frameDeltas) {
+    if (frameDeltas.length === 0) {
+      return {
+        frameCount: 0,
+        averageFrameMilliseconds: 0,
+        medianFrameMilliseconds: 0,
+        p95FrameMilliseconds: 0,
+        maxFrameMilliseconds: 0,
+        estimatedAverageFps: 0,
+        frameDeltasOver50Milliseconds: 0,
+        frameDeltasOver100Milliseconds: 0,
+      };
+    }
+
     return {
       frameCount: frameDeltas.length,
       averageFrameMilliseconds: average(frameDeltas),
@@ -814,9 +1234,13 @@ function createSmoothnessFlow(
   }
 
   function parseCameraStreamPointCount(statusText) {
-    const match = statusText.match(
-      /Camera stream (?:rendered|previewed|partial render) ([\\d,]+) points/,
-    );
+    const match =
+      statusText.match(
+        /Camera stream (?:terminal rendered|hierarchy-refining with|interactive-ready with|previewed|partial render) ([\\d,]+) points/,
+      ) ??
+      statusText.match(
+        /Camera stream retained [^.]*? with ([\\d,]+) points/,
+      );
 
     if (!match) {
       return undefined;
@@ -827,13 +1251,32 @@ function createSmoothnessFlow(
 
   function isCameraStreamInteractiveStatus(statusText) {
     return (
-      statusText.includes("Camera stream rendered") ||
+      statusText.includes("Camera stream terminal rendered") ||
+      statusText.includes("Camera stream hierarchy-refining") ||
+      statusText.includes("Camera stream interactive-ready") ||
       statusText.includes("Camera stream previewed") ||
-      statusText.includes("Camera stream partial render")
+      statusText.includes("Camera stream partial render") ||
+      statusText.includes("Camera stream retained")
     );
   }
 
   function parseCameraStreamDetailProgress(statusText) {
+    const terminalMatch = statusText.match(
+      /Camera stream terminal rendered [\\d,]+ points from the complete [\\d,]+-node additive set [(]([\\d,]+) frontier nodes/,
+    );
+
+    if (terminalMatch) {
+      const finalNodeCount = Number(terminalMatch[1].replaceAll(",", ""));
+
+      return {
+        finalNodeCount,
+        renderedFinalNodeCount: finalNodeCount,
+        renderedFinalNodeCoverageRatio: finalNodeCount > 0 ? 1 : 0,
+        reachedRenderBudget: statusText.includes("render budget filled"),
+        isComplete: true,
+      };
+    }
+
     const renderedMatch = statusText.match(
       /Camera stream rendered [\\d,]+ points from ([\\d,]+) COPC nodes/,
     );
@@ -903,6 +1346,40 @@ function createSmoothnessFlow(
       sumDecodeMilliseconds: Number(match[7].replaceAll(",", "")),
       sumWorkerMilliseconds: Number(match[8].replaceAll(",", "")),
       sumQueueMilliseconds: Number(match[9].replaceAll(",", "")),
+      evidenceSource: "point-geometry-timing",
+    };
+  }
+
+  function parseGeometryCacheCounters(cacheText) {
+    const match = cacheText?.match(
+      /([0-9,]+)[ ]*[/][ ]*[0-9,]+ loaded batches, ([0-9,]+) hits, ([0-9,]+) density reuses, ([0-9,]+) misses, ([0-9,]+) evictions/,
+    );
+
+    if (!match) {
+      return undefined;
+    }
+
+    return {
+      loadedBatchCount: Number(match[1].replaceAll(",", "")),
+      hitCount: Number(match[2].replaceAll(",", "")),
+      densityReuseCount: Number(match[3].replaceAll(",", "")),
+      missCount: Number(match[4].replaceAll(",", "")),
+      evictionCount: Number(match[5].replaceAll(",", "")),
+    };
+  }
+
+  function subtractGeometryCacheCounters(before, after) {
+    if (!before || !after) {
+      return undefined;
+    }
+
+    return {
+      loadedBatchCount: after.loadedBatchCount - before.loadedBatchCount,
+      hitCount: after.hitCount - before.hitCount,
+      densityReuseCount:
+        after.densityReuseCount - before.densityReuseCount,
+      missCount: after.missCount - before.missCount,
+      evictionCount: after.evictionCount - before.evictionCount,
     };
   }
 
@@ -918,8 +1395,70 @@ function createSmoothnessFlow(
     return budgetMatch ? Number(budgetMatch[1].replaceAll(",", "")) : undefined;
   }
 
-  async function measureSmoothness(sampleSnapshot, streamPointBudget, runIndex) {
-    const measurement = await page.evaluate(
+  async function stopSmoothnessFrameCollector(frameCollectorId) {
+    return page.evaluate((expectedFrameCollectorId) => {
+      const observedFrameCollector = window.__copcSmoothnessFrameCollector;
+      const frameCollectorRegistry =
+        window.__copcSmoothnessFrameCollectors instanceof Map
+          ? window.__copcSmoothnessFrameCollectors
+          : undefined;
+      const frameCollector =
+        frameCollectorRegistry?.get(expectedFrameCollectorId) ??
+        (observedFrameCollector?.id === expectedFrameCollectorId
+          ? observedFrameCollector
+          : undefined);
+      const observedFrameCollectorId = observedFrameCollector?.id;
+
+      if (
+        observedFrameCollector &&
+        observedFrameCollector !== frameCollector &&
+        typeof observedFrameCollector.stop === "function"
+      ) {
+        observedFrameCollector.stop("stale-collector-cleanup");
+      }
+
+      if (!frameCollector) {
+        return {
+          collectorMatched: false,
+          expectedFrameCollectorId,
+          observedFrameCollectorId,
+          cameraMovementFrameDeltas: [],
+          terminalRefinementFrameDeltas: [],
+          terminalRefinementDurationMilliseconds: 0,
+          collectedFrameCount: 0,
+          stopReason: "collector-missing",
+        };
+      }
+
+      const collectorMatched =
+        observedFrameCollector === frameCollector &&
+        frameCollector.id === expectedFrameCollectorId;
+      const snapshot = frameCollector.stop(
+        collectorMatched
+          ? "measured-status-confirmed"
+          : "detached-collector-cleanup",
+      );
+
+      return {
+        ...snapshot,
+        collectorMatched,
+        expectedFrameCollectorId,
+        observedFrameCollectorId,
+      };
+    }, frameCollectorId);
+  }
+
+  async function measureSmoothness(
+    sampleSnapshot,
+    streamPointBudget,
+    runIndex,
+    measurementType = "measured",
+  ) {
+    const runLabel =
+      measurementType === "warmup"
+        ? \`warmup \${runIndex}\`
+        : \`run \${runIndex}\`;
+    let measurement = await page.evaluate(
       async ({ durationMilliseconds, cameraSteps, moveMeters, cameraHeightAboveCloudMeters, clearCachesBeforeRun, cacheResetMode }) => {
         const benchmark = window.__copcBasicViewerBenchmark;
 
@@ -934,123 +1473,402 @@ function createSmoothnessFlow(
             throw new Error("Basic viewer benchmark cache reset API was not installed.");
           }
 
-          cacheReset = benchmark.clearStreamingCaches({
+          cacheReset = await benchmark.clearStreamingCaches({
             resetLayerCaches: cacheResetMode === "layer",
           });
         }
 
-        const frameDeltas = [];
-        let previousFrameTimestamp;
-        let isRunning = true;
+        const geometryCacheBeforeText = benchmark.getStatus().geometryCache;
 
-        function onFrame(timestamp) {
-          if (previousFrameTimestamp !== undefined) {
-            frameDeltas.push(timestamp - previousFrameTimestamp);
+        const staleFrameCollectorRegistry =
+          window.__copcSmoothnessFrameCollectors instanceof Map
+            ? window.__copcSmoothnessFrameCollectors
+            : undefined;
+
+        if (staleFrameCollectorRegistry) {
+          for (const staleFrameCollector of [
+            ...staleFrameCollectorRegistry.values(),
+          ]) {
+            if (typeof staleFrameCollector?.stop === "function") {
+              staleFrameCollector.stop("superseded-by-next-measurement");
+            }
           }
+        } else {
+          const staleFrameCollector = window.__copcSmoothnessFrameCollector;
 
-          previousFrameTimestamp = timestamp;
-
-          if (isRunning) {
-            window.requestAnimationFrame(onFrame);
+          if (typeof staleFrameCollector?.stop === "function") {
+            staleFrameCollector.stop("superseded-by-next-measurement");
           }
         }
 
-        window.requestAnimationFrame(onFrame);
-        const startedAt = performance.now();
-        const status = await benchmark.moveCameraForSmoothness({
-          steps: cameraSteps,
-          durationMilliseconds,
-          heightAboveCloudMeters: cameraHeightAboveCloudMeters,
-          moveMeters,
-        });
-        const completedAt = performance.now();
-        await new Promise((resolve) => {
-          window.requestAnimationFrame(() => {
-            isRunning = false;
-            resolve(undefined);
-          });
-        });
+        const frameCollectorId =
+          Date.now() + "-" + Math.random().toString(36).slice(2);
+        const frameDeltas = [];
+        const frameEndTimestamps = [];
+        const longFrameEvidence = [];
+        let previousFrameTimestamp;
+        let isRunning = true;
+        let animationFrameId;
+        let cameraMovementCompletedAtMilliseconds;
+        let stoppedAtMilliseconds;
 
-        return {
-          measuredDurationMilliseconds: completedAt - startedAt,
-          cacheReset,
-          frameDeltas,
-          status,
+        function onFrame(timestamp) {
+          if (!isRunning) {
+            return;
+          }
+
+          if (previousFrameTimestamp !== undefined) {
+            const frameDeltaMilliseconds = timestamp - previousFrameTimestamp;
+            frameDeltas.push(frameDeltaMilliseconds);
+            frameEndTimestamps.push(timestamp);
+
+            if (frameDeltaMilliseconds > 50) {
+              const status = window.__copcBasicViewerBenchmark?.getStatus();
+              longFrameEvidence.push({
+                frameIndex: frameDeltas.length - 1,
+                frameDeltaMilliseconds,
+                frameEndTimestampMilliseconds: timestamp,
+                cameraStreamRequestId: status?.cameraStreamRequestId,
+                status: status?.status,
+                rendererTiming: status?.rendererTiming,
+                pointGeometryTiming: status?.pointGeometryTiming,
+                cameraStreamDiagnostics:
+                  status?.cameraStreamDiagnosticsData,
+                cameraStreamVisualQuality:
+                  status?.cameraStreamVisualQuality,
+              });
+            }
+          }
+
+          previousFrameTimestamp = timestamp;
+          animationFrameId = window.requestAnimationFrame(onFrame);
+        }
+
+        const frameCollector = {
+          id: frameCollectorId,
+          markCameraMovementCompleted(timestamp) {
+            if (!Number.isFinite(timestamp)) {
+              throw new Error(
+                "Smoothness benchmark camera movement completion timestamp was not finite.",
+              );
+            }
+
+            cameraMovementCompletedAtMilliseconds = timestamp;
+          },
+          stop(stopReason = "measurement-complete") {
+            if (isRunning) {
+              isRunning = false;
+
+              if (animationFrameId !== undefined) {
+                window.cancelAnimationFrame(animationFrameId);
+              }
+            }
+
+            stoppedAtMilliseconds ??= performance.now();
+            const firstRefinementFrameIndex =
+              cameraMovementCompletedAtMilliseconds === undefined
+                ? -1
+                : frameEndTimestamps.findIndex(
+                    (timestamp) =>
+                      timestamp > cameraMovementCompletedAtMilliseconds,
+                  );
+            const movementFrameCount =
+              firstRefinementFrameIndex === -1
+                ? frameDeltas.length
+                : firstRefinementFrameIndex;
+
+            if (window.__copcSmoothnessFrameCollector === frameCollector) {
+              delete window.__copcSmoothnessFrameCollector;
+            }
+            const activeFrameCollectorRegistry =
+              window.__copcSmoothnessFrameCollectors instanceof Map
+                ? window.__copcSmoothnessFrameCollectors
+                : undefined;
+
+            if (
+              activeFrameCollectorRegistry?.get(frameCollectorId) ===
+              frameCollector
+            ) {
+              activeFrameCollectorRegistry.delete(frameCollectorId);
+            }
+
+            if (activeFrameCollectorRegistry?.size === 0) {
+              delete window.__copcSmoothnessFrameCollectors;
+            }
+
+            return {
+              frameCollectorId,
+              cameraMovementFrameDeltas: frameDeltas.slice(
+                0,
+                movementFrameCount,
+              ),
+              terminalRefinementFrameDeltas: frameDeltas.slice(
+                movementFrameCount,
+              ),
+              terminalRefinementDurationMilliseconds:
+                cameraMovementCompletedAtMilliseconds === undefined
+                  ? 0
+                  : Math.max(
+                      0,
+                      stoppedAtMilliseconds -
+                        cameraMovementCompletedAtMilliseconds,
+                    ),
+              longFrameEvidence: longFrameEvidence.map((evidence) => ({
+                ...evidence,
+                phase:
+                  evidence.frameIndex < movementFrameCount
+                    ? "camera-movement"
+                    : "terminal-refinement",
+                phaseFrameIndex:
+                  evidence.frameIndex < movementFrameCount
+                    ? evidence.frameIndex
+                    : evidence.frameIndex - movementFrameCount,
+              })),
+              collectedFrameCount: frameDeltas.length,
+              cameraMovementCompletedAtMilliseconds,
+              stopReason,
+            };
+          },
         };
+
+        const frameCollectorRegistry = new Map();
+        frameCollectorRegistry.set(frameCollectorId, frameCollector);
+        window.__copcSmoothnessFrameCollectors = frameCollectorRegistry;
+        window.__copcSmoothnessFrameCollector = frameCollector;
+        animationFrameId = window.requestAnimationFrame(onFrame);
+
+        try {
+          const startedAt = performance.now();
+          const status = await benchmark.moveCameraForSmoothness({
+            steps: cameraSteps,
+            durationMilliseconds,
+            heightAboveCloudMeters: cameraHeightAboveCloudMeters,
+            moveMeters,
+          });
+          const completedAt = performance.now();
+          frameCollector.markCameraMovementCompleted(
+            status?.cameraMovementCompletedAtMilliseconds,
+          );
+
+          return {
+            measuredDurationMilliseconds: completedAt - startedAt,
+            cacheReset,
+            geometryCacheBeforeText,
+            frameCollectorId,
+            status,
+          };
+        } catch (error) {
+          frameCollector.stop("camera-movement-error");
+          throw error;
+        }
       },
       { durationMilliseconds, cameraSteps, moveMeters, cameraHeightAboveCloudMeters, clearCachesBeforeRun, cacheResetMode },
     );
-    const cameraStreamFirstResponseMilliseconds =
-      measurement.status.cameraStreamFirstResponseMilliseconds;
+    const initialStatus = measurement.status;
+    const expectedCameraStreamRequestId =
+      initialStatus?.expectedCameraStreamRequestId;
+    const expectedCameraStreamCameraEpoch =
+      initialStatus?.cameraStreamCameraEpoch;
+    const expectedCameraStreamCameraPoseFingerprint =
+      initialStatus?.cameraStreamCameraPoseFingerprint;
 
-    if (
-      waitForFinalDetail &&
-      !measurement.status.status.includes("Camera stream rendered")
-    ) {
-      await waitForCameraStreamStatus();
-      measurement.status = await benchmarkStatus();
-    } else if (
-      !waitForFinalDetail &&
-      !isCameraStreamInteractiveStatus(measurement.status.status)
-    ) {
-      await waitForCameraStreamInteractiveStatus();
-      measurement.status = await benchmarkStatus();
+    const cameraStreamFirstResponseMilliseconds =
+      initialStatus?.cameraStreamFirstResponseMilliseconds;
+    const cameraStreamForegroundCompletionMilliseconds =
+      initialStatus?.cameraStreamForegroundCompletionMilliseconds;
+    const cameraStreamFirstResponseEvidence =
+      initialStatus?.cameraStreamFirstResponseEvidence;
+    let measuredStatus = initialStatus;
+    let waitedForMeasuredStatus = false;
+    let frameCollection;
+
+    try {
+      if (!Number.isSafeInteger(expectedCameraStreamRequestId)) {
+        throw new Error(
+          \`\${runLabel} did not report an expected camera stream request ID.\`,
+        );
+      }
+      if (!Number.isSafeInteger(expectedCameraStreamCameraEpoch)) {
+        throw new Error(
+          \`\${runLabel} did not report an expected camera stream epoch.\`,
+        );
+      }
+      if (
+        typeof expectedCameraStreamCameraPoseFingerprint !== "string" ||
+        expectedCameraStreamCameraPoseFingerprint.length === 0
+      ) {
+        throw new Error(
+          \`\${runLabel} did not report an expected camera pose fingerprint.\`,
+        );
+      }
+
+      if (
+        waitForFinalDetail &&
+        !hasFinalCameraStreamResult(
+          measuredStatus,
+          expectedCameraStreamRequestId,
+          expectedCameraStreamCameraEpoch,
+          expectedCameraStreamCameraPoseFingerprint,
+        )
+      ) {
+        measuredStatus = await waitForCameraStreamStatus(
+          expectedCameraStreamRequestId,
+          expectedCameraStreamCameraEpoch,
+          expectedCameraStreamCameraPoseFingerprint,
+        );
+        waitedForMeasuredStatus = true;
+      } else if (
+        !waitForFinalDetail &&
+        !hasInteractiveCameraStreamResult(
+          measuredStatus,
+          expectedCameraStreamRequestId,
+          expectedCameraStreamCameraEpoch,
+          expectedCameraStreamCameraPoseFingerprint,
+        )
+      ) {
+        measuredStatus = await waitForCameraStreamInteractiveStatus(
+          expectedCameraStreamRequestId,
+          expectedCameraStreamCameraEpoch,
+          expectedCameraStreamCameraPoseFingerprint,
+        );
+        waitedForMeasuredStatus = true;
+      }
+    } finally {
+      frameCollection = await stopSmoothnessFrameCollector(
+        measurement.frameCollectorId,
+      );
     }
 
-    measurement.status = await waitForCameraStreamPrefetch(
-      waitForFinalDetail ? 5_000 : 2_000,
+    measurement = {
+      ...measurement,
+      frameCollection,
+      frameDeltas: frameCollection.cameraMovementFrameDeltas,
+      terminalRefinementFrameDeltas:
+        frameCollection.terminalRefinementFrameDeltas,
+      terminalRefinementDurationMilliseconds:
+        frameCollection.terminalRefinementDurationMilliseconds,
+      longFrameEvidence: frameCollection.longFrameEvidence,
+    };
+
+    if (!frameCollection.collectorMatched) {
+      failures.push(
+        \`\${runLabel} frame collector did not match: expected \${frameCollection.expectedFrameCollectorId}, observed \${frameCollection.observedFrameCollectorId ?? "none"}.\`,
+      );
+    }
+
+    const cameraStreamCompletion = createCameraStreamCompletion(
+      measuredStatus,
+      expectedCameraStreamRequestId,
+      expectedCameraStreamCameraEpoch,
+      expectedCameraStreamCameraPoseFingerprint,
+      waitedForMeasuredStatus,
+    );
+    const prefetchStatus = await waitForCameraStreamPrefetch(
+      prefetchWaitTimeoutMilliseconds,
+    );
+    const postPrefetchRefinement = createPostPrefetchRefinementEvidence(
+      prefetchStatus,
+      initialStatus,
+      expectedCameraStreamRequestId,
     );
 
     if (measurement.frameDeltas.length < Math.max(10, cameraSteps / 2)) {
       failures.push(
-        \`run \${runIndex} collected only \${measurement.frameDeltas.length} frames during camera movement.\`,
+        \`\${runLabel} collected only \${measurement.frameDeltas.length} frames during camera movement.\`,
       );
     }
 
-    if (
-      waitForFinalDetail &&
-      !measurement.status.status.includes("Camera stream rendered")
-    ) {
+    if (waitForFinalDetail && !cameraStreamCompletion.isComplete) {
       failures.push(
-        \`run \${runIndex} ended with unexpected status: \${measurement.status.status}\`,
+        \`\${runLabel} did not complete final camera stream request \${expectedCameraStreamRequestId}: \${measuredStatus.status}\`,
       );
     } else if (
       !waitForFinalDetail &&
-      !isCameraStreamInteractiveStatus(measurement.status.status)
+      !cameraStreamCompletion.isComplete
     ) {
       failures.push(
-        \`run \${runIndex} ended without an interactive camera stream status: \${measurement.status.status}\`,
+        \`\${runLabel} did not produce an interactive result for camera stream request \${expectedCameraStreamRequestId}: \${measuredStatus.status}\`,
       );
     }
 
-    if (!measurement.status.rendererTiming || measurement.status.rendererTiming.includes("Not rendered")) {
-      failures.push(\`run \${runIndex} did not expose renderer timing after camera movement.\`);
+    if (!measuredStatus.rendererTiming || measuredStatus.rendererTiming.includes("Not rendered")) {
+      failures.push(\`\${runLabel} did not expose renderer timing after camera movement.\`);
     }
 
-    const renderedPointCount = parseCameraStreamPointCount(measurement.status.status);
+    const renderedPointCount = parseCameraStreamPointCount(measuredStatus.status);
     const cameraStreamDetailProgress =
-      measurement.status.cameraStreamDetailProgress ??
-      parseCameraStreamDetailProgress(measurement.status.status);
+      measuredStatus.cameraStreamDetailProgress ??
+      parseCameraStreamDetailProgress(measuredStatus.status);
+    const cameraStreamVisualQuality = measuredStatus.cameraStreamVisualQuality;
+    const cameraStreamNodeReuse = measuredStatus.cameraStreamNodeReuse;
     const cameraStreamDiagnostics =
-      measurement.status.cameraStreamDiagnosticsData ??
-      parseCameraStreamDiagnostics(measurement.status.cameraStreamDiagnostics);
-    const pointGeometryTiming = parsePointGeometryTiming(
-      measurement.status.pointGeometryTiming,
+      measuredStatus.cameraStreamDiagnosticsData ??
+      parseCameraStreamDiagnostics(measuredStatus.cameraStreamDiagnostics);
+    const geometryCacheBefore = parseGeometryCacheCounters(
+      measurement.geometryCacheBeforeText,
     );
+    const geometryCacheAfter = parseGeometryCacheCounters(
+      measuredStatus.geometryCache,
+    );
+    const geometryCacheDelta = subtractGeometryCacheCounters(
+      geometryCacheBefore,
+      geometryCacheAfter,
+    );
+    let pointGeometryTiming = parsePointGeometryTiming(
+      measuredStatus.pointGeometryTiming,
+    );
+
+    if (
+      (!pointGeometryTiming ||
+        measuredStatus.cameraStreamRenderDisposition ===
+          "retained-exact-render") &&
+      cacheResetMode === "none" &&
+      Number.isSafeInteger(cameraStreamNodeReuse?.finalNodeCount) &&
+      cameraStreamNodeReuse.finalNodeCount > 0 &&
+      Number.isSafeInteger(cameraStreamNodeReuse?.freshCachedFinalNodeCount) &&
+      cameraStreamNodeReuse.freshCachedFinalNodeCount ===
+        cameraStreamNodeReuse.finalNodeCount
+    ) {
+      pointGeometryTiming = {
+        nodeCount: cameraStreamNodeReuse.finalNodeCount,
+        cacheHitCount: cameraStreamNodeReuse.freshCachedFinalNodeCount,
+        maxRequestRoundTripMilliseconds: 0,
+        maxDecodeMilliseconds: 0,
+        maxWorkerMilliseconds: 0,
+        maxQueueMilliseconds: 0,
+        sumDecodeMilliseconds: 0,
+        sumWorkerMilliseconds: 0,
+        sumQueueMilliseconds: 0,
+        evidenceSource:
+          measuredStatus.cameraStreamRenderDisposition ===
+          "retained-exact-render"
+            ? "retained-exact-render"
+            : "camera-stream-node-sample-cache",
+        geometryCacheBefore,
+        geometryCacheAfter,
+        geometryCacheDelta,
+      };
+    }
     const appliedStreamPointBudget =
-      parseAppliedCameraStreamBudget(measurement.status.cameraStreamBudget) ??
+      parseAppliedCameraStreamBudget(measuredStatus.cameraStreamBudget) ??
       streamPointBudget;
 
+    if (appliedStreamPointBudget > streamPointBudget) {
+      failures.push(
+        \`\${runLabel} applied \${appliedStreamPointBudget} points above the configured \${streamPointBudget} point cap.\`,
+      );
+    }
+
     if (renderedPointCount === undefined) {
-      failures.push(\`run \${runIndex} did not report a camera stream point count.\`);
+      failures.push(\`\${runLabel} did not report a camera stream point count.\`);
     } else if (renderedPointCount > appliedStreamPointBudget) {
       failures.push(
-        \`run \${runIndex} rendered \${renderedPointCount} points with a \${appliedStreamPointBudget} point budget.\`,
+        \`\${runLabel} rendered \${renderedPointCount} points with a \${appliedStreamPointBudget} point budget.\`,
       );
     }
 
     if (!cameraStreamDiagnostics) {
-      failures.push(\`run \${runIndex} did not expose camera stream diagnostics.\`);
+      failures.push(\`\${runLabel} did not expose camera stream diagnostics.\`);
     } else {
       const expectedMinSelectedDepth =
         minSelectedDepthOverride ?? sampleSnapshot.expectedMinSelectedDepth;
@@ -1060,20 +1878,63 @@ function createSmoothnessFlow(
         cameraStreamDiagnostics.selectedDepth < expectedMinSelectedDepth
       ) {
         failures.push(
-          \`run \${runIndex} selected depth \${cameraStreamDiagnostics.selectedDepth}; expected at least \${expectedMinSelectedDepth}.\`,
+          \`\${runLabel} selected depth \${cameraStreamDiagnostics.selectedDepth}; expected at least \${expectedMinSelectedDepth}.\`,
         );
       }
     }
 
     if (waitForFinalDetail && !cameraStreamDetailProgress) {
-      failures.push(\`run \${runIndex} did not expose camera stream detail progress.\`);
+      failures.push(\`\${runLabel} did not expose camera stream detail progress.\`);
+    }
+    if (waitForFinalDetail && !cameraStreamVisualQuality?.isTerminalReady) {
+      failures.push(
+        \`\${runLabel} did not expose a verified terminal visual composition.\`,
+      );
     }
 
     if (
       cameraStreamFirstResponseMilliseconds === undefined ||
       !Number.isFinite(cameraStreamFirstResponseMilliseconds)
     ) {
-      failures.push(\`run \${runIndex} did not expose camera stream first-response timing.\`);
+      failures.push(\`\${runLabel} did not expose camera stream first-response timing.\`);
+    }
+    const expectedFirstResponseSource =
+      cameraStreamFirstResponseEvidence?.renderDisposition ===
+      "retained-exact-render"
+        ? "app-render-retained"
+        : "app-render-commit";
+    if (
+      cameraStreamFirstResponseEvidence?.source !==
+        expectedFirstResponseSource ||
+      !Number.isSafeInteger(
+        cameraStreamFirstResponseEvidence?.rendererRevision,
+      ) ||
+      cameraStreamFirstResponseEvidence.requestId !==
+        expectedCameraStreamRequestId ||
+      cameraStreamFirstResponseEvidence.appliedRequestId !==
+        expectedCameraStreamRequestId ||
+      cameraStreamFirstResponseEvidence.elapsedMilliseconds !==
+        cameraStreamFirstResponseMilliseconds
+    ) {
+      failures.push(
+        \`\${runLabel} did not bind first response to the expected applied render request.\`,
+      );
+    }
+    if (
+      cameraStreamForegroundCompletionMilliseconds === undefined ||
+      !Number.isFinite(cameraStreamForegroundCompletionMilliseconds)
+    ) {
+      failures.push(
+        \`\${runLabel} did not expose camera stream foreground-completion timing.\`,
+      );
+    } else if (
+      Number.isFinite(cameraStreamFirstResponseMilliseconds) &&
+      cameraStreamForegroundCompletionMilliseconds <
+        cameraStreamFirstResponseMilliseconds
+    ) {
+      failures.push(
+        \`\${runLabel} reported foreground completion before its first visible response.\`,
+      );
     }
 
     return {
@@ -1081,11 +1942,14 @@ function createSmoothnessFlow(
       sampleLabel: sampleSnapshot.label,
       sourcePreset: sampleSnapshot.sourcePreset,
       coordinateTransform: sampleSnapshot.coordinateTransform,
+      measurementType,
       runIndex,
       streamPointBudget,
       appliedStreamPointBudget,
       renderedPointCount,
       cameraStreamDetailProgress,
+      cameraStreamVisualQuality,
+      cameraStreamNodeReuse,
       finalNodeCount: cameraStreamDetailProgress?.finalNodeCount,
       renderedFinalNodeCount:
         cameraStreamDetailProgress?.renderedFinalNodeCount,
@@ -1093,17 +1957,99 @@ function createSmoothnessFlow(
         cameraStreamDetailProgress?.renderedFinalNodeCoverageRatio,
       renderedFinalNodeWeightCoverageRatio:
         cameraStreamDetailProgress?.renderedFinalNodeWeightCoverageRatio,
-      cameraStreamDiagnosticsText: measurement.status.cameraStreamDiagnostics,
+      expectedCameraStreamRequestId,
+      expectedCameraStreamCameraEpoch,
+      expectedCameraStreamCameraPoseFingerprint,
+      cameraStreamDiagnosticsText: measuredStatus.cameraStreamDiagnostics,
       cameraStreamDiagnostics,
-      cameraStreamPrefetchText: measurement.status.cameraStreamPrefetch,
-      cameraStreamPrefetch: measurement.status.cameraStreamPrefetchData,
-      pointGeometryTimingText: measurement.status.pointGeometryTiming,
+      cameraStreamRenderSignature:
+        measuredStatus.cameraStreamRenderSignature,
+      cameraStreamRenderDisposition:
+        measuredStatus.cameraStreamRenderDisposition,
+      cameraStreamRendererRevision:
+        measuredStatus.cameraStreamRendererRevision,
+      cameraStreamSelectedNodeKeys:
+        measuredStatus.cameraStreamSelectedNodeKeys,
+      cameraStreamHierarchyHeld:
+        measuredStatus.cameraStreamHierarchyHeld === true,
+      cameraStreamPrefetchText: prefetchStatus.cameraStreamPrefetch,
+      cameraStreamPrefetch: prefetchStatus.cameraStreamPrefetchData,
+      pointGeometryTimingText: measuredStatus.pointGeometryTiming,
       pointGeometryTiming,
+      geometryCacheBefore,
+      geometryCacheAfter,
+      geometryCacheDelta,
+      decodedPointDataCache: measuredStatus.decodedPointDataCache,
+      hierarchyCacheStats: measuredStatus.hierarchyCacheStats,
+      hierarchyCacheAfterPrefetch: prefetchStatus.hierarchyCacheStats,
+      cameraStreamCompletion,
+      postPrefetchRefinement,
       cameraStreamFirstResponseMilliseconds,
+      cameraStreamForegroundCompletionMilliseconds,
+      cameraStreamFirstResponseEvidence,
       cacheReset: measurement.cacheReset,
       ...measurement,
+      status: measuredStatus,
+      prefetchStatus,
+      terminalRefinementSummary: summarizeFrames(
+        measurement.terminalRefinementFrameDeltas,
+      ),
       summary: summarizeFrames(measurement.frameDeltas),
     };
+  }
+
+  function summarizeWarmup(warmup, settle) {
+    return {
+      sampleId: warmup.sampleId,
+      sampleLabel: warmup.sampleLabel,
+      warmupIndex: warmup.runIndex,
+      streamPointBudget: warmup.streamPointBudget,
+      appliedStreamPointBudget: warmup.appliedStreamPointBudget,
+      renderedPointCount: warmup.renderedPointCount,
+      finalNodeCount: warmup.finalNodeCount,
+      renderedFinalNodeCount: warmup.renderedFinalNodeCount,
+      renderedFinalNodeCoverageRatio:
+        warmup.renderedFinalNodeCoverageRatio,
+      renderedFinalNodeWeightCoverageRatio:
+        warmup.renderedFinalNodeWeightCoverageRatio,
+      measuredDurationMilliseconds: warmup.measuredDurationMilliseconds,
+      terminalRefinementDurationMilliseconds:
+        warmup.terminalRefinementDurationMilliseconds,
+      terminalRefinementSummary: warmup.terminalRefinementSummary,
+      cameraStreamFirstResponseMilliseconds:
+        warmup.cameraStreamFirstResponseMilliseconds,
+      cameraStreamForegroundCompletionMilliseconds:
+        warmup.cameraStreamForegroundCompletionMilliseconds,
+      cameraStreamFirstResponseEvidence:
+        warmup.cameraStreamFirstResponseEvidence,
+      cameraStreamCompletion: warmup.cameraStreamCompletion,
+      cameraStreamDiagnostics: warmup.cameraStreamDiagnostics,
+      cameraStreamPrefetch: warmup.cameraStreamPrefetch,
+      pointGeometryTiming: warmup.pointGeometryTiming,
+      cacheReset: warmup.cacheReset,
+      settle,
+      summary: warmup.summary,
+    };
+  }
+
+  function createWarmHierarchyIdentity(result) {
+    return JSON.stringify({
+      selectedDepth: result.cameraStreamDiagnostics?.selectedDepth,
+      selectedNodeKeys: [...(result.cameraStreamSelectedNodeKeys ?? [])].sort(),
+      renderSignature: result.cameraStreamRenderSignature,
+      hierarchyCacheStats: result.hierarchyCacheStats,
+    });
+  }
+
+  function hasWarmHierarchyEvidence(result) {
+    return (
+      typeof result.cameraStreamRenderSignature === "string" &&
+      result.cameraStreamRenderSignature.length > 0 &&
+      Array.isArray(result.cameraStreamSelectedNodeKeys) &&
+      result.cameraStreamSelectedNodeKeys.length > 0 &&
+      result.hierarchyCacheStats &&
+      typeof result.hierarchyCacheStats === "object"
+    );
   }
 
   await page.goto(${JSON.stringify(baseUrl)}, { waitUntil: "domcontentloaded" });
@@ -1113,12 +2059,115 @@ function createSmoothnessFlow(
     const sampleSnapshot = await prepareViewer(sampleCase, streamPointBudgets[0]);
 
     for (const streamPointBudget of streamPointBudgets) {
+      await releaseWarmCameraHierarchy();
       await setStreamPointBudget(streamPointBudget);
+      let lastWarmupSettle;
 
-      for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
-        results.push(
-          await measureSmoothness(sampleSnapshot, streamPointBudget, runIndex),
+      for (
+        let warmupIndex = 1;
+        warmupIndex <= warmupRunCount;
+        warmupIndex += 1
+      ) {
+        const warmup = await measureSmoothness(
+          sampleSnapshot,
+          streamPointBudget,
+          warmupIndex,
+          "warmup",
         );
+        const settle = await settleWarmupPrefetch();
+        lastWarmupSettle = settle;
+
+        warmups.push(
+          summarizeWarmup(warmup, settle),
+        );
+      }
+
+      let hierarchyHold;
+
+      if (warmupRunCount > 0) {
+        if (!lastWarmupSettle?.isComplete) {
+          failures.push(
+            \`\${sampleSnapshot.sampleId} \${streamPointBudget} point warm hierarchy did not reach a completed prefetch before measurement (state \${lastWarmupSettle?.state ?? "missing"}).\`,
+          );
+        } else {
+          try {
+            hierarchyHold = await holdWarmCameraHierarchy();
+            hierarchyHolds.push({
+              sampleId: sampleSnapshot.sampleId,
+              streamPointBudget,
+              warmupSettle: lastWarmupSettle,
+              ...hierarchyHold,
+            });
+          } catch (error) {
+            failures.push(
+              \`\${sampleSnapshot.sampleId} \${streamPointBudget} point warm hierarchy hold failed: \${error.message}\`,
+            );
+          }
+        }
+      }
+
+      let measuredWarmHierarchyIdentity;
+
+      try {
+        for (let runIndex = 1; runIndex <= repeatCount; runIndex += 1) {
+          const result = await measureSmoothness(
+            sampleSnapshot,
+            streamPointBudget,
+            runIndex,
+          );
+
+          if (hierarchyHold) {
+            const runLabel = \`\${sampleSnapshot.sampleId} \${streamPointBudget} point run \${runIndex}\`;
+
+            if (!result.cameraStreamHierarchyHeld) {
+              failures.push(\`\${runLabel} did not retain the warm hierarchy hold.\`);
+            }
+
+            if (!hasWarmHierarchyEvidence(result)) {
+              failures.push(\`\${runLabel} did not report exact warm hierarchy evidence.\`);
+            } else {
+              const hierarchyIdentity = createWarmHierarchyIdentity(result);
+              const terminalCacheIdentity = JSON.stringify(
+                result.hierarchyCacheStats,
+              );
+              const postPrefetchCacheIdentity = JSON.stringify(
+                result.hierarchyCacheAfterPrefetch,
+              );
+              const heldCacheIdentity = JSON.stringify(
+                hierarchyHold.hierarchyCacheStats,
+              );
+
+              if (terminalCacheIdentity !== heldCacheIdentity) {
+                failures.push(
+                  \`\${runLabel} changed hierarchy cache state after the warm hold was captured.\`,
+                );
+              }
+
+              if (postPrefetchCacheIdentity !== terminalCacheIdentity) {
+                failures.push(
+                  \`\${runLabel} changed hierarchy cache state during held geometry prefetch.\`,
+                );
+              }
+
+              if (
+                measuredWarmHierarchyIdentity !== undefined &&
+                hierarchyIdentity !== measuredWarmHierarchyIdentity
+              ) {
+                failures.push(
+                  \`\${runLabel} did not reuse the exact warm frontier and additive render signature.\`,
+                );
+              }
+
+              measuredWarmHierarchyIdentity ??= hierarchyIdentity;
+            }
+          }
+
+          results.push(result);
+        }
+      } finally {
+        if (hierarchyHold) {
+          await releaseWarmCameraHierarchy();
+        }
       }
     }
   }
@@ -1137,6 +2186,7 @@ function createSmoothnessFlow(
   }
 
   return {
+    profile,
     maxPointCountPerNode,
     streamPointBudgets,
     requestedPointRenderer: pointRenderer,
@@ -1148,6 +2198,8 @@ function createSmoothnessFlow(
         minSelectedDepthOverride ?? sampleCase.expectedMinSelectedDepth,
     })),
     repeatCount,
+    warmupRunCount,
+    warmupSettleTimeoutMilliseconds,
     durationMilliseconds,
     cameraSteps,
     moveMeters,
@@ -1155,8 +2207,14 @@ function createSmoothnessFlow(
     clearCachesBeforeRun,
     cacheResetMode,
     waitForFinalDetail,
+    finalDetailTimeoutMilliseconds,
+    interactiveTimeoutMilliseconds,
+    prefetchWaitTimeoutMilliseconds,
     browserGraphics: await readBrowserGraphics(),
+    browserEnvironment: await readBrowserEnvironment(),
     pointRenderer: await metadataValue("Point renderer"),
+    warmups,
+    hierarchyHolds,
     results,
   };
 }
@@ -1210,9 +2268,7 @@ function printBenchmarkSummary(result) {
         0,
       );
       const renderedPoints = runs.map((run) => run.renderedPointCount ?? 0);
-      const cacheResets = runs
-        .map((run) => run.cacheReset)
-        .filter(Boolean);
+      const cacheResets = runs.map((run) => run.cacheReset).filter(Boolean);
       const diagnostics = runs
         .map((run) => run.cameraStreamDiagnostics)
         .filter(Boolean);
@@ -1348,9 +2404,9 @@ const port = await findAvailablePort(4373);
 const baseUrl = `http://localhost:${port}`;
 const serverOutput = [];
 const serverProcess = spawn(
-  npxCommand,
+  process.execPath,
   [
-    "vite",
+    viteCliPath,
     "preview",
     "examples/basic-viewer",
     "--config",
@@ -1365,7 +2421,7 @@ const serverProcess = spawn(
   ],
   {
     cwd: repoRoot,
-    shell: isWindows,
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
@@ -1389,7 +2445,10 @@ try {
       benchmarkStreamPointBudgets,
       benchmarkPointRenderer,
       benchmarkSampleCases,
+      benchmarkProfile,
       benchmarkRepeats,
+      benchmarkWarmupRuns,
+      benchmarkWarmupSettleTimeoutMilliseconds,
       benchmarkDurationMilliseconds,
       benchmarkCameraSteps,
       benchmarkMoveMeters,
@@ -1397,6 +2456,9 @@ try {
       benchmarkMinSelectedDepthOverride,
       benchmarkCacheResetMode,
       benchmarkWaitForFinalDetail,
+      benchmarkFinalDetailTimeoutMilliseconds,
+      benchmarkInteractiveTimeoutMilliseconds,
+      benchmarkPrefetchWaitTimeoutMilliseconds,
     ),
   );
 
@@ -1409,7 +2471,14 @@ try {
         .join("/")} stream budgets,`,
       `${benchmarkPointRenderer} renderer,`,
       `${benchmarkSampleCases.map((sample) => sample.id).join("/")} samples,`,
+      benchmarkProfile === undefined ? "" : `${benchmarkProfile} profile,`,
       `${benchmarkRepeats.toLocaleString()} repeats,`,
+      benchmarkWarmupRuns === 0
+        ? ""
+        : `${benchmarkWarmupRuns.toLocaleString()} warmup runs,`,
+      benchmarkWarmupRuns === 0
+        ? ""
+        : `${benchmarkWarmupSettleTimeoutMilliseconds.toLocaleString()} ms warmup settle,`,
       `${benchmarkCameraSteps.toLocaleString()} camera steps,`,
       benchmarkCameraHeightAboveCloudMeters === undefined
         ? ""
@@ -1420,18 +2489,25 @@ try {
       benchmarkMinSelectedDepthOverride === undefined
         ? "sample depth targets"
         : `min selected depth ${benchmarkMinSelectedDepthOverride}`,
-    ].filter(Boolean).join(" "),
+    ]
+      .filter(Boolean)
+      .join(" "),
   );
-  runPlaywrightCli([
-    "--config",
-    playwrightConfigPath,
-    "open",
-    "about:blank",
+  runPlaywrightCli(["--config", playwrightConfigPath, "open", "about:blank"]);
+  const output = runPlaywrightCli([
+    "run-code",
+    "--filename",
+    benchmarkFlowPath,
   ]);
-  const output = runPlaywrightCli(["run-code", "--filename", benchmarkFlowPath]);
   const result = extractPlaywrightResult(output);
-  await writeFile(benchmarkResultPath, `${JSON.stringify(result, null, 2)}\n`);
-  printBenchmarkSummary(result);
+  const report = {
+    ...result,
+    schema: benchmarkArtifactSchema,
+    schemaVersion: benchmarkArtifactSchemaVersion,
+    runEvidence: await createRunEvidence({ repoRoot }),
+  };
+  await writeFile(benchmarkResultPath, `${JSON.stringify(report, null, 2)}\n`);
+  printBenchmarkSummary(report);
   console.log(`Smoothness benchmark result written: ${benchmarkResultPath}`);
 } finally {
   try {

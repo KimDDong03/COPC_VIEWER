@@ -54,13 +54,23 @@ describe("createCopcCameraStreamRenderPlan", () => {
       "1-0-0-0",
       "2-1-0-0",
     ]);
-    expect(plan.finalNodeKeys).toEqual(["5-8-0-0", "5-9-0-0"]);
+    expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-1-0-0",
+      "3-2-0-0",
+      "4-4-0-0",
+      "5-8-0-0",
+      "5-9-0-0",
+    ]);
     expect(plan.finalSelectedNodeCount).toBe(2);
-    expect(plan.maxPointCountPerNode).toBe(10_000);
+    expect(plan.maxPointCountPerNode).toBe(2_858);
     expect(plan.previewNodeKeys).toEqual(["2-1-0-0"]);
-    expect(plan.nodeKeySignature).toBe("5-8-0-0|5-9-0-0");
+    expect(plan.nodeKeySignature).toBe(
+      "0-0-0-0|1-0-0-0|2-1-0-0|3-2-0-0|4-4-0-0|5-8-0-0|5-9-0-0",
+    );
     expect(plan.renderSignature).toBe(
-      "5-8-0-0|5-9-0-0@20000@10000@5@80@96@2048@900000@16384",
+      "0-0-0-0|1-0-0-0|2-1-0-0|3-2-0-0|4-4-0-0|5-8-0-0|5-9-0-0@20000@2858@5@80@96@2048@900000@16384",
     );
   });
 
@@ -149,7 +159,15 @@ describe("createCopcCameraStreamRenderPlan", () => {
       renderedPointBudget: 20_000,
     });
 
-    expect(plan.finalNodeKeys).toEqual(["5-8-0-0", "5-9-0-0"]);
+    expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-1-0-0",
+      "3-2-0-0",
+      "4-4-0-0",
+      "5-8-0-0",
+      "5-9-0-0",
+    ]);
     expect(plan.previewNodeKeys).toEqual([]);
   });
 
@@ -191,11 +209,96 @@ describe("createCopcCameraStreamRenderPlan", () => {
     });
 
     expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
       "5-0-0-0",
       "5-5-0-0",
       "5-3-0-0",
     ]);
-    expect(plan.maxPointCountPerNode).toBe(2_000);
+    expect(plan.maxPointCountPerNode).toBe(1_200);
+  });
+
+  it("preserves the complete frontier and additive closure for terminal coverage", () => {
+    const selectedNodes = [
+      node("2-0-0-0"),
+      node("2-1-0-0"),
+      node("2-0-1-0"),
+      node("2-1-1-0"),
+    ];
+    const plan = createCopcCameraStreamRenderPlan({
+      cameraSelection: cameraSelection(selectedNodes, "complete-depth"),
+      configuredMaxPointCountPerNode: 12_000,
+      effectiveNodePointDataLengthBudget: 2_048,
+      effectivePointDataLengthBudget: 16_384,
+      effectiveSourcePointBudget: 900_000,
+      hierarchy: hierarchy([
+        "0-0-0-0",
+        "1-0-0-0",
+        ...selectedNodes.map((selectedNode) => selectedNode.key),
+      ]),
+      lodSettings: {
+        maxDepth: 5,
+        maxNodes: 96,
+        targetNodeScreenPixels: 80,
+      },
+      maxFinalNodeCount: 2,
+      minFinalNodeCount: 1,
+      minPointCountPerFinalNode: 10_000,
+      previewMaxNodeCount: 8,
+      previewMaxPointDataLength: 8_000,
+      renderedPointBudget: 20_000,
+    });
+
+    expect(plan.selectedNodeKeys).toHaveLength(4);
+    expect(plan.finalSelectedNodeCount).toBe(4);
+    expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-0-0-0",
+      "2-1-0-0",
+      "2-0-1-0",
+      "2-1-1-0",
+    ]);
+    expect(plan.maxPointCountPerNode).toBe(3_334);
+  });
+
+  it("excludes zero-point selections from the terminal frontier and closure", () => {
+    const renderableNode = node("2-0-0-0", 10_000, 8_000);
+    const emptyNode = node("2-1-0-0", 0, 0);
+    const plan = createCopcCameraStreamRenderPlan({
+      cameraSelection: cameraSelection(
+        [renderableNode, emptyNode],
+        "complete-depth",
+      ),
+      configuredMaxPointCountPerNode: 12_000,
+      effectiveNodePointDataLengthBudget: 2_048,
+      effectivePointDataLengthBudget: 16_384,
+      effectiveSourcePointBudget: 900_000,
+      hierarchy: {
+        nodes: [
+          node("0-0-0-0"),
+          node("1-0-0-0"),
+          renderableNode,
+          emptyNode,
+        ],
+      },
+      lodSettings: {
+        maxDepth: 5,
+        maxNodes: 96,
+        targetNodeScreenPixels: 80,
+      },
+      previewMaxNodeCount: 8,
+      previewMaxPointDataLength: 8_000,
+      renderedPointBudget: 20_000,
+    });
+
+    expect(plan.selectedNodeKeys).toEqual(["2-0-0-0"]);
+    expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-0-0-0",
+    ]);
+    expect(plan.finalSelectedNodeCount).toBe(1);
   });
 
   it("caps final detail nodes across the view without concentrating them in one area", () => {
@@ -240,6 +343,9 @@ describe("createCopcCameraStreamRenderPlan", () => {
     });
 
     expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
+      "2-1-0-0",
       "5-0-0-0",
       "5-8-0-0",
       "5-20-0-0",
@@ -279,6 +385,8 @@ describe("createCopcCameraStreamRenderPlan", () => {
     });
 
     expect(plan.finalNodeKeys).toEqual([
+      "0-0-0-0",
+      "1-0-0-0",
       "5-0-0-0",
       "5-1-0-0",
       "5-2-0-0",
@@ -339,13 +447,14 @@ describe("createCopcCameraStreamMaxPointCountPerNode", () => {
 
 function cameraSelection(
   nodes: readonly CopcHierarchyNodeSummary[],
+  coverageMode: CopcHierarchyNodeCameraSelection["coverageMode"] = "progressive",
 ): CopcHierarchyNodeCameraSelection {
   return {
     nodes,
     targetDepth: 5,
     selectedDepth: 5,
     selectionMode: "coverage",
-    coverageMode: "progressive",
+    coverageMode,
     estimatedRootScreenPixels: 720,
     estimatedSelectedDepthScreenPixels: 83,
     targetNodeScreenPixels: 80,

@@ -4,6 +4,8 @@ import {
   createCopcCameraStreamFinalNodeKeys,
   createCopcCameraStreamPreviewNodeKeys,
   createCopcCameraStreamRenderNodeKeys,
+  isRenderableCopcCameraStreamNode,
+  orderCopcCameraStreamNodeKeysForAdditiveProgress,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
   selectDistributedCopcCameraStreamNodeKeys,
   type CopcCameraStreamHierarchyLike,
@@ -13,7 +15,7 @@ import type { CopcCameraStreamLodSettings } from "./CopcCameraStreamSettings";
 export interface CopcCameraStreamRenderPlanOptions {
   readonly cameraSelection: Pick<
     CopcHierarchyNodeCameraSelection,
-    "nodes" | "selectedDepth"
+    "coverageMode" | "nodes" | "selectedDepth"
   >;
   readonly configuredMaxPointCountPerNode: number;
   readonly effectiveNodePointDataLengthBudget: number;
@@ -50,27 +52,43 @@ export interface CopcCameraStreamRenderPlan {
 export function createCopcCameraStreamRenderPlan(
   options: CopcCameraStreamRenderPlanOptions,
 ): CopcCameraStreamRenderPlan {
-  const selectedNodeKeys = options.cameraSelection.nodes.map(
+  const renderableSelectedNodes = options.cameraSelection.nodes.filter(
+    isRenderableCopcCameraStreamNode,
+  );
+  const selectedNodeKeys = renderableSelectedNodes.map(
     (node) => node.key,
   );
   const renderNodeKeys = createCopcCameraStreamRenderNodeKeys(
-    options.cameraSelection.nodes,
+    renderableSelectedNodes,
     options.hierarchy,
   );
   const coverageNodeKeys = createCopcCameraStreamCoverageNodeKeys(
     renderNodeKeys,
     options.cameraSelection.selectedDepth,
   );
-  const orderedFinalNodeKeys = orderCopcCameraStreamNodeKeysForProgressiveCoverage(
+  const orderedFrontierNodeKeys = orderCopcCameraStreamNodeKeysForProgressiveCoverage(
     createCopcCameraStreamFinalNodeKeys(selectedNodeKeys, coverageNodeKeys),
   );
   const renderedPointBudget = normalizePositiveInteger(
     options.renderedPointBudget,
   );
-  const finalNodeKeys = limitFinalNodeKeysForRenderedBudget(
-    orderedFinalNodeKeys,
-    renderedPointBudget,
-    options,
+  const terminalFrontierNodeKeys =
+    options.cameraSelection.coverageMode === "complete-depth"
+      ? orderedFrontierNodeKeys
+      : limitFinalNodeKeysForRenderedBudget(
+          orderedFrontierNodeKeys,
+          renderedPointBudget,
+          options,
+        );
+  const terminalFrontierNodeKeySet = new Set(terminalFrontierNodeKeys);
+  const terminalFrontierNodes = renderableSelectedNodes.filter((node) =>
+    terminalFrontierNodeKeySet.has(node.key),
+  );
+  const finalNodeKeys = orderCopcCameraStreamNodeKeysForAdditiveProgress(
+    createCopcCameraStreamRenderNodeKeys(
+      terminalFrontierNodes,
+      options.hierarchy,
+    ),
   );
   const selectedNodeKeySet = new Set(selectedNodeKeys);
   const finalSelectedNodeCount = finalNodeKeys.filter((nodeKey) =>
@@ -80,10 +98,16 @@ export function createCopcCameraStreamRenderPlan(
     configuredMaxPointCountPerNode: options.configuredMaxPointCountPerNode,
     nodeCount: finalNodeKeys.length,
     renderedPointBudget,
-    maxPointCountPerFinalNode: options.maxPointCountPerFinalNode,
+    maxPointCountPerFinalNode:
+      options.cameraSelection.coverageMode === "complete-depth"
+        ? undefined
+        : options.maxPointCountPerFinalNode,
   });
   const previewNodeKeys =
-    shouldCreatePreviewNodeKeys(finalNodeKeys, options.previewMinFinalNodeCount)
+    shouldCreatePreviewNodeKeys(
+      terminalFrontierNodeKeys,
+      options.previewMinFinalNodeCount,
+    )
       ? createCopcCameraStreamPreviewNodeKeys(
           coverageNodeKeys,
           options.hierarchy,

@@ -4,10 +4,19 @@
   "description": "CesiumJS-native COPC point cloud streaming and visualization library.",
   "license": "MIT",
   "packageManager": "npm@11.16.0",
-  "sideEffects": false,
-  "engines": {
-    "node": ">=22"
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22 <23",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0 <12",
+      "onFail": "warn"
+    }
   },
+  "sideEffects": false,
   "publishConfig": {
     "access": "public"
   },
@@ -51,20 +60,23 @@
     "examples/minimal-layer.ts",
     "CHANGELOG.md",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "SECURITY.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "dev": "vite examples/basic-viewer --config vite.config.ts --host localhost --port 3000",
     "build": "npm run build:lib && npm run build:example",
     "build:example": "tsc && vite build examples/basic-viewer --config vite.config.ts --outDir ../../dist/example --emptyOutDir",
-    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json",
-    "prepack": "npm run build:lib",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && node scripts/normalize-declaration-specifiers.mjs",
+    "prepack": "npm run license:evidence:check && npm run build:lib",
     "prepublishOnly": "npm run qc",
     "preview": "vite preview examples/basic-viewer --config vite.config.ts --host localhost --port 3000 --outDir ../../dist/example",
     "benchmark:renderers": "node scripts/benchmark-renderers.mjs",
     "benchmark:smoothness": "node scripts/benchmark-smoothness.mjs",
     "benchmark:smoothness:assert": "node scripts/assert-smoothness-benchmark.mjs",
-    "benchmark:smoothness:regression": "node scripts/assert-smoothness-regression.mjs",
+    "benchmark:smoothness:regression": "node scripts/smoothness-regression-qc.mjs",
+    "benchmark:smoothness:regression:assert": "node scripts/assert-smoothness-regression.mjs",
     "benchmark:smoothness:qc": "node scripts/smoothness-qc.mjs",
     "benchmark:smoothness:contest": "node scripts/smoothness-qc.mjs --contest",
     "benchmark:smoothness:cache-reset": "node scripts/smoothness-qc.mjs --cache-reset",
@@ -72,23 +84,29 @@
     "benchmark:smoothness:cold-detail": "node scripts/smoothness-qc.mjs --cold-detail",
     "benchmark:smoothness:zoom-detail": "node scripts/smoothness-qc.mjs --zoom-detail",
     "benchmark:smoothness:warm-zoom-detail": "node scripts/smoothness-qc.mjs --warm-zoom-detail",
+    "license:evidence": "node scripts/generate-license-evidence.mjs",
+    "license:evidence:check": "node scripts/generate-license-evidence.mjs --check",
+    "license:evidence:self-test": "node scripts/generate-license-evidence.mjs --self-test",
     "qc": "node scripts/qc.mjs",
+    "qc:contest-device": "node scripts/qc.mjs --omit-warm-zoom-detail && npm run benchmark:smoothness:regression",
     "smoke:example": "node scripts/smoke-example.mjs",
     "smoke:example:file": "node scripts/smoke-example.mjs --local-file",
-    "smoke:example:install-browser": "npx --yes --package @playwright/cli@0.1.14 playwright-cli install-browser chrome-for-testing",
+    "smoke:example:install-browser": "playwright-cli install-browser chrome-for-testing",
     "smoke:package": "node scripts/smoke-package.mjs",
     "test": "vitest run"
   },
   "dependencies": {
+    "@types/emscripten": "^1.41.5",
     "copc": "^0.0.8",
     "laz-perf": "^0.0.7",
     "proj4": "^2.20.9"
   },
   "peerDependencies": {
-    "cesium": ">=1.135.0 <2"
+    "cesium": ">=1.140.0 <2"
   },
   "devDependencies": {
-    "cesium": "^1.135.0",
+    "@playwright/cli": "0.1.17",
+    "cesium": "^1.140.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.7",
     "vite-plugin-cesium": "^1.2.23",

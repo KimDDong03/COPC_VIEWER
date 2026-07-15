@@ -5,6 +5,7 @@ import {
   createCopcCoordinateTransform,
   type CopcToCesiumCoordinateTransform,
 } from "./copcCoordinateTransform";
+import { colorizeCopcPointSample } from "./copcPointColorizer";
 
 export function createPointSamplesFromCopc(
   points: readonly CopcPointDataSample[],
@@ -19,7 +20,7 @@ export function createPointSamplesFromCopc(
       longitudeDegrees: coordinate.longitudeDegrees,
       latitudeDegrees: coordinate.latitudeDegrees,
       heightMeters: coordinate.heightMeters,
-      color: point.color,
+      color: colorizeCopcPointSample(point),
     };
   });
 }

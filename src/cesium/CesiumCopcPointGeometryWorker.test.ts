@@ -141,6 +141,71 @@ describe("CesiumCopcPointGeometryWorker decoded point data cache", () => {
     ]);
   });
 
+  it("enforces one decoded-view LRU across COPC sources", async () => {
+    const worker = await importWorker();
+
+    worker.dispatch({
+      ...createLoadRequest(1, "1-0-0-0", 100),
+      url: "https://example.com/first.copc.laz",
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(1);
+    worker.dispatch({
+      ...createLoadRequest(2, "1-0-0-0", 100),
+      url: "https://example.com/second.copc.laz",
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(2);
+    worker.dispatch({
+      ...createLoadRequest(3, "1-0-0-0", 100),
+      url: "https://example.com/first.copc.laz",
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(3);
+
+    expect(mocks.loadCopcNodePointDataView).toHaveBeenCalledTimes(3);
+    expect(worker.messages[1]).toMatchObject({
+      cache: {
+        retainedViewCount: 1,
+        retainedBytes: 16_000,
+        cacheEvictionCount: 1,
+        evictedNodeKeys: [
+          {
+            sourceKey: "url:https://example.com/first.copc.laz",
+            nodeKey: "1-0-0-0",
+          },
+        ],
+      },
+    });
+  });
+
+  it("serves oversized decoded views without retaining them", async () => {
+    const worker = await importWorker();
+
+    worker.dispatch({
+      ...createLoadRequest(1, "1-0-0-0", 100),
+      maxDecodedPointDataViewBytes: 15_999,
+    });
+    await worker.waitForMessageCount(1);
+    worker.dispatch({
+      ...createLoadRequest(2, "1-0-0-0", 100),
+      maxDecodedPointDataViewBytes: 15_999,
+    });
+    await worker.waitForMessageCount(2);
+
+    expect(mocks.loadCopcNodePointDataView).toHaveBeenCalledTimes(2);
+    expect(worker.messages[1]).toMatchObject({
+      type: "loadNodePointGeometry:success",
+      cache: {
+        retainedViewCount: 0,
+        retainedBytes: 0,
+        cacheMissCount: 2,
+        oversizedEntrySkipCount: 2,
+        requestedNodeRetained: false,
+      },
+    });
+  });
+
   it("prefetches decoded node views without sampling or geometry payloads", async () => {
     const worker = await importWorker();
 
@@ -159,13 +224,110 @@ describe("CesiumCopcPointGeometryWorker decoded point data cache", () => {
       result: {
         nodeKey: "1-0-0-0",
       },
+      cache: {
+        retainedViewCount: 1,
+        cacheMissCount: 1,
+        requestedNodeRetained: true,
+      },
     });
     expect(worker.messages.map((message) => message.type)).toEqual([
       "prefetchNodePointData:success",
       "loadNodePointGeometry:success",
     ]);
   });
+
+  it("reports evictions and rollback state when a decoded view fails", async () => {
+    const worker = await importWorker();
+
+    worker.dispatch({
+      ...createLoadRequest(1, "1-0-0-0", 100),
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(1);
+    mocks.loadCopcNodePointDataView.mockRejectedValueOnce(
+      new Error("decoded view failed"),
+    );
+    worker.dispatch({
+      ...createLoadRequest(2, "1-1-0-0", 100),
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(2);
+
+    expect(worker.messages[1]).toMatchObject({
+      type: "loadNodePointGeometry:error",
+      cache: {
+        retainedViewCount: 0,
+        retainedBytes: 0,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: false,
+        evictedNodeKeys: [
+          {
+            sourceKey: "url:https://example.com/sample.copc.laz",
+            nodeKey: "1-0-0-0",
+          },
+        ],
+      },
+      error: {
+        message: "decoded view failed",
+      },
+    });
+  });
+
+  it("reports retained cache state after an in-flight request is canceled", async () => {
+    const worker = await importWorker();
+    let resolveDecodedView!: (
+      view: ReturnType<typeof createDecodedPointDataView>,
+    ) => void;
+    const pendingDecodedView = new Promise<
+      ReturnType<typeof createDecodedPointDataView>
+    >((resolve) => {
+      resolveDecodedView = resolve;
+    });
+
+    worker.dispatch({
+      ...createLoadRequest(1, "1-0-0-0", 100),
+      maxDecodedPointDataViews: 1,
+    });
+    await worker.waitForMessageCount(1);
+    mocks.loadCopcNodePointDataView.mockReturnValueOnce(pendingDecodedView);
+    worker.dispatch({
+      ...createLoadRequest(2, "1-1-0-0", 100),
+      maxDecodedPointDataViews: 1,
+    });
+    worker.dispatch({ id: 2, type: "cancel" });
+    resolveDecodedView(createDecodedPointDataView(1_000));
+    await worker.waitForMessageCount(2);
+
+    expect(worker.messages[1]).toMatchObject({
+      type: "loadNodePointGeometry:canceled",
+      cache: {
+        retainedViewCount: 1,
+        retainedBytes: 16_000,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: true,
+        evictedNodeKeys: [
+          {
+            sourceKey: "url:https://example.com/sample.copc.laz",
+            nodeKey: "1-0-0-0",
+          },
+        ],
+      },
+    });
+  });
 });
+
+function createDecodedPointDataView(pointCount: number) {
+  return {
+    pointCount,
+    dimensions: {
+      X: {},
+      Y: {},
+      Z: {},
+    },
+    getter: () => (index: number) => index,
+  };
+}
 
 async function importWorker(): Promise<{
   readonly messages: CesiumCopcPointGeometryWorkerResponse[];

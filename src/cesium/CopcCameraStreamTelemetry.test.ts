@@ -102,7 +102,7 @@ describe("camera stream telemetry", () => {
           maxPointDataLength: 32 * 1024 * 1024,
           maxNodePointDataLength: 2 * 1024 * 1024,
           maxHierarchyPages: 5,
-          detailMaxPointCountPerNode: 3_000,
+          detailMaxPointCountPerNode: 6_500,
           detailMinFinalNodeCount: 16,
           detailTargetPointCountPerNode: 1_500,
         },

@@ -57,6 +57,27 @@ describe("formatCopcCameraStreamBudgetSummary", () => {
       "15,000 / 20,000 render pts cap adaptive, 600,000 / 900,000 source pts adaptive, 80,000 per-node source pts, 8,192 B / 16,384 B compressed adaptive, 2,048 B per-node",
     );
   });
+
+  it("reports a lower zoom-band ceiling relative to the configured hard cap", () => {
+    expect(
+      formatCopcCameraStreamBudgetSummary({
+        configuredRenderedPointBudget: 720_000,
+        effectiveRenderedPointBudget: 360_000,
+        maxRenderedPointBudget: 360_000,
+        effectiveSourcePointBudget: 900_000,
+        maxSourcePointBudget: 900_000,
+        effectiveNodePointBudget: 80_000,
+        maxNodePointBudget: 80_000,
+        effectivePointDataLengthBudget: 32_768,
+        maxPointDataLengthBudget: 32_768,
+        effectiveNodePointDataLengthBudget: 2_048,
+        maxNodePointDataLengthBudget: 2_048,
+        formatBytes,
+      }),
+    ).toBe(
+      "360,000 render pts cap (720,000 configured max), 900,000 source pts, 80,000 per-node source pts, 32,768 B compressed, 2,048 B per-node",
+    );
+  });
 });
 
 describe("createCopcCameraStreamEffectiveBudget", () => {

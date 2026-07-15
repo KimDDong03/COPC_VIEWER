@@ -34,6 +34,52 @@ describe("createCopcRangeGetter", () => {
     expect(blob.sliceCount).toBe(1);
   });
 
+  it("rejects Blob ranges that exceed the source size", async () => {
+    const getter = createCopcRangeGetter(
+      new Blob([new Uint8Array([0, 1, 2])]),
+    );
+
+    await expect(getter(2, 4)).rejects.toThrow(
+      "COPC Blob byte range 2-4 exceeds the source size of 3 bytes.",
+    );
+  });
+
+  it("rejects Blob ranges above the configured byte-length limit", async () => {
+    const getter = createCopcRangeGetter(
+      new Blob([new Uint8Array([0, 1, 2])]),
+      { maxRangeByteLength: 2 },
+    );
+
+    await expect(getter(0, 3)).rejects.toThrow(
+      "COPC byte range length 3 exceeds the configured maximum of 2 bytes.",
+    );
+  });
+
+  it("rejects invalid Blob range-limit options at construction", () => {
+    expect(() => createCopcRangeGetter(
+      new Blob([new Uint8Array([0])]),
+      { maxRangeByteLength: 0 },
+    )).toThrow(
+      "maxRangeByteLength must be a positive integer no greater than 9007199254740991.",
+    );
+  });
+
+  it("rejects Blob slices that return a truncated body", async () => {
+    class TruncatingBlob extends Blob {
+      override slice(): Blob {
+        return new Blob([new Uint8Array([9])]);
+      }
+    }
+
+    const getter = createCopcRangeGetter(
+      new TruncatingBlob([new Uint8Array([0, 1, 2, 3])]),
+    );
+
+    await expect(getter(1, 3)).rejects.toThrow(
+      "COPC Blob range body length mismatch: expected 2 bytes, received 1.",
+    );
+  });
+
   it("creates stable URL keys and unique Blob keys", () => {
     const firstUrl = createCopcSourceDescriptor("https://example.com/a.copc.laz");
     const secondUrl = createCopcSourceDescriptor("https://example.com/a.copc.laz");

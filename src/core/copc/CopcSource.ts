@@ -1,6 +1,12 @@
 import { Copc } from "copc";
 import type { Copc as CopcData, Getter, Hierarchy } from "copc";
 import {
+  consumeSharedAbortableTask,
+  createSharedAbortableTask,
+  isReusableSharedAbortableTask,
+  type SharedAbortableTask,
+} from "../SharedAbortableTask";
+import {
   createCopcRangeGetter,
   createCopcSourceDescriptor,
   createCopcSourceLabel,
@@ -13,6 +19,12 @@ import type {
   CopcPointSampleWorkerLoadRequest,
   CopcPointSampleWorkerResponse,
 } from "./CopcPointSampleWorkerProtocol";
+import {
+  calculateEffectiveDecodedPointDataViewBytesPerWorker,
+  DEFAULT_MAX_CONCURRENT_POINT_SAMPLE_WORKER_REQUESTS,
+  type CopcDecodedPointDataCacheSnapshot,
+  type CopcDecodedPointDataCacheStats,
+} from "./CopcDecodedPointDataCache";
 import type {
   CopcHierarchyCacheStats,
   CopcHierarchyPageReference,
@@ -57,6 +69,10 @@ export interface LoadHierarchyPagesResult {
   readonly loadedPageKeys: readonly string[];
 }
 
+export interface LoadHierarchyOptions {
+  readonly signal?: AbortSignal;
+}
+
 export interface CopcSourceOptions {
   readonly maxCachedHierarchyPages?: number;
   readonly maxCachedHierarchyPageBytes?: number;
@@ -64,6 +80,7 @@ export interface CopcSourceOptions {
   readonly maxCachedPointSampleBytes?: number;
   readonly maxDecodedPointDataViewsPerWorker?: number;
   readonly maxDecodedPointDataViewBytesPerWorker?: number;
+  readonly maxDecodedPointDataViewBytesAcrossWorkers?: number;
   readonly maxConcurrentPointSampleWorkerRequests?: number;
   readonly pointSampleLoading?: CopcPointSampleLoadingMode;
   readonly createPointSampleWorker?: () => Worker;
@@ -81,17 +98,17 @@ const DEFAULT_MAX_CACHED_HIERARCHY_PAGES = 64;
 const DEFAULT_MAX_CACHED_HIERARCHY_PAGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CACHED_SAMPLE_SETS = 32;
 const DEFAULT_MAX_CACHED_POINT_SAMPLE_BYTES = 32 * 1024 * 1024;
-const DEFAULT_MAX_CONCURRENT_POINT_SAMPLE_WORKER_REQUESTS = 3;
 const POINT_SAMPLE_COORDINATE_BYTES = 3 * 8;
 const POINT_SAMPLE_COLOR_BYTES = 3;
+const POINT_SAMPLE_CLASSIFICATION_BYTES = 1;
+const POINT_SAMPLE_INTENSITY_BYTES = 2;
 
 interface PointSampleCacheEntry {
-  readonly promise: Promise<CopcNodePointSampleResult>;
+  readonly task: SharedAbortableTask<CopcNodePointSampleResult>;
   readonly nodeKey: string;
   readonly maxPointCount: number;
   readonly sampleFormat: CopcPointSampleFormat;
   readonly priority: PointSamplePriorityHandle;
-  state: "pending" | "fulfilled";
   estimatedByteSize: number;
 }
 
@@ -134,6 +151,7 @@ export class CopcSource {
   private readonly maxCachedHierarchyPageBytes: number;
   private readonly maxDecodedPointDataViewsPerWorker: number | undefined;
   private readonly maxDecodedPointDataViewBytesPerWorker: number | undefined;
+  private readonly maxDecodedPointDataViewBytesAcrossWorkers: number | undefined;
   private readonly maxConcurrentPointSampleWorkerRequests: number;
   private readonly pointSampleLoading: CopcPointSampleLoadingMode;
   private readonly createPointSampleWorker: () => Worker;
@@ -144,6 +162,10 @@ export class CopcSource {
   private readonly hierarchyPagePromises = new Map<
     string,
     Promise<Hierarchy.Subtree>
+  >();
+  private readonly hierarchyPageLoadTasks = new Map<
+    string,
+    SharedAbortableTask<void>
   >();
   private readonly loadedHierarchyPages = new Map<
     string,
@@ -160,7 +182,12 @@ export class CopcSource {
     PointSampleWorkerRequestEntry
   >();
   private readonly pointSampleWorkerQueue: PointSampleWorkerRequestEntry[] = [];
+  private readonly activeNodePointSampleWorkers = new Map<string, Worker>();
   private readonly decodedNodePointSampleWorkers = new Map<string, Worker>();
+  private readonly decodedPointDataCacheSnapshots = new Map<
+    Worker,
+    CopcDecodedPointDataCacheSnapshot
+  >();
   private cachedPointSampleBytes = 0;
   private cachedHierarchyPageBytes = 0;
   private hierarchyPageCacheEvictionCount = 0;
@@ -171,6 +198,11 @@ export class CopcSource {
   private readonly activePointSampleWorkers = new Set<Worker>();
   private pointSampleWorkerUnavailable = false;
   private pointSampleWorkerRequestId = 0;
+  private peakDecodedPointDataRetainedBytes = 0;
+  private retiredDecodedPointDataCacheHitCount = 0;
+  private retiredDecodedPointDataCacheMissCount = 0;
+  private retiredDecodedPointDataCacheEvictionCount = 0;
+  private retiredOversizedDecodedPointDataEntrySkipCount = 0;
 
   private readonly sourceDescriptor: CopcSourceDescriptor;
 
@@ -232,10 +264,21 @@ export class CopcSource {
       "maxDecodedPointDataViewsPerWorker",
       options.maxDecodedPointDataViewsPerWorker,
     );
-    this.maxDecodedPointDataViewBytesPerWorker = readOptionalPositiveInteger(
+    const maxDecodedPointDataViewBytesPerWorker = readOptionalPositiveInteger(
       "maxDecodedPointDataViewBytesPerWorker",
       options.maxDecodedPointDataViewBytesPerWorker,
     );
+    this.maxDecodedPointDataViewBytesAcrossWorkers =
+      readOptionalPositiveInteger(
+        "maxDecodedPointDataViewBytesAcrossWorkers",
+        options.maxDecodedPointDataViewBytesAcrossWorkers,
+      );
+    this.maxDecodedPointDataViewBytesPerWorker =
+      calculateEffectiveDecodedPointDataViewBytesPerWorker(
+        maxDecodedPointDataViewBytesPerWorker,
+        this.maxDecodedPointDataViewBytesAcrossWorkers,
+        maxConcurrentPointSampleWorkerRequests,
+      );
     if (
       options.pointSampleLoading !== undefined &&
       options.pointSampleLoading !== "main-thread" &&
@@ -269,33 +312,50 @@ export class CopcSource {
   }
 
   inspect(): Promise<CopcInspection> {
-    this.inspectionPromise ??= this.loadCopc().then((copc) =>
-      createInspection(this.url, copc),
-    );
+    let promise = this.inspectionPromise;
 
-    return this.inspectionPromise;
+    if (!promise) {
+      promise = this.loadCopc().then((copc) => createInspection(this.url, copc));
+      this.inspectionPromise = promise;
+      void promise.catch(() => {
+        if (this.inspectionPromise === promise) {
+          this.inspectionPromise = undefined;
+        }
+      });
+    }
+
+    return promise;
   }
 
-  loadHierarchySummary(): Promise<CopcHierarchySummary> {
-    return Promise.all([
-      this.loadCopc(),
-      this.loadHierarchy(),
-    ]).then(([copc, hierarchy]) =>
-      summarizeHierarchy(
-        hierarchy,
-        copc.info.cube,
-        this.loadedHierarchyPages.size,
-        this.hierarchyNodePageIds,
-        this.hierarchyPendingPageIds,
-      ),
+  async loadHierarchySummary(
+    options: LoadHierarchyOptions = {},
+  ): Promise<CopcHierarchySummary> {
+    throwIfAborted(options.signal);
+    const [copc, hierarchy] = await withCallerAbortSignal(
+      Promise.all([this.loadCopc(), this.loadHierarchy()]),
+      options.signal,
+    );
+    throwIfAborted(options.signal);
+
+    return summarizeHierarchy(
+      hierarchy,
+      copc.info.cube,
+      this.loadedHierarchyPages.size,
+      this.hierarchyNodePageIds,
+      this.hierarchyPendingPageIds,
     );
   }
 
-  async loadHierarchyPage(pageKey: string): Promise<CopcHierarchySummary> {
-    const [copc, hierarchy] = await Promise.all([
-      this.loadCopc(),
-      this.loadHierarchy(),
-    ]);
+  async loadHierarchyPage(
+    pageKey: string,
+    options: LoadHierarchyOptions = {},
+  ): Promise<CopcHierarchySummary> {
+    throwIfAborted(options.signal);
+    const [copc, hierarchy] = await withCallerAbortSignal(
+      Promise.all([this.loadCopc(), this.loadHierarchy()]),
+      options.signal,
+    );
+    throwIfAborted(options.signal);
     const page = hierarchy.pages[pageKey];
 
     if (!page) {
@@ -314,17 +374,55 @@ export class CopcSource {
       throw new Error(`COPC hierarchy page was not found: ${pageKey}`);
     }
 
-    const subtree = await this.loadHierarchyPageData(page);
-    const parentPageId = this.hierarchyPendingPageIds.get(pageKey);
-    delete hierarchy.pages[pageKey];
-    this.hierarchyPendingPageIds.delete(pageKey);
-    this.recordHierarchyProvenance(subtree, page);
-    mergeHierarchy(hierarchy, subtree);
-    this.rememberLoadedHierarchyPage(page, {
-      pageKey,
-      parentPageId,
-    });
-    this.evictHierarchyPagesIfNeeded(hierarchy);
+    const pageId = hierarchyPageId(page);
+    let loadTask = this.hierarchyPageLoadTasks.get(pageId);
+
+    if (!loadTask || !isReusableSharedAbortableTask(loadTask)) {
+      loadTask = createSharedAbortableTask(async (signal) => {
+        const subtree = await this.loadHierarchyPageData(page);
+        throwIfAborted(signal);
+
+        const pendingPage = hierarchy.pages[pageKey];
+
+        if (!pendingPage) {
+          if (hierarchy.nodes[pageKey]) {
+            this.touchLoadedHierarchyPage(pageId);
+            return;
+          }
+
+          throw new Error(
+            `COPC hierarchy page disappeared while loading: ${pageKey}`,
+          );
+        }
+
+        if (hierarchyPageId(pendingPage) !== pageId) {
+          throw new Error(
+            `COPC hierarchy page changed while loading: ${pageKey}`,
+          );
+        }
+
+        const parentPageId = this.hierarchyPendingPageIds.get(pageKey);
+        delete hierarchy.pages[pageKey];
+        this.hierarchyPendingPageIds.delete(pageKey);
+        this.recordHierarchyProvenance(subtree, pendingPage);
+        mergeHierarchy(hierarchy, subtree);
+        this.rememberLoadedHierarchyPage(pendingPage, {
+          pageKey,
+          parentPageId,
+        });
+        this.evictHierarchyPagesIfNeeded(hierarchy);
+      });
+      this.hierarchyPageLoadTasks.set(pageId, loadTask);
+      const createdTask = loadTask;
+      void createdTask.promise.catch(() => {
+        if (this.hierarchyPageLoadTasks.get(pageId) === createdTask) {
+          this.hierarchyPageLoadTasks.delete(pageId);
+        }
+      });
+    }
+
+    await consumeSharedAbortableTask(loadTask, options.signal);
+    throwIfAborted(options.signal);
 
     return summarizeHierarchy(
       hierarchy,
@@ -337,12 +435,14 @@ export class CopcSource {
 
   async loadHierarchyPages(
     pageKeys: readonly string[],
+    options: LoadHierarchyOptions = {},
   ): Promise<LoadHierarchyPagesResult> {
+    throwIfAborted(options.signal);
     const loadedPageKeys: string[] = [];
     let hierarchy: CopcHierarchySummary | undefined;
 
     for (const pageKey of [...new Set(pageKeys)]) {
-      const before = await this.loadHierarchySummary();
+      const before = await this.loadHierarchySummary(options);
 
       if (!before.pendingPages.some((page) => page.key === pageKey)) {
         if (before.nodes.some((node) => node.key === pageKey)) {
@@ -353,25 +453,32 @@ export class CopcSource {
         throw new Error(`COPC hierarchy page was not found: ${pageKey}`);
       }
 
-      hierarchy = await this.loadHierarchyPage(pageKey);
+      hierarchy = await this.loadHierarchyPage(pageKey, options);
       loadedPageKeys.push(pageKey);
     }
 
     return {
-      hierarchy: hierarchy ?? (await this.loadHierarchySummary()),
+      hierarchy: hierarchy ?? (await this.loadHierarchySummary(options)),
       loadedPageKeys,
     };
   }
 
-  async loadNextHierarchyPage(): Promise<CopcHierarchySummary | undefined> {
-    const hierarchy = await this.loadHierarchy();
+  async loadNextHierarchyPage(
+    options: LoadHierarchyOptions = {},
+  ): Promise<CopcHierarchySummary | undefined> {
+    throwIfAborted(options.signal);
+    const hierarchy = await withCallerAbortSignal(
+      this.loadHierarchy(),
+      options.signal,
+    );
+    throwIfAborted(options.signal);
     const nextPageKey = Object.keys(hierarchy.pages).sort(compareNodeKeys)[0];
 
     if (!nextPageKey) {
       return undefined;
     }
 
-    return this.loadHierarchyPage(nextPageKey);
+    return this.loadHierarchyPage(nextPageKey, options);
   }
 
   getHierarchyCacheStats(): CopcHierarchyCacheStats {
@@ -411,7 +518,7 @@ export class CopcSource {
     const cacheKey = `${nodeKey}:${maxPointCount}:${sampleFormat}`;
     const cached = this.nodePointSampleCache.get(cacheKey);
 
-    if (cached) {
+    if (cached && isReusableSharedAbortableTask(cached.task)) {
       return this.returnCachedPointSample(
         cacheKey,
         cached,
@@ -419,6 +526,10 @@ export class CopcSource {
         requestPriority,
         options.signal,
       );
+    }
+
+    if (cached) {
+      this.deletePointSampleCacheEntry(cacheKey, false);
     }
 
     const reusableCached = this.findReusablePointSampleCacheEntry(
@@ -441,45 +552,49 @@ export class CopcSource {
     this.pointSampleCacheMissCount += 1;
     let entry: PointSampleCacheEntry;
     const priority: PointSamplePriorityHandle = { value: requestPriority };
-    const promise = this.loadNodePointSamplesWithoutCache(
-      nodeKey,
-      maxPointCount,
-      sampleFormat,
-      priority,
-      options.signal,
-    )
-      .then((result) => {
+    const task = createSharedAbortableTask((signal) =>
+      this.loadNodePointSamplesWithoutCache(
+        nodeKey,
+        maxPointCount,
+        sampleFormat,
+        priority,
+        signal,
+      ),
+    );
+
+    void task.promise.then(
+      (result) => {
         if (this.nodePointSampleCache.get(cacheKey) !== entry) {
-          return result;
+          return;
         }
 
-        entry.state = "fulfilled";
         const estimatedByteSize = estimatePointSampleResultByteSize(result);
         this.cachedPointSampleBytes +=
           estimatedByteSize - entry.estimatedByteSize;
         entry.estimatedByteSize = estimatedByteSize;
         this.evictPointSampleCacheIfNeeded();
-        return result;
-      })
-      .catch((error: unknown) => {
+      },
+      () => {
         if (this.nodePointSampleCache.get(cacheKey) === entry) {
           this.deletePointSampleCacheEntry(cacheKey, false);
         }
-
-        throw error;
-      });
+      },
+    );
     entry = {
-      promise,
+      task,
       nodeKey,
       maxPointCount,
       sampleFormat,
       priority,
-      state: "pending",
       estimatedByteSize: 0,
     };
     this.nodePointSampleCache.set(cacheKey, entry);
     this.evictPointSampleCacheIfNeeded();
-    return promise;
+    return this.consumePointSampleCacheEntry(
+      entry,
+      maxPointCount,
+      options.signal,
+    );
   }
 
   private findReusablePointSampleCacheEntry(
@@ -491,11 +606,12 @@ export class CopcSource {
     return [...this.nodePointSampleCache.entries()]
       .filter(
         ([, entry]) =>
+          isReusableSharedAbortableTask(entry.task) &&
           entry.nodeKey === nodeKey &&
           entry.sampleFormat === sampleFormat &&
           entry.maxPointCount >= maxPointCount &&
           !(
-            entry.state === "pending" &&
+            entry.task.state === "pending" &&
             entry.maxPointCount > maxPointCount &&
             entry.priority.value < requestPriority
           ),
@@ -516,11 +632,16 @@ export class CopcSource {
     this.nodePointSampleCache.delete(cacheKey);
     this.nodePointSampleCache.set(cacheKey, entry);
 
-    return withAbortSignal(
-      entry.promise.then((result) =>
-        downsamplePointSampleResult(result, maxPointCount),
-      ),
-      signal,
+    return this.consumePointSampleCacheEntry(entry, maxPointCount, signal);
+  }
+
+  private consumePointSampleCacheEntry(
+    entry: PointSampleCacheEntry,
+    maxPointCount: number,
+    signal: AbortSignal | undefined,
+  ): Promise<CopcNodePointSampleResult> {
+    return consumeSharedAbortableTask(entry.task, signal).then((result) =>
+      downsamplePointSampleResult(result, maxPointCount),
     );
   }
 
@@ -572,6 +693,43 @@ export class CopcSource {
       cacheHitCount: this.pointSampleCacheHitCount,
       cacheMissCount: this.pointSampleCacheMissCount,
       cacheEvictionCount: this.pointSampleCacheEvictionCount,
+    };
+  }
+
+  getDecodedPointDataCacheStats(): CopcDecodedPointDataCacheStats {
+    const snapshots = [...this.decodedPointDataCacheSnapshots.values()];
+
+    return {
+      workerCount: this.pointSampleWorkers.length,
+      retainedViewCount: sumCacheSnapshots(
+        snapshots,
+        (snapshot) => snapshot.retainedViewCount,
+      ),
+      retainedBytes: sumCacheSnapshots(
+        snapshots,
+        (snapshot) => snapshot.retainedBytes,
+      ),
+      peakRetainedBytes: this.peakDecodedPointDataRetainedBytes,
+      cacheHitCount:
+        this.retiredDecodedPointDataCacheHitCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheHitCount),
+      cacheMissCount:
+        this.retiredDecodedPointDataCacheMissCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheMissCount),
+      cacheEvictionCount:
+        this.retiredDecodedPointDataCacheEvictionCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheEvictionCount),
+      oversizedEntrySkipCount:
+        this.retiredOversizedDecodedPointDataEntrySkipCount +
+        sumCacheSnapshots(
+          snapshots,
+          (snapshot) => snapshot.oversizedEntrySkipCount,
+        ),
+      affinityEntryCount: this.decodedNodePointSampleWorkers.size,
+      maxDecodedPointDataViewBytesPerWorker:
+        this.maxDecodedPointDataViewBytesPerWorker,
+      maxDecodedPointDataViewBytesAcrossWorkers:
+        this.maxDecodedPointDataViewBytesAcrossWorkers,
     };
   }
 
@@ -669,24 +827,44 @@ export class CopcSource {
   }
 
   private loadHierarchy(): Promise<Hierarchy.Subtree> {
-    this.hierarchyPromise ??= this.loadCopc().then(async (copc) => {
-      const subtree = await this.loadHierarchyPageData(
-        copc.info.rootHierarchyPage,
-      );
-      this.recordHierarchyProvenance(subtree, copc.info.rootHierarchyPage);
-      this.rememberLoadedHierarchyPage(copc.info.rootHierarchyPage, {
-        isRoot: true,
-      });
-      return subtree;
-    });
+    let promise = this.hierarchyPromise;
 
-    return this.hierarchyPromise;
+    if (!promise) {
+      promise = this.loadCopc().then(async (copc) => {
+        const subtree = await this.loadHierarchyPageData(
+          copc.info.rootHierarchyPage,
+        );
+        this.recordHierarchyProvenance(subtree, copc.info.rootHierarchyPage);
+        this.rememberLoadedHierarchyPage(copc.info.rootHierarchyPage, {
+          isRoot: true,
+        });
+        return subtree;
+      });
+      this.hierarchyPromise = promise;
+      void promise.catch(() => {
+        if (this.hierarchyPromise === promise) {
+          this.hierarchyPromise = undefined;
+        }
+      });
+    }
+
+    return promise;
   }
 
   private loadCopc(): Promise<CopcData> {
-    this.copcPromise ??= Copc.create(this.getter);
+    let promise = this.copcPromise;
 
-    return this.copcPromise;
+    if (!promise) {
+      promise = Copc.create(this.getter);
+      this.copcPromise = promise;
+      void promise.catch(() => {
+        if (this.copcPromise === promise) {
+          this.copcPromise = undefined;
+        }
+      });
+    }
+
+    return promise;
   }
 
   private loadHierarchyPageData(
@@ -698,6 +876,11 @@ export class CopcSource {
     if (!promise) {
       promise = Copc.loadHierarchyPage(this.getter, page);
       this.hierarchyPagePromises.set(pageId, promise);
+      void promise.catch(() => {
+        if (this.hierarchyPagePromises.get(pageId) === promise) {
+          this.hierarchyPagePromises.delete(pageId);
+        }
+      });
     }
 
     return promise;
@@ -814,6 +997,7 @@ export class CopcSource {
     this.loadedHierarchyPages.delete(pageId);
     this.cachedHierarchyPageBytes -= estimateHierarchyPageByteSize(entry.page);
     this.hierarchyPagePromises.delete(pageId);
+    this.hierarchyPageLoadTasks.delete(pageId);
 
     for (const [nodeKey, sourcePageId] of [
       ...this.hierarchyNodePageIds.entries(),
@@ -865,9 +1049,17 @@ export class CopcSource {
       return undefined;
     }
 
-    const preferredWorker = this.decodedNodePointSampleWorkers.get(
+    const activeNodeWorker = this.activeNodePointSampleWorkers.get(
       request.nodeKey,
     );
+
+    if (activeNodeWorker && this.pointSampleWorkers.includes(activeNodeWorker)) {
+      return this.activePointSampleWorkers.has(activeNodeWorker)
+        ? undefined
+        : activeNodeWorker;
+    }
+
+    const preferredWorker = this.decodedNodePointSampleWorkers.get(request.nodeKey);
 
     if (preferredWorker && this.pointSampleWorkers.includes(preferredWorker)) {
       return this.activePointSampleWorkers.has(preferredWorker)
@@ -1027,14 +1219,50 @@ export class CopcSource {
       return;
     }
 
+    const worker = request.worker;
     this.pointSampleWorkerRequests.delete(response.id);
-    this.finishPointSampleWorkerRequest(request);
 
     if (response.type === "loadNodePointSamples:success") {
+      if (worker) {
+        this.applyDecodedPointDataCacheSnapshot(
+          worker,
+          request.request,
+          response.cache,
+          "success",
+        );
+      }
+      this.finishPointSampleWorkerRequest(request);
       this.resolvePointSampleWorkerConsumers(request, response.result);
       return;
     }
 
+    if (response.type === "loadNodePointSamples:canceled") {
+      if (worker) {
+        this.applyDecodedPointDataCacheSnapshot(
+          worker,
+          request.request,
+          response.cache,
+          "retained-only",
+        );
+      }
+      this.finishPointSampleWorkerRequest(request);
+      this.rejectPointSampleWorkerConsumers(
+        request,
+        createAbortError(request.consumers[0]?.signal),
+      );
+      return;
+    }
+
+    if (worker) {
+      this.applyDecodedPointDataCacheSnapshot(
+        worker,
+        request.request,
+        response.cache,
+        "none",
+      );
+    }
+
+    this.finishPointSampleWorkerRequest(request);
     this.rejectPointSampleWorkerConsumers(
       request,
       createErrorFromWorkerResponse(response.error),
@@ -1062,7 +1290,7 @@ export class CopcSource {
       request.worker = worker;
       request.state = "active";
       this.activePointSampleWorkers.add(worker);
-      this.decodedNodePointSampleWorkers.set(request.request.nodeKey, worker);
+      this.activeNodePointSampleWorkers.set(request.request.nodeKey, worker);
       worker.postMessage(request.request);
     }
   }
@@ -1151,6 +1379,12 @@ export class CopcSource {
     request: PointSampleWorkerRequestEntry,
   ): void {
     if (request.worker) {
+      if (
+        this.activeNodePointSampleWorkers.get(request.request.nodeKey) ===
+        request.worker
+      ) {
+        this.activeNodePointSampleWorkers.delete(request.request.nodeKey);
+      }
       this.activePointSampleWorkers.delete(request.worker);
       request.worker = undefined;
     }
@@ -1167,7 +1401,9 @@ export class CopcSource {
 
     this.activePointSampleWorkers.delete(worker);
     request.worker = undefined;
+    this.removeActiveNodePointSampleWorkerAffinities(worker);
     this.removeDecodedNodePointSampleWorkerAffinities(worker);
+    this.retireDecodedPointDataCacheSnapshot(worker);
 
     const workerIndex = this.pointSampleWorkers.indexOf(worker);
     if (workerIndex !== -1) {
@@ -1271,7 +1507,9 @@ export class CopcSource {
       this.terminateActivePointSampleWorkerRequest(request);
     }
 
-    this.drainPointSampleWorkerQueue();
+    queueMicrotask(() => {
+      this.drainPointSampleWorkerQueue();
+    });
   }
 
   private removeAbortedPointSampleWorkerConsumers(
@@ -1358,6 +1596,7 @@ export class CopcSource {
     this.pointSampleWorkers.length = 0;
 
     for (const worker of workers) {
+      this.retireDecodedPointDataCacheSnapshot(worker);
       worker.terminate();
     }
 
@@ -1367,7 +1606,76 @@ export class CopcSource {
     this.pointSampleWorkerRequests.clear();
     this.pointSampleWorkerQueue.length = 0;
     this.activePointSampleWorkers.clear();
+    this.activeNodePointSampleWorkers.clear();
     this.decodedNodePointSampleWorkers.clear();
+  }
+
+  private removeActiveNodePointSampleWorkerAffinities(worker: Worker): void {
+    for (const [nodeKey, activeWorker] of this.activeNodePointSampleWorkers) {
+      if (activeWorker === worker) {
+        this.activeNodePointSampleWorkers.delete(nodeKey);
+      }
+    }
+  }
+
+  private applyDecodedPointDataCacheSnapshot(
+    worker: Worker,
+    request: CopcPointSampleWorkerLoadRequest,
+    snapshot: CopcDecodedPointDataCacheSnapshot | undefined,
+    affinityMode: "success" | "retained-only" | "none",
+  ): void {
+    if (!snapshot) {
+      if (affinityMode === "success") {
+        this.decodedNodePointSampleWorkers.set(request.nodeKey, worker);
+      }
+      return;
+    }
+
+    this.decodedPointDataCacheSnapshots.set(worker, snapshot);
+
+    for (const evicted of snapshot.evictedNodeKeys) {
+      if (evicted.sourceKey !== this.sourceKey) {
+        continue;
+      }
+
+      if (this.decodedNodePointSampleWorkers.get(evicted.nodeKey) === worker) {
+        this.decodedNodePointSampleWorkers.delete(evicted.nodeKey);
+      }
+    }
+
+    if (snapshot.requestedNodeRetained && affinityMode !== "none") {
+      this.decodedNodePointSampleWorkers.set(request.nodeKey, worker);
+    } else if (
+      !snapshot.requestedNodeRetained &&
+      this.decodedNodePointSampleWorkers.get(request.nodeKey) === worker
+    ) {
+      this.decodedNodePointSampleWorkers.delete(request.nodeKey);
+    }
+
+    const retainedBytes = sumCacheSnapshots(
+      [...this.decodedPointDataCacheSnapshots.values()],
+      (workerSnapshot) => workerSnapshot.retainedBytes,
+    );
+    this.peakDecodedPointDataRetainedBytes = Math.max(
+      this.peakDecodedPointDataRetainedBytes,
+      retainedBytes,
+    );
+  }
+
+  private retireDecodedPointDataCacheSnapshot(worker: Worker): void {
+    const snapshot = this.decodedPointDataCacheSnapshots.get(worker);
+
+    if (!snapshot) {
+      return;
+    }
+
+    this.decodedPointDataCacheSnapshots.delete(worker);
+    this.retiredDecodedPointDataCacheHitCount += snapshot.cacheHitCount;
+    this.retiredDecodedPointDataCacheMissCount += snapshot.cacheMissCount;
+    this.retiredDecodedPointDataCacheEvictionCount +=
+      snapshot.cacheEvictionCount;
+    this.retiredOversizedDecodedPointDataEntrySkipCount +=
+      snapshot.oversizedEntrySkipCount;
   }
 
   private removeDecodedNodePointSampleWorkerAffinities(worker: Worker): void {
@@ -1431,7 +1739,7 @@ export class CopcSource {
     let node = hierarchy.nodes[nodeKey];
 
     if (!node && hierarchy.pages[nodeKey]) {
-      await this.loadHierarchyPage(nodeKey);
+      await this.loadHierarchyPage(nodeKey, { signal });
       throwIfAborted(signal);
       node = hierarchy.nodes[nodeKey];
     }
@@ -1495,39 +1803,6 @@ function readOptionalPositiveInteger(
   return value;
 }
 
-function withAbortSignal<T>(
-  promise: Promise<T>,
-  signal: AbortSignal | undefined,
-): Promise<T> {
-  if (!signal) {
-    return promise;
-  }
-
-  throwIfAborted(signal);
-
-  return new Promise((resolve, reject) => {
-    const abort = (): void => {
-      cleanup();
-      reject(createAbortError(signal));
-    };
-    const cleanup = (): void => {
-      signal.removeEventListener("abort", abort);
-    };
-
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(
-      (result) => {
-        cleanup();
-        resolve(result);
-      },
-      (error: unknown) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
-
 function allocateNodeSampleBudgets(
   nodeCount: number,
   maxPointCountPerNode: number | undefined,
@@ -1568,6 +1843,41 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw createAbortError(signal);
   }
+}
+
+function withCallerAbortSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+
+  if (signal.aborted) {
+    return Promise.reject(createAbortError(signal));
+  }
+
+  return new Promise((resolve, reject) => {
+    const abort = (): void => {
+      cleanup();
+      reject(createAbortError(signal));
+    };
+    const cleanup = (): void => {
+      signal.removeEventListener("abort", abort);
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 function createAbortError(signal: AbortSignal | undefined): Error {
@@ -1851,6 +2161,16 @@ function estimatePointSampleResultByteSize(
   return objectPointBytes + estimatePointDataSampleArraysByteSize(result.pointData);
 }
 
+function sumCacheSnapshots(
+  snapshots: readonly CopcDecodedPointDataCacheSnapshot[],
+  select: (snapshot: CopcDecodedPointDataCacheSnapshot) => number,
+): number {
+  return snapshots.reduce(
+    (total, snapshot) => total + select(snapshot),
+    0,
+  );
+}
+
 function estimateHierarchyPageByteSize(page: Hierarchy.Page): number {
   return Number.isSafeInteger(page.pageLength) && page.pageLength > 0
     ? page.pageLength
@@ -1860,7 +2180,11 @@ function estimateHierarchyPageByteSize(page: Hierarchy.Page): number {
 function estimatePointSampleByteSize(point: CopcPointDataSample): number {
   return (
     POINT_SAMPLE_COORDINATE_BYTES +
-    (point.color ? POINT_SAMPLE_COLOR_BYTES : 0)
+    (point.color ? POINT_SAMPLE_COLOR_BYTES : 0) +
+    (point.classification === undefined
+      ? 0
+      : POINT_SAMPLE_CLASSIFICATION_BYTES) +
+    (point.intensity === undefined ? 0 : POINT_SAMPLE_INTENSITY_BYTES)
   );
 }
 
@@ -1923,7 +2247,9 @@ function estimatePointDataSampleArraysByteSize(
     pointData.z.byteLength +
     (pointData.red?.byteLength ?? 0) +
     (pointData.green?.byteLength ?? 0) +
-    (pointData.blue?.byteLength ?? 0)
+    (pointData.blue?.byteLength ?? 0) +
+    (pointData.classification?.byteLength ?? 0) +
+    (pointData.intensity?.byteLength ?? 0)
   );
 }
 
@@ -1944,6 +2270,12 @@ function createDownsampledPointDataSampleArrays(
       ? new Uint8Array(options.sampledPointCount)
       : undefined,
     blue: pointData.blue ? new Uint8Array(options.sampledPointCount) : undefined,
+    classification: pointData.classification
+      ? new Uint8Array(options.sampledPointCount)
+      : undefined,
+    intensity: pointData.intensity
+      ? new Uint16Array(options.sampledPointCount)
+      : undefined,
   };
 
   for (
@@ -1969,6 +2301,16 @@ function createDownsampledPointDataSampleArrays(
 
     if (downsampled.blue && pointData.blue) {
       downsampled.blue[sampleIndex] = pointData.blue[pointIndex] ?? 0;
+    }
+
+    if (downsampled.classification && pointData.classification) {
+      downsampled.classification[sampleIndex] =
+        pointData.classification[pointIndex] ?? 0;
+    }
+
+    if (downsampled.intensity && pointData.intensity) {
+      downsampled.intensity[sampleIndex] =
+        pointData.intensity[pointIndex] ?? 0;
     }
   }
 

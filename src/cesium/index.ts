@@ -17,9 +17,11 @@ export {
   type CopcPointCloudLayerPostStopProgressMode,
   type CopcPointCloudLayerProgressiveAutomaticRenderOptions,
   type CopcPointCloudLayerProgressiveNodeOrder,
+  type CopcPointCloudLayerProgressiveRenderCandidate,
   type CopcPointCloudLayerProgressiveRenderNodesOptions,
   type CopcPointCloudLayerProgressivePrepareNodesOptions,
   type CopcPointCloudLayerProgressiveRenderMode,
+  type CopcPointCloudLayerDecodedPointDataCacheStats,
   type CopcPointCloudLayerPointGeometryCacheStats,
   type CopcPointCloudLayerPointGeometryNodeTimingStats,
   type CopcPointCloudLayerPointGeometryTimingStats,
@@ -109,11 +111,15 @@ export {
   CopcCameraStreamNodeSampleCache,
   CopcCameraStreamPrefetchController,
   CopcCameraStreamRequestController,
+  canReuseCopcCameraStreamCommittedRender,
   hasFreshCopcCameraStreamNodeSamples,
   mergeCopcCameraStreamNodeSamples,
+  shouldRenderCopcCameraStreamProgress,
+  type CopcCameraStreamCommittedRenderReuseOptions,
   type CopcCameraStreamNodeSampleCacheOptions,
   type CopcCameraStreamNodeSampleLike,
   type CopcCameraStreamPrefetchTask,
+  type CopcCameraStreamProgressRenderDecisionOptions,
   type CopcCameraStreamPreviousRequest,
   type CopcCameraStreamRequestControllerOptions,
   type CopcCameraStreamStartedRequest,
@@ -126,6 +132,8 @@ export {
   createCopcCameraStreamRuntimeSettings,
   createCopcCameraStreamLodSettings,
   createCopcCameraStreamPrefetchSettings,
+  isCopcCameraStreamZoomRefinement,
+  resolveCopcCameraStreamHierarchyExpansionDepth,
   type CopcCameraStreamDetailCompletionSettings,
   type CopcCameraStreamDetailCompletionSettingsOptions,
   type CopcCameraStreamLodQualitySettings,
@@ -138,6 +146,7 @@ export {
   type CopcCameraStreamPrefetchSettingsOptions,
   type CopcCameraStreamRuntimeSettings,
   type CopcCameraStreamRuntimeSettingsOptions,
+  type CopcCameraStreamZoomRefinementSettings,
 } from "./CopcCameraStreamSettings";
 export {
   COPC_POINT_CLOUD_QUALITY_SETTINGS,
@@ -166,6 +175,16 @@ export {
   type CopcCameraStreamRenderPlanOptions,
 } from "./CopcCameraStreamRenderPlan";
 export {
+  CopcCameraStreamTerminalRenderError,
+  runCopcCameraStreamTerminalRender,
+  type CopcCameraStreamTerminalRenderLayer,
+  type CopcCameraStreamTerminalRenderOptions,
+  type CopcCameraStreamTerminalRenderResult,
+  type CopcCameraStreamTerminalRenderStage,
+  type CopcCameraStreamTerminalRenderUpdate,
+  type CopcCameraStreamTerminalVisualQualityState,
+} from "./CopcCameraStreamTerminalRender";
+export {
   formatCopcCameraStreamDiagnostics,
   formatCopcCameraStreamDetailProgress,
   formatCopcCameraStreamFinalNodeMix,
@@ -192,11 +211,18 @@ export {
   type CopcCameraStreamDetailProgressPolicyOptions,
   type CopcCameraStreamDetailWarmupPolicy,
   type CopcCameraStreamDetailWarmupPolicyOptions,
+  type CopcCameraStreamFinalNodeWeight,
   type CopcCameraStreamProgressNodeSampleLike,
   type CopcCameraStreamRendererKind,
   type CopcCameraStreamRequestPriorityOffsets,
   type CopcCameraStreamRequestPriorityOptions,
 } from "./CopcCameraStreamProgress";
+export {
+  createCopcCameraStreamVisualQualityState,
+  formatCopcCameraStreamVisualQuality,
+  type CopcCameraStreamVisualQualityOptions,
+  type CopcCameraStreamVisualQualityState,
+} from "./CopcCameraStreamVisualQuality";
 export {
   createCopcCameraStreamCoverageNodeKeys,
   createCopcCameraStreamFinalNodeKeys,
@@ -208,6 +234,7 @@ export {
   filterAncestorCoveredCopcNodeKeys,
   isCopcNodeKeyAncestorOf,
   maxCopcNodeKeyDepth,
+  orderCopcCameraStreamNodeKeysForAdditiveProgress,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
   readCopcNodeKeyDepth,
   selectDistributedCopcCameraStreamNodeKeys,

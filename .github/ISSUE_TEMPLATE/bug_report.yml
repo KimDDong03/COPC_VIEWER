@@ -1,0 +1,86 @@
+name: Bug report
+description: Report reproducible incorrect behavior in copc-cesium
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, private COPC data, or a suspected security vulnerability here. Report security issues through the repository's private Security advisory form.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the package version or Git commit where you observed the problem.
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include browser and version, operating system, Node.js version, CesiumJS version, and GPU/WebGL renderer when relevant.
+      placeholder: |
+        Browser:
+        OS:
+        Node.js:
+        CesiumJS:
+        GPU/WebGL renderer:
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: COPC source characteristics
+      description: Describe the source size, point format, CRS, delivery method, and range/CORS behavior. Share a URL only if it is public and safe to disclose.
+      placeholder: "Remote or local file, object size, point count/format, CRS, HTTP range behavior"
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest sequence or repository that reliably reproduces the issue.
+      placeholder: |
+        1. Configure ...
+        2. Load ...
+        3. Move the camera ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and evidence
+      description: Include exact errors, logs, screenshots, timings, or output artifacts with sensitive values removed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification already performed
+      description: List relevant commands and their actual results, such as tests, build, browser smoke, or a performance report path.
+      placeholder: |
+        npm test: passed/failed/not run
+        npm run build: passed/failed/not run
+        npm run smoke:example: passed/failed/not run
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for the same failure.
+          required: true
+        - label: I removed secrets, credentials, private URLs, and non-redistributable data from this report.
+          required: true

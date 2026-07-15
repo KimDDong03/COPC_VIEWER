@@ -1,0 +1,150 @@
+name: Publish npm Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: Publish the verified tarball for this exact tag
+        required: true
+        type: boolean
+        default: false
+      release_candidate_run_id:
+        description: Successful Release Candidate workflow run ID for this tag
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ inputs.confirm_publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: npm
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Verify tagged package version
+        shell: bash
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$RELEASE_REF_TYPE" != "tag" ]]; then
+            echo "Publishing requires workflow_dispatch on an existing version tag." >&2
+            exit 1
+          fi
+          expected="v$(node -p "require('./package.json').version")"
+          if [[ "$RELEASE_TAG" != "$expected" ]]; then
+            echo "Release tag $RELEASE_TAG does not match package version $expected." >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js and npm registry
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Use project npm version
+        working-directory: ${{ runner.temp }}
+        run: npm install --global npm@11.16.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npm run smoke:example:install-browser
+
+      - name: Audit dependency advisories
+        run: npm audit
+
+      - name: Run release QC and create candidate
+        run: npm run qc
+
+      - name: Download approved release candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CANDIDATE_RUN_ID: ${{ inputs.release_candidate_run_id }}
+        run: |
+          if [[ ! "$RELEASE_CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "Release Candidate run ID must contain only digits." >&2
+            exit 1
+          fi
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_CANDIDATE_RUN_ID")"
+          run_sha="$(jq -r '.head_sha' <<<"$run_json")"
+          run_conclusion="$(jq -r '.conclusion' <<<"$run_json")"
+          run_name="$(jq -r '.name' <<<"$run_json")"
+          if [[ "$run_name" != "Release Candidate" ]]; then
+            echo "Run $RELEASE_CANDIDATE_RUN_ID belongs to '$run_name', not Release Candidate." >&2
+            exit 1
+          fi
+          if [[ "$run_conclusion" != "success" ]]; then
+            echo "Release Candidate run $RELEASE_CANDIDATE_RUN_ID concluded '$run_conclusion'." >&2
+            exit 1
+          fi
+          if [[ "$run_sha" != "$GITHUB_SHA" ]]; then
+            echo "Release Candidate SHA $run_sha does not match publish SHA $GITHUB_SHA." >&2
+            exit 1
+          fi
+          version="$(node -p "require('./package.json').version")"
+          gh run download "$RELEASE_CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "copc-cesium-release-candidate-v$version" \
+            --dir approved-release-candidate
+
+      - name: Verify approved and reproduced candidate checksums
+        id: candidate
+        shell: bash
+        run: |
+          mapfile -t approved_tarballs < <(find approved-release-candidate -type f -name '*.tgz' -print)
+          mapfile -t reproduced_tarballs < <(find output/package-smoke -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ ${#approved_tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one approved tarball, found ${#approved_tarballs[@]}." >&2
+            exit 1
+          fi
+          if [[ ${#reproduced_tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one reproduced tarball, found ${#reproduced_tarballs[@]}." >&2
+            exit 1
+          fi
+          tarball="${approved_tarballs[0]}"
+          reproduced_tarball="${reproduced_tarballs[0]}"
+          checksum="$tarball.sha256"
+          if [[ ! -f "$checksum" ]]; then
+            echo "Missing checksum file: $checksum" >&2
+            exit 1
+          fi
+          (cd "$(dirname "$tarball")" && sha256sum --check "$(basename "$checksum")")
+          approved_sha="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          reproduced_sha="$(sha256sum "$reproduced_tarball" | cut -d' ' -f1)"
+          if [[ "$approved_sha" != "$reproduced_sha" ]]; then
+            echo "Approved candidate $approved_sha does not match reproduced candidate $reproduced_sha." >&2
+            exit 1
+          fi
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Publish verified tarball with provenance
+        run: npm publish "${{ steps.candidate.outputs.tarball }}" --access public --provenance --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload published candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-copc-cesium-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            approved-release-candidate/
+            output/package-smoke/browser-result.json
+            docs/sbom.spdx.json
+            THIRD_PARTY_NOTICES.md

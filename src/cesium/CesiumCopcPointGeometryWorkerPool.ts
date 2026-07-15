@@ -17,6 +17,12 @@ import {
   createCopcSourceDescriptor,
   type CopcSourceDescriptor,
 } from "../core/copc/createCopcRangeGetter";
+import {
+  calculateEffectiveDecodedPointDataViewBytesPerWorker,
+  DEFAULT_MAX_CONCURRENT_COPC_POINT_GEOMETRY_WORKER_REQUESTS,
+  type CopcDecodedPointDataCacheSnapshot,
+  type CopcDecodedPointDataCacheStats,
+} from "../core/copc/CopcDecodedPointDataCache";
 import type { CesiumPointGeometryTransform } from "./pointGeometryBatch";
 
 export interface CesiumCopcPointGeometryWorkerPoolOptions {
@@ -26,6 +32,7 @@ export interface CesiumCopcPointGeometryWorkerPoolOptions {
   readonly decodedNodeWorkerFallbackDelayMilliseconds?: number;
   readonly maxDecodedPointDataViewsPerWorker?: number;
   readonly maxDecodedPointDataViewBytesPerWorker?: number;
+  readonly maxDecodedPointDataViewBytesAcrossWorkers?: number;
   readonly createCopcPointGeometryWorker?: () => Worker;
 }
 
@@ -53,6 +60,7 @@ interface PointGeometryWorkerRequestEntry {
 
 interface PointGeometryWorkerWarmupEntry {
   readonly id: number;
+  readonly worker: Worker;
   readonly resolve: () => void;
   readonly reject: (error: Error) => void;
 }
@@ -86,7 +94,6 @@ type PointGeometryWorkerRequestConsumer =
   | PointGeometryWorkerGeometryRequestConsumer
   | PointGeometryWorkerPrefetchRequestConsumer;
 
-const DEFAULT_MAX_CONCURRENT_COPC_POINT_GEOMETRY_WORKER_REQUESTS = 2;
 const DEFAULT_DECODED_NODE_WORKER_FALLBACK_DELAY_MILLISECONDS =
   Number.POSITIVE_INFINITY;
 
@@ -97,6 +104,7 @@ export class CesiumCopcPointGeometryWorkerPool {
   private readonly decodedNodeWorkerFallbackDelayMilliseconds: number;
   private readonly maxDecodedPointDataViewsPerWorker: number | undefined;
   private readonly maxDecodedPointDataViewBytesPerWorker: number | undefined;
+  private readonly maxDecodedPointDataViewBytesAcrossWorkers: number | undefined;
   private readonly createCopcPointGeometryWorker: () => Worker;
   private readonly workers: Worker[] = [];
   private readonly activeWorkers = new Set<Worker>();
@@ -107,6 +115,10 @@ export class CesiumCopcPointGeometryWorkerPool {
   private readonly warmupRequests = new Map<number, PointGeometryWorkerWarmupEntry>();
   private readonly activeNodeWorkers = new Map<string, Worker>();
   private readonly decodedNodeWorkers = new Map<string, Worker>();
+  private readonly decodedPointDataCacheSnapshots = new Map<
+    Worker,
+    CopcDecodedPointDataCacheSnapshot
+  >();
   private lastWarmupOptions: CesiumCopcPointGeometryWorkerWarmupOptions | undefined;
   private warmupPromise: Promise<void> | undefined;
   private workerUnavailable = false;
@@ -114,6 +126,11 @@ export class CesiumCopcPointGeometryWorkerPool {
   private queueDrainTimeoutId: ReturnType<typeof setTimeout> | undefined;
   private requestId = 0;
   private destroyed = false;
+  private peakDecodedPointDataRetainedBytes = 0;
+  private retiredDecodedPointDataCacheHitCount = 0;
+  private retiredDecodedPointDataCacheMissCount = 0;
+  private retiredDecodedPointDataCacheEvictionCount = 0;
+  private retiredOversizedDecodedPointDataEntrySkipCount = 0;
 
   constructor(options: CesiumCopcPointGeometryWorkerPoolOptions = {}) {
     const maxConcurrentPointGeometryWorkerRequests =
@@ -144,10 +161,21 @@ export class CesiumCopcPointGeometryWorkerPool {
       "maxDecodedPointDataViewsPerWorker",
       options.maxDecodedPointDataViewsPerWorker,
     );
-    this.maxDecodedPointDataViewBytesPerWorker = readOptionalPositiveInteger(
+    const maxDecodedPointDataViewBytesPerWorker = readOptionalPositiveInteger(
       "maxDecodedPointDataViewBytesPerWorker",
       options.maxDecodedPointDataViewBytesPerWorker,
     );
+    this.maxDecodedPointDataViewBytesAcrossWorkers =
+      readOptionalPositiveInteger(
+        "maxDecodedPointDataViewBytesAcrossWorkers",
+        options.maxDecodedPointDataViewBytesAcrossWorkers,
+      );
+    this.maxDecodedPointDataViewBytesPerWorker =
+      calculateEffectiveDecodedPointDataViewBytesPerWorker(
+        maxDecodedPointDataViewBytesPerWorker,
+        this.maxDecodedPointDataViewBytesAcrossWorkers,
+        maxConcurrentPointGeometryWorkerRequests,
+      );
     this.pointGeometryLoading = options.pointGeometryLoading ?? "main-thread";
     this.maxConcurrentPointGeometryWorkerRequests =
       maxConcurrentPointGeometryWorkerRequests;
@@ -386,6 +414,43 @@ export class CesiumCopcPointGeometryWorkerPool {
     return this.decodedNodeWorkers.has(createDecodedNodeWorkerKey(options));
   }
 
+  getDecodedPointDataCacheStats(): CopcDecodedPointDataCacheStats {
+    const snapshots = [...this.decodedPointDataCacheSnapshots.values()];
+
+    return {
+      workerCount: this.workers.length,
+      retainedViewCount: sumCacheSnapshots(
+        snapshots,
+        (snapshot) => snapshot.retainedViewCount,
+      ),
+      retainedBytes: sumCacheSnapshots(
+        snapshots,
+        (snapshot) => snapshot.retainedBytes,
+      ),
+      peakRetainedBytes: this.peakDecodedPointDataRetainedBytes,
+      cacheHitCount:
+        this.retiredDecodedPointDataCacheHitCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheHitCount),
+      cacheMissCount:
+        this.retiredDecodedPointDataCacheMissCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheMissCount),
+      cacheEvictionCount:
+        this.retiredDecodedPointDataCacheEvictionCount +
+        sumCacheSnapshots(snapshots, (snapshot) => snapshot.cacheEvictionCount),
+      oversizedEntrySkipCount:
+        this.retiredOversizedDecodedPointDataEntrySkipCount +
+        sumCacheSnapshots(
+          snapshots,
+          (snapshot) => snapshot.oversizedEntrySkipCount,
+        ),
+      affinityEntryCount: this.decodedNodeWorkers.size,
+      maxDecodedPointDataViewBytesPerWorker:
+        this.maxDecodedPointDataViewBytesPerWorker,
+      maxDecodedPointDataViewBytesAcrossWorkers:
+        this.maxDecodedPointDataViewBytesAcrossWorkers,
+    };
+  }
+
   warmUp(options: CesiumCopcPointGeometryWorkerWarmupOptions = {}): void {
     if (this.destroyed || this.pointGeometryLoading !== "integrated-worker") {
       return;
@@ -592,6 +657,7 @@ export class CesiumCopcPointGeometryWorkerPool {
     const promise = new Promise<void>((resolve, reject) => {
       this.warmupRequests.set(id, {
         id,
+        worker,
         resolve,
         reject,
       });
@@ -643,6 +709,17 @@ export class CesiumCopcPointGeometryWorkerPool {
       response.type === "loadNodePointGeometry:canceled" ||
       response.type === "prefetchNodePointData:canceled"
     ) {
+      if (worker) {
+        this.applyDecodedPointDataCacheSnapshot(
+          worker,
+          request.request,
+          response.cache,
+          response.type === "loadNodePointGeometry:error" ||
+            response.type === "prefetchNodePointData:error"
+            ? "none"
+            : "retained-only",
+        );
+      }
       this.finishRequest(request);
       if (request.state !== "canceled") {
         this.rejectRequestConsumers(
@@ -655,9 +732,11 @@ export class CesiumCopcPointGeometryWorkerPool {
 
     if (response.type === "prefetchNodePointData:success") {
       if (worker) {
-        this.decodedNodeWorkers.set(
-          createDecodedNodeWorkerKey(request.request),
+        this.applyDecodedPointDataCacheSnapshot(
           worker,
+          request.request,
+          response.cache,
+          "success",
         );
       }
       this.finishRequest(request);
@@ -674,9 +753,11 @@ export class CesiumCopcPointGeometryWorkerPool {
 
     if (response.type === "loadNodePointGeometry:success") {
       if (worker) {
-        this.decodedNodeWorkers.set(
-          createDecodedNodeWorkerKey(request.request),
+        this.applyDecodedPointDataCacheSnapshot(
           worker,
+          request.request,
+          response.cache,
+          "success",
         );
       }
       this.finishRequest(request);
@@ -691,6 +772,14 @@ export class CesiumCopcPointGeometryWorkerPool {
       return;
     }
 
+    if (worker) {
+      this.applyDecodedPointDataCacheSnapshot(
+        worker,
+        request.request,
+        response.cache,
+        "none",
+      );
+    }
     this.finishRequest(request);
     this.rejectRequestConsumers(
       request,
@@ -723,6 +812,15 @@ export class CesiumCopcPointGeometryWorkerPool {
     const request = [...this.requests.values()].find(
       (entry) => entry.worker === worker,
     );
+
+    for (const [id, warmup] of this.warmupRequests) {
+      if (warmup.worker !== worker) {
+        continue;
+      }
+
+      this.warmupRequests.delete(id);
+      warmup.reject(error);
+    }
 
     this.removeWorker(worker);
 
@@ -1058,6 +1156,7 @@ export class CesiumCopcPointGeometryWorkerPool {
     this.workers.length = 0;
 
     for (const worker of workers) {
+      this.retireDecodedPointDataCacheSnapshot(worker);
       worker.terminate();
     }
 
@@ -1082,6 +1181,7 @@ export class CesiumCopcPointGeometryWorkerPool {
   private removeWorker(worker: Worker): void {
     this.activeWorkers.delete(worker);
     this.removeNodeWorkerAffinities(worker);
+    this.retireDecodedPointDataCacheSnapshot(worker);
 
     const workerIndex = this.workers.indexOf(worker);
     if (workerIndex !== -1) {
@@ -1103,6 +1203,69 @@ export class CesiumCopcPointGeometryWorkerPool {
         this.decodedNodeWorkers.delete(key);
       }
     }
+  }
+
+  private applyDecodedPointDataCacheSnapshot(
+    worker: Worker,
+    request: CesiumCopcPointGeometryWorkerWorkRequest,
+    snapshot: CopcDecodedPointDataCacheSnapshot | undefined,
+    affinityMode: "success" | "retained-only" | "none",
+  ): void {
+    const requestedKey = createDecodedNodeWorkerKey(request);
+
+    if (!snapshot) {
+      if (affinityMode === "success") {
+        this.decodedNodeWorkers.set(requestedKey, worker);
+      }
+      return;
+    }
+
+    this.decodedPointDataCacheSnapshots.set(worker, snapshot);
+
+    for (const evicted of snapshot.evictedNodeKeys) {
+      const evictedKey = createDecodedNodeWorkerKeyFromParts(
+        evicted.sourceKey,
+        evicted.nodeKey,
+      );
+
+      if (this.decodedNodeWorkers.get(evictedKey) === worker) {
+        this.decodedNodeWorkers.delete(evictedKey);
+      }
+    }
+
+    if (snapshot.requestedNodeRetained && affinityMode !== "none") {
+      this.decodedNodeWorkers.set(requestedKey, worker);
+    } else if (
+      !snapshot.requestedNodeRetained &&
+      this.decodedNodeWorkers.get(requestedKey) === worker
+    ) {
+      this.decodedNodeWorkers.delete(requestedKey);
+    }
+
+    const retainedBytes = sumCacheSnapshots(
+      [...this.decodedPointDataCacheSnapshots.values()],
+      (workerSnapshot) => workerSnapshot.retainedBytes,
+    );
+    this.peakDecodedPointDataRetainedBytes = Math.max(
+      this.peakDecodedPointDataRetainedBytes,
+      retainedBytes,
+    );
+  }
+
+  private retireDecodedPointDataCacheSnapshot(worker: Worker): void {
+    const snapshot = this.decodedPointDataCacheSnapshots.get(worker);
+
+    if (!snapshot) {
+      return;
+    }
+
+    this.decodedPointDataCacheSnapshots.delete(worker);
+    this.retiredDecodedPointDataCacheHitCount += snapshot.cacheHitCount;
+    this.retiredDecodedPointDataCacheMissCount += snapshot.cacheMissCount;
+    this.retiredDecodedPointDataCacheEvictionCount +=
+      snapshot.cacheEvictionCount;
+    this.retiredOversizedDecodedPointDataEntrySkipCount +=
+      snapshot.oversizedEntrySkipCount;
   }
 
   private removeActiveNodeWorkerAffinity(
@@ -1314,7 +1477,17 @@ function createDecodedNodeWorkerKey(
     readonly nodeKey: string;
   },
 ): string {
-  return `${readPointGeometryRequestSource(request).key}\n${request.nodeKey}`;
+  return createDecodedNodeWorkerKeyFromParts(
+    readPointGeometryRequestSource(request).key,
+    request.nodeKey,
+  );
+}
+
+function createDecodedNodeWorkerKeyFromParts(
+  sourceKey: string,
+  nodeKey: string,
+): string {
+  return `${sourceKey}\n${nodeKey}`;
 }
 
 function readPointGeometryRequestSource(options: {
@@ -1508,6 +1681,16 @@ function downsampleGeometryBatchResult(
 
 function nowMilliseconds(): number {
   return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function sumCacheSnapshots(
+  snapshots: readonly CopcDecodedPointDataCacheSnapshot[],
+  select: (snapshot: CopcDecodedPointDataCacheSnapshot) => number,
+): number {
+  return snapshots.reduce(
+    (total, snapshot) => total + select(snapshot),
+    0,
+  );
 }
 
 function readOptionalPositiveInteger(

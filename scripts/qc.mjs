@@ -6,9 +6,11 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
+const omitWarmZoomDetail = process.argv.includes("--omit-warm-zoom-detail");
 
 const steps = [
   ["Unit tests", npmCommand, ["test"]],
+  ["License and SPDX evidence", npmCommand, ["run", "license:evidence:self-test"]],
   ["Library and example build", npmCommand, ["run", "build"]],
   ["Renderer benchmark", npmCommand, ["run", "benchmark:renderers"]],
   [
@@ -30,7 +32,10 @@ const steps = [
   ["Browser example smoke", npmCommand, ["run", "smoke:example"]],
   ["Browser local-file smoke", npmCommand, ["run", "smoke:example:file"]],
   ["Whitespace check", "git", ["diff", "--check"]],
-];
+].filter(
+  ([label]) =>
+    !omitWarmZoomDetail || label !== "Warm zoom camera-stream smoothness QC",
+);
 
 for (const [label, command, args] of steps) {
   console.log(`\n== ${label} ==`);

@@ -6,9 +6,18 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
+import { isInteractiveRenderReady } from "./interactive-render-status-policy.mjs";
+import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
+const playwrightCliPath = resolveLocalPackageBinary(
+  repoRoot,
+  "@playwright/cli",
+  "playwright-cli",
+);
+const viteCliPath = resolveLocalPackageBinary(repoRoot, "vite", "vite");
 const outputRoot = path.join(repoRoot, "output");
 const smokeRoot = path.join(outputRoot, "example-smoke");
 const localFileSampleRoot = path.join(outputRoot, "local-copc-samples");
@@ -18,7 +27,10 @@ const autzenScreenshotPath = path.join(
   screenshotDir,
   "smoke-example-autzen-stream.png",
 );
-const screenshotPath = path.join(screenshotDir, "smoke-example-sofi-stream.png");
+const millsiteScreenshotPath = path.join(
+  screenshotDir,
+  "smoke-example-millsite-stream.png",
+);
 const verificationScreenshotPath = path.join(
   screenshotDir,
   "smoke-example-final-verification.png",
@@ -35,8 +47,6 @@ const localFileSamplePath = path.join(
 );
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
-const npxCommand = "npx";
-const playwrightCliPackage = "@playwright/cli@0.1.14";
 const shouldRunLocalFileSmoke =
   process.argv.includes("--local-file") ||
   process.env.COPC_SMOKE_LOCAL_FILE === "1";
@@ -68,12 +78,12 @@ function run(command, args, cwd) {
 
 function runPlaywrightCli(args) {
   const result = spawnSync(
-    npxCommand,
-    ["--yes", "--package", playwrightCliPackage, "playwright-cli", ...args],
+    process.execPath,
+    [playwrightCliPath, ...args],
     {
       cwd: repoRoot,
       encoding: "utf8",
-      shell: isWindows,
+      shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -171,11 +181,21 @@ function createSmokeFlow(baseUrl) {
   return `async (page) => {
   const failures = [];
   const consoleProblems = [];
+  const ignoredConsoleWarnings = [];
   const pageErrors = [];
+  const isExpectedNonFatalWebGlDriverWarning = ${isExpectedNonFatalWebGlDriverWarning.toString()};
 
   page.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") {
-      consoleProblems.push(\`\${message.type()}: \${message.text()}\`);
+    const type = message.type();
+    const text = message.text();
+
+    if (isExpectedNonFatalWebGlDriverWarning(type, text)) {
+      ignoredConsoleWarnings.push(\`\${type}: \${text}\`);
+      return;
+    }
+
+    if (type === "error" || type === "warning") {
+      consoleProblems.push(\`\${type}: \${text}\`);
     }
   });
   page.on("pageerror", (error) => {
@@ -183,15 +203,17 @@ function createSmokeFlow(baseUrl) {
   });
 
   const expectedRenderedStatuses = [
-    "Camera stream rendered",
+    "Camera stream terminal rendered",
+    "Camera stream interactive-ready",
     "Camera stream previewed",
     "Camera stream partial render",
     "Auto LOD rendered",
   ];
+  const isInteractiveRenderReady = ${isInteractiveRenderReady.toString()};
   const minDefaultInteractivePointCount = 4_000;
-  const sofiUrl = ${JSON.stringify(`${baseUrl}/copc-samples/sofi.copc.laz`)};
-  const sofiDefinition =
-    "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs";
+  const millsiteUrl = ${JSON.stringify(`${baseUrl}/copc-samples/millsite.copc.laz`)};
+  const millsiteDefinition =
+    "+proj=utm +zone=12 +ellps=GRS80 +units=m +no_defs +type=crs";
   const localFilePath = ${localFilePath};
   let primitiveRendererTiming = "";
   let primitiveRendererPayload = "";
@@ -201,6 +223,12 @@ function createSmokeFlow(baseUrl) {
   let typedPointGeometryCache = "";
   let localFileRendererTiming = "";
   let cameraStreamControllerSmoke;
+  let autzenOverviewStatus;
+  let autzenZoomStatus;
+  let autzenWheelZoomStatus;
+  let autzenPrefetchStatus;
+  let autzenTerminalVisualQuality;
+  let millsiteTerminalVisualQuality;
   let browserGraphics;
 
   async function readBrowserGraphics() {
@@ -238,10 +266,14 @@ function createSmokeFlow(baseUrl) {
     try {
       await page.waitForFunction(
         (statusTexts) => {
+          const isInteractiveRenderReady = ${isInteractiveRenderReady.toString()};
+          const status = window.__copcBasicViewerBenchmark?.getStatus();
           const currentStatus =
             document.querySelector("#copc-status")?.textContent ?? "";
-          return statusTexts.some((statusText) =>
-            currentStatus.includes(statusText),
+          return isInteractiveRenderReady(
+            status,
+            currentStatus,
+            statusTexts,
           );
         },
         expectedRenderedStatuses,
@@ -262,12 +294,26 @@ function createSmokeFlow(baseUrl) {
   async function waitForCameraStreamCompleteStatus() {
     try {
       await page.waitForFunction(
-        () =>
-          document
-            .querySelector("#copc-status")
-            ?.textContent?.includes("Camera stream rendered"),
+        () => {
+          const status = window.__copcBasicViewerBenchmark?.getStatus();
+          const visualQuality = status?.cameraStreamVisualQuality;
+
+          return visualQuality
+            ? visualQuality.isTerminalReady === true &&
+                visualQuality.frontierDepthSpan === 0 &&
+                visualQuality.isFrontierAntichain === true &&
+                visualQuality.isAdditiveClosureComplete === true &&
+                visualQuality.missingRequiredNodeCount === 0 &&
+                visualQuality.unexpectedRenderedNodeCount === 0
+            : document
+                .querySelector("#copc-status")
+                ?.textContent?.includes("Camera stream terminal rendered");
+        },
         undefined,
         { timeout: 120_000 },
+      );
+      return page.evaluate(
+        () => window.__copcBasicViewerBenchmark?.getStatus(),
       );
     } catch (error) {
       const currentStatus = await page.locator("#copc-status").textContent();
@@ -275,6 +321,36 @@ function createSmokeFlow(baseUrl) {
         \`Timed out waiting for camera-stream completion. Current status: "\${currentStatus}". \${error.message}\`,
       );
     }
+  }
+
+  async function waitForCameraStreamTerminalAfterRequest(
+    previousRequestId,
+    maximumCameraHeightMeters,
+  ) {
+    await page.waitForFunction(
+      ({ maximumCameraHeightMeters, previousRequestId }) => {
+        const status = window.__copcBasicViewerBenchmark?.getStatus();
+        const visualQuality = status?.cameraStreamVisualQuality;
+
+        return (
+          (status?.cameraStreamRequestId ?? -1) > previousRequestId &&
+          (status?.cameraStreamLodData?.cameraHeightMeters ??
+            Number.POSITIVE_INFINITY) < maximumCameraHeightMeters &&
+          visualQuality?.isTerminalReady === true &&
+          visualQuality.frontierDepthSpan === 0 &&
+          visualQuality.isFrontierAntichain === true &&
+          visualQuality.isAdditiveClosureComplete === true &&
+          visualQuality.missingRequiredNodeCount === 0 &&
+          visualQuality.unexpectedRenderedNodeCount === 0
+        );
+      },
+      { maximumCameraHeightMeters, previousRequestId },
+      { timeout: 120_000 },
+    );
+
+    return page.evaluate(
+      () => window.__copcBasicViewerBenchmark?.getStatus(),
+    );
   }
 
   async function waitForSceneReady() {
@@ -293,6 +369,8 @@ function createSmokeFlow(baseUrl) {
     try {
       await page.waitForFunction(
         ({ minPointCount, statusTexts }) => {
+          const isInteractiveRenderReady = ${isInteractiveRenderReady.toString()};
+          const status = window.__copcBasicViewerBenchmark?.getStatus();
           const currentStatus =
             document.querySelector("#copc-status")?.textContent ?? "";
           const rows = [...document.querySelectorAll("#copc-metadata dt")];
@@ -308,7 +386,7 @@ function createSmokeFlow(baseUrl) {
             : 0;
 
           return (
-            statusTexts.some((statusText) => currentStatus.includes(statusText)) &&
+            isInteractiveRenderReady(status, currentStatus, statusTexts) &&
             pointCount >= minPointCount
           );
         },
@@ -324,9 +402,11 @@ function createSmokeFlow(baseUrl) {
     }
   }
 
-  function isRenderedStatus(statusText) {
-    return expectedRenderedStatuses.some((expectedStatus) =>
-      statusText.includes(expectedStatus),
+  function isRenderedStatus(statusText, status) {
+    return isInteractiveRenderReady(
+      status,
+      statusText,
+      expectedRenderedStatuses,
     );
   }
 
@@ -334,6 +414,24 @@ function createSmokeFlow(baseUrl) {
     const match = text.match(/(?:rendered\\s+)?([\\d,]+)\\s+(?:pts|points)/i);
 
     return match ? Number(match[1].replaceAll(",", "")) : 0;
+  }
+
+  function normalizedCameraStreamDensity(status) {
+    const pointCount = parsePointCount(status?.rendererTiming ?? "");
+    const frontierNodeCount =
+      status?.cameraStreamVisualQuality?.frontierNodeCount ?? 0;
+    const selectedDepth =
+      status?.cameraStreamDiagnosticsData?.selectedDepth ?? -1;
+
+    if (
+      pointCount <= 0 ||
+      frontierNodeCount <= 0 ||
+      selectedDepth < 0
+    ) {
+      return 0;
+    }
+
+    return (pointCount / frontierNodeCount) * 4 ** selectedDepth;
   }
 
   async function check(condition, message) {
@@ -355,6 +453,19 @@ function createSmokeFlow(baseUrl) {
   await check(
     async () => (await metadataValue("Source preset")) === "Autzen classified",
     "Autzen preset did not load as the initial source.",
+  );
+  await check(
+    async () => {
+      const sourceNote = (await metadataValue("Source note")) ?? "";
+
+      return (
+        sourceNote.includes("CC BY 4.0") &&
+        sourceNote.includes("Aaron Reyna/Watershed Sciences") &&
+        sourceNote.includes("Max Sampson/Hobu") &&
+        sourceNote.includes("github.com/PDAL/data/blob/main/LICENSE")
+      );
+    },
+    "Autzen visible attribution, contributors, or license URL was not reported.",
   );
   await check(
     async () =>
@@ -397,6 +508,7 @@ function createSmokeFlow(baseUrl) {
       typedPointGeometryCache.includes("density reuses"),
     "Default point geometry cache stats were not reported.",
   );
+  autzenOverviewStatus = await waitForCameraStreamCompleteStatus();
   await check(
     async () => page.locator("#copc-source-crs").isDisabled(),
     "Projection controls should be disabled for sample presets.",
@@ -433,11 +545,12 @@ function createSmokeFlow(baseUrl) {
     await benchmark.moveCameraForSmoothness({
       steps: 1,
       durationMilliseconds: 16,
-      heightAboveCloudMeters: 2_000,
+      heightAboveCloudMeters: 946,
       moveMeters: 1,
     });
   });
-  await waitForCameraStreamCompleteStatus();
+  autzenZoomStatus = await waitForCameraStreamCompleteStatus();
+  autzenTerminalVisualQuality = autzenZoomStatus?.cameraStreamVisualQuality;
   await waitForSceneReady();
   await waitForInteractivePointCount(10_000);
   await page.screenshot({
@@ -445,6 +558,107 @@ function createSmokeFlow(baseUrl) {
     fullPage: false,
   });
 
+  await check(
+    async () => autzenTerminalVisualQuality?.isTerminalReady === true,
+    "Autzen camera stream did not commit a verified terminal visual composition.",
+  );
+  await check(
+    async () => autzenTerminalVisualQuality?.missingRequiredNodeCount === 0,
+    "Autzen terminal composition is missing additive nodes.",
+  );
+  await check(
+    async () => autzenTerminalVisualQuality?.unexpectedRenderedNodeCount === 0,
+    "Autzen terminal composition retained stale or unexpected nodes.",
+  );
+  await check(
+    async () =>
+      (autzenZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ?? -1) >
+      (autzenOverviewStatus?.cameraStreamDiagnosticsData?.selectedDepth ??
+        Number.POSITIVE_INFINITY),
+    \`Autzen camera zoom did not refine to a deeper terminal frontier (depth \${autzenOverviewStatus?.cameraStreamDiagnosticsData?.selectedDepth ?? "missing"} -> \${autzenZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ?? "missing"}).\`,
+  );
+  await check(
+    async () =>
+      (autzenZoomStatus?.cameraStreamVisualQuality?.frontierNodeCount ?? 0) >
+      (autzenOverviewStatus?.cameraStreamVisualQuality?.frontierNodeCount ??
+        Number.POSITIVE_INFINITY),
+    \`Autzen camera zoom did not increase current-view frontier coverage (\${autzenOverviewStatus?.cameraStreamVisualQuality?.frontierNodeCount ?? "missing"} -> \${autzenZoomStatus?.cameraStreamVisualQuality?.frontierNodeCount ?? "missing"} frontier nodes).\`,
+  );
+  await check(
+    async () =>
+      (autzenZoomStatus?.cameraStreamLodData?.maxRenderedPointCount ?? 0) >
+      (autzenOverviewStatus?.cameraStreamLodData?.maxRenderedPointCount ??
+        Number.POSITIVE_INFINITY),
+    \`Autzen camera zoom did not raise the rendered-point ceiling (\${autzenOverviewStatus?.cameraStreamLodData?.maxRenderedPointCount ?? "missing"} -> \${autzenZoomStatus?.cameraStreamLodData?.maxRenderedPointCount ?? "missing"}).\`,
+  );
+  await check(
+    async () =>
+      parsePointCount(autzenZoomStatus?.rendererTiming ?? "") >=
+      parsePointCount(autzenOverviewStatus?.rendererTiming ?? "") * 1.25,
+    \`Autzen camera zoom did not produce a meaningful terminal point-density increase (\${parsePointCount(autzenOverviewStatus?.rendererTiming ?? "")} -> \${parsePointCount(autzenZoomStatus?.rendererTiming ?? "")} points).\`,
+  );
+  const cesiumCanvas = page.locator("#cesium-container canvas");
+  const cesiumCanvasCount = await cesiumCanvas.count();
+  const cesiumCanvasBounds =
+    cesiumCanvasCount === 1 ? await cesiumCanvas.boundingBox() : undefined;
+
+  if (!cesiumCanvasBounds) {
+    failures.push(
+      \`Expected one visible Cesium canvas for wheel-zoom verification; found \${cesiumCanvasCount}.\`,
+    );
+  } else {
+    const previousRequestId = autzenZoomStatus?.cameraStreamRequestId ?? -1;
+    const previousCameraHeightMeters =
+      autzenZoomStatus?.cameraStreamLodData?.cameraHeightMeters ??
+      Number.POSITIVE_INFINITY;
+    await page.mouse.move(
+      cesiumCanvasBounds.x + cesiumCanvasBounds.width / 2,
+      cesiumCanvasBounds.y + cesiumCanvasBounds.height / 2,
+    );
+    await page.mouse.wheel(0, -300);
+    autzenWheelZoomStatus = await waitForCameraStreamTerminalAfterRequest(
+      previousRequestId,
+      previousCameraHeightMeters,
+    );
+
+    await check(
+      async () =>
+        (autzenWheelZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ??
+          -1) >=
+        (autzenZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ??
+          Number.POSITIVE_INFINITY),
+      \`Autzen wheel zoom regressed the terminal frontier depth (\${autzenZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ?? "missing"} -> \${autzenWheelZoomStatus?.cameraStreamDiagnosticsData?.selectedDepth ?? "missing"}; LOD: \${autzenWheelZoomStatus?.cameraStreamLod ?? "missing"}; budget: \${autzenWheelZoomStatus?.cameraStreamBudget ?? "missing"}; selection: \${autzenWheelZoomStatus?.autoLod ?? "missing"}).\`,
+    );
+    await check(
+      async () =>
+        normalizedCameraStreamDensity(autzenWheelZoomStatus) >
+        normalizedCameraStreamDensity(autzenZoomStatus),
+      \`Autzen wheel zoom did not increase normalized current-view density (\${normalizedCameraStreamDensity(autzenZoomStatus)} -> \${normalizedCameraStreamDensity(autzenWheelZoomStatus)}).\`,
+    );
+    await page.screenshot({
+      path: ${JSON.stringify(autzenScreenshotPath)},
+      fullPage: false,
+    });
+  }
+  autzenPrefetchStatus = await page.evaluate(async () => {
+    const benchmark = window.__copcBasicViewerBenchmark;
+
+    if (!benchmark) {
+      throw new Error("Basic viewer benchmark API was not installed.");
+    }
+
+    return benchmark.waitForCameraStreamPrefetch(120_000);
+  });
+  await check(
+    async () => autzenPrefetchStatus?.cameraStreamPrefetchData?.completed === true,
+    \`Autzen camera-stream prefetch did not settle: \${autzenPrefetchStatus?.cameraStreamPrefetch ?? "missing"}.\`,
+  );
+  await check(
+    async () =>
+      (await metadataValue("Camera stream prefetch")) ===
+      autzenPrefetchStatus?.cameraStreamPrefetch,
+    \`Visible camera-stream prefetch metadata did not match the settled runtime status (visible: \${await metadataValue("Camera stream prefetch") ?? "missing"}; runtime: \${autzenPrefetchStatus?.cameraStreamPrefetch ?? "missing"}).\`,
+  );
   await page.getByLabel("Renderer").selectOption("primitive");
   await waitForInteractivePointCount(minDefaultInteractivePointCount);
   primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
@@ -463,17 +677,19 @@ function createSmokeFlow(baseUrl) {
   );
 
   await page.getByLabel("Renderer").selectOption("typed");
-  await page.getByLabel("Sample").selectOption("sofi-stadium");
+  await page.getByLabel("Sample").selectOption("millsite-reservoir");
   await waitForRenderedStatus();
 
   await check(
-    async () => (await metadataValue("Source preset")) === "SoFi Stadium",
-    "SoFi preset did not load.",
+    async () =>
+      (await metadataValue("Source preset")) ===
+      "Millsite Reservoir (USGS 3DEP)",
+    "Millsite Reservoir preset did not load.",
   );
   await check(
     async () =>
-      (await metadataValue("Coordinate transform"))?.includes("EPSG:32611"),
-    "SoFi coordinate transform was not reported.",
+      (await metadataValue("Coordinate transform"))?.includes("EPSG:6341"),
+    "Millsite Reservoir coordinate transform was not reported.",
   );
   await page.evaluate(() => {
     const checkbox = document.querySelector("#copc-auto-stream");
@@ -529,10 +745,8 @@ function createSmokeFlow(baseUrl) {
   );
   await check(
     async () =>
-      (await metadataValue("Auto LOD"))?.includes(
-        "progressive coverage",
-      ),
-    "Camera selection did not report progressive coverage selection.",
+      (await metadataValue("Auto LOD"))?.includes("coverage nodes at depth"),
+    "Camera selection did not report complete-depth coverage selection.",
   );
   await page.evaluate(async () => {
     const benchmark = window.__copcBasicViewerBenchmark;
@@ -548,23 +762,26 @@ function createSmokeFlow(baseUrl) {
       moveMeters: 1,
     });
   });
-  await waitForCameraStreamCompleteStatus();
+  millsiteTerminalVisualQuality = (
+    await waitForCameraStreamCompleteStatus()
+  )?.cameraStreamVisualQuality;
   await waitForSceneReady();
   await waitForInteractivePointCount(10_000);
   await page.screenshot({
-    path: ${JSON.stringify(screenshotPath)},
+    path: ${JSON.stringify(millsiteScreenshotPath)},
     fullPage: false,
   });
   await page.getByRole("checkbox", { name: "Stream on camera move" }).uncheck();
 
-  await page.getByRole("textbox", { name: "COPC URL" }).fill(sofiUrl);
+  await page.getByRole("textbox", { name: "COPC URL" }).fill(millsiteUrl);
   await page.getByLabel("Sample").selectOption("custom");
-  await page.getByRole("textbox", { name: "Source CRS" }).fill("EPSG:32611");
+  await page.getByRole("textbox", { name: "Source CRS" }).fill("EPSG:6341");
   await page
     .getByRole("textbox", { name: "proj4 definition" })
-    .fill(sofiDefinition);
+    .fill(millsiteDefinition);
   await page.getByRole("button", { name: "Inspect" }).click();
   await waitForRenderedStatus();
+  await waitForInteractivePointCount(minDefaultInteractivePointCount);
 
   await check(
     async () =>
@@ -582,13 +799,20 @@ function createSmokeFlow(baseUrl) {
   await check(
     async () =>
       (await metadataValue("Coordinate transform"))?.includes(
-        "EPSG:32611 to EPSG:4326",
+        "EPSG:6341 to EPSG:4326",
       ),
     "Custom proj4 coordinate transform was not reported.",
   );
   await check(
-    async () =>
-      isRenderedStatus((await page.locator("#copc-status").textContent()) ?? ""),
+    async () => {
+      const statusText =
+        (await page.locator("#copc-status").textContent()) ?? "";
+      const status = await page.evaluate(
+        () => window.__copcBasicViewerBenchmark?.getStatus(),
+      );
+
+      return isRenderedStatus(statusText, status);
+    },
     "Custom URL did not render the expected COPC result.",
   );
   await check(
@@ -627,7 +851,9 @@ function createSmokeFlow(baseUrl) {
     );
   }
 
-  await waitForCameraStreamCompleteStatus();
+  // The preset path above already proves full camera-stream completion with
+  // 10,000 points. The custom URL contract is manual proj4 plus an interactive
+  // render, so it must not depend on finishing the dataset's background tail.
   await waitForSceneReady();
 
   await page.screenshot({
@@ -659,10 +885,16 @@ function createSmokeFlow(baseUrl) {
     typedPointGeometryTiming,
     typedPointGeometryCache,
     cameraStreamControllerSmoke,
+    autzenOverviewStatus,
+    autzenZoomStatus,
+    autzenWheelZoomStatus,
+    autzenTerminalVisualQuality,
+    millsiteTerminalVisualQuality,
     browserGraphics,
+    ignoredConsoleWarnings,
     localFileRendererTiming,
     autzenScreenshotPath: ${JSON.stringify(autzenScreenshotPath)},
-    screenshotPath: ${JSON.stringify(screenshotPath)},
+    millsiteScreenshotPath: ${JSON.stringify(millsiteScreenshotPath)},
     verificationScreenshotPath: ${JSON.stringify(verificationScreenshotPath)},
   };
 }
@@ -688,9 +920,9 @@ const port = await findAvailablePort(4173);
 const baseUrl = `http://localhost:${port}`;
 const serverOutput = [];
 const serverProcess = spawn(
-  npxCommand,
+  process.execPath,
   [
-    "vite",
+    viteCliPath,
     "preview",
     "examples/basic-viewer",
     "--config",
@@ -705,7 +937,7 @@ const serverProcess = spawn(
   ],
   {
     cwd: repoRoot,
-    shell: isWindows,
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
@@ -733,7 +965,7 @@ try {
   runPlaywrightCli(["run-code", "--filename", smokeFlowPath]);
 
   console.log(
-    `Example smoke test passed: ${autzenScreenshotPath}, ${screenshotPath}, ${verificationScreenshotPath}`,
+    `Example smoke test passed: ${autzenScreenshotPath}, ${millsiteScreenshotPath}, ${verificationScreenshotPath}`,
   );
 } finally {
   try {

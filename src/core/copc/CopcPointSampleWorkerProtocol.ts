@@ -4,6 +4,7 @@ import type {
   CopcNodePointSampleResult,
   CopcPointSampleFormat,
 } from "./CopcPointDataSample";
+import type { CopcDecodedPointDataCacheSnapshot } from "./CopcDecodedPointDataCache";
 
 export type CopcPointSampleWorkerRequest =
   | CopcPointSampleWorkerLoadRequest
@@ -29,20 +30,29 @@ export interface CopcPointSampleWorkerCancelRequest {
 
 export type CopcPointSampleWorkerResponse =
   | CopcPointSampleWorkerSuccessResponse
+  | CopcPointSampleWorkerCanceledResponse
   | CopcPointSampleWorkerErrorResponse;
 
 export interface CopcPointSampleWorkerSuccessResponse {
   readonly id: number;
   readonly type: "loadNodePointSamples:success";
   readonly result: CopcNodePointSampleResult;
+  readonly cache?: CopcDecodedPointDataCacheSnapshot;
 }
 
 export interface CopcPointSampleWorkerErrorResponse {
   readonly id: number;
   readonly type: "loadNodePointSamples:error";
+  readonly cache?: CopcDecodedPointDataCacheSnapshot;
   readonly error: {
     readonly name?: string;
     readonly message: string;
     readonly stack?: string;
   };
+}
+
+export interface CopcPointSampleWorkerCanceledResponse {
+  readonly id: number;
+  readonly type: "loadNodePointSamples:canceled";
+  readonly cache?: CopcDecodedPointDataCacheSnapshot;
 }

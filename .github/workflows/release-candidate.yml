@@ -20,13 +20,28 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Read package version
+        id: package
+        shell: bash
+        run: node -e "process.stdout.write('version=' + require('./package.json').version + '\n')" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "const expected = 'v' + require('./package.json').version; if (process.env.RELEASE_TAG !== expected) { console.error('Release tag ' + process.env.RELEASE_TAG + ' does not match package version ' + expected + '.'); process.exit(1); }"
+
+      - name: Use project npm version
+        working-directory: ${{ runner.temp }}
+        run: npm install --global npm@11.16.0
 
       - name: Install dependencies
         run: npm ci
@@ -34,16 +49,26 @@ jobs:
       - name: Install Playwright browser
         run: npm run smoke:example:install-browser
 
+      - name: Audit dependency advisories
+        run: npm audit
+
       - name: Run release QC
         run: npm run qc
 
       - name: Upload verified package and evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: copc-cesium-release-candidate-${{ github.ref_name }}
+          name: copc-cesium-release-candidate-v${{ steps.package.outputs.version }}
           if-no-files-found: error
           path: |
             output/package-smoke/*.tgz
+            output/package-smoke/*.sha256
+            output/package-smoke/browser-result.json
+            docs/sbom.spdx.json
+            THIRD_PARTY_NOTICES.md
             output/renderer-benchmark/*.json
             output/smoothness-benchmark/*.json
-            output/playwright/*.png
+            output/playwright/smoke-example-autzen-stream.png
+            output/playwright/smoke-example-millsite-stream.png
+            output/playwright/smoke-example-final-verification.png
+            output/playwright/smoke-package-consumer.png

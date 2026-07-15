@@ -232,7 +232,10 @@ export class CesiumPrimitivePointRenderer
     return this.scene.primitives.add(
       new Primitive({
         geometryInstances: new GeometryInstance({ geometry }),
-        appearance: createPointAppearance(this.pointSize),
+        appearance: createPointAppearance(
+          this.pointSize,
+          hasTranslucentPointColors(colors),
+        ),
         asynchronous: false,
         allowPicking: false,
         compressVertices: false,
@@ -445,11 +448,14 @@ function createGeometryAttributes(
   return { positions, colors };
 }
 
-function createPointAppearance(pointSize: number): Appearance {
+function createPointAppearance(
+  pointSize: number,
+  translucent: boolean,
+): Appearance {
   const pointSizeLiteral = pointSize.toFixed(3);
 
   return new Appearance({
-    translucent: true,
+    translucent,
     vertexShaderSource: `
 in vec3 position3DHigh;
 in vec3 position3DLow;
@@ -485,9 +491,19 @@ void main()
       depthTest: {
         enabled: true,
       },
-      depthMask: false,
+      depthMask: !translucent,
     },
   });
+}
+
+function hasTranslucentPointColors(colors: Uint8Array): boolean {
+  for (let alphaIndex = 3; alphaIndex < colors.length; alphaIndex += 4) {
+    if (colors[alphaIndex] < 255) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function readPositiveNumber(

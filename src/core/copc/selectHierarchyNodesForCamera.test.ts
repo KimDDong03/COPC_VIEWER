@@ -12,6 +12,31 @@ describe("selectHierarchyNodesForCamera", () => {
     ).toBeUndefined();
   });
 
+  it("ignores zero-point hierarchy entries during camera selection", () => {
+    const selection = selectHierarchyNodesForCamera(
+      [
+        createNode("1-0-0-0", 1, 0, 0, 50),
+        createNode("1-1-0-0", 1, 50, 0, 50, {
+          pointCount: 0,
+          pointDataLength: 0,
+        }),
+      ],
+      {
+        target: { x: 25, y: 25, z: 10 },
+        viewportHeightPixels: 720,
+        selectionMode: "coverage",
+        minDepth: 1,
+        maxDepth: 1,
+        maxNodes: 2,
+      },
+    );
+
+    expect(selection?.nodes.map((node) => node.key)).toEqual(["1-0-0-0"]);
+    expect(selection?.depthEstimates).toEqual([
+      expect.objectContaining({ depth: 1, nodeCount: 1 }),
+    ]);
+  });
+
   it("selects the nearest nodes at the camera-derived depth", () => {
     const selection = selectHierarchyNodesForCamera(createNodeGrid(), {
       target: { x: 62.5, y: 62.5, z: 10 },
@@ -43,6 +68,62 @@ describe("selectHierarchyNodesForCamera", () => {
       "2-1-2-0",
       "2-2-1-0",
     ]);
+  });
+
+  it("keeps target-based screen estimates when cameraPosition is omitted", () => {
+    const target = { x: 200, y: 10, z: 10 };
+    const options = {
+      target,
+      viewportHeightPixels: 720,
+      maxNodes: 2,
+      targetNodeScreenPixels: 220,
+    } as const;
+    const implicitCameraPosition = selectHierarchyNodesForCamera(
+      createProgressiveDepthNodes(),
+      options,
+    );
+    const explicitCameraPosition = selectHierarchyNodesForCamera(
+      createProgressiveDepthNodes(),
+      {
+        ...options,
+        cameraPosition: target,
+      },
+    );
+
+    expect(explicitCameraPosition).toEqual(implicitCameraPosition);
+  });
+
+  it("does not reduce target or selected depth when the camera moves closer to the same view center", () => {
+    const nodes = createProgressiveDepthNodes();
+    const options = {
+      target: { x: 95, y: 10, z: 0 },
+      viewportHeightPixels: 720,
+      maxNodes: 2,
+      targetNodeScreenPixels: 220,
+    } as const;
+    const farSelection = selectHierarchyNodesForCamera(nodes, {
+      ...options,
+      cameraPosition: { x: 95, y: 10, z: 1_000 },
+    });
+    const nearSelection = selectHierarchyNodesForCamera(nodes, {
+      ...options,
+      cameraPosition: { x: 95, y: 10, z: 200 },
+    });
+
+    expect(farSelection).toBeDefined();
+    expect(nearSelection).toBeDefined();
+    expect(nearSelection?.targetDepth).toBeGreaterThanOrEqual(
+      farSelection?.targetDepth ?? Number.POSITIVE_INFINITY,
+    );
+    expect(nearSelection?.selectedDepth).toBeGreaterThanOrEqual(
+      farSelection?.selectedDepth ?? Number.POSITIVE_INFINITY,
+    );
+    expect(nearSelection?.targetDepth).toBeGreaterThan(
+      farSelection?.targetDepth ?? Number.POSITIVE_INFINITY,
+    );
+    expect(nearSelection?.estimatedRootScreenPixels).toBeGreaterThan(
+      farSelection?.estimatedRootScreenPixels ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("uses complete same-depth coverage when the node budget can cover the view", () => {

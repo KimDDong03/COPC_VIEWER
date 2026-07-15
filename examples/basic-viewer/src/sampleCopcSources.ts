@@ -29,15 +29,16 @@ export const SAMPLE_COPC_SOURCES = [
     id: "autzen-classified",
     label: "Autzen classified",
     url: `${HOBU_LIDAR_SAMPLE_ROOT}/autzen-classified.copc.laz`,
-    description: "Public COPC sample using EPSG:2992 coordinates.",
+    description:
+      "CC BY 4.0 Autzen COPC: Aaron Reyna/Watershed Sciences (2010 source), Max Sampson/Hobu (2021 classification), PDAL/data; license: https://github.com/PDAL/data/blob/main/LICENSE. Uses EPSG:2992 coordinates.",
     coordinateTransforms: createDefaultCopcCoordinateTransforms,
   },
   {
-    id: "sofi-stadium",
-    label: "SoFi Stadium",
-    url: `${HOBU_LIDAR_SAMPLE_ROOT}/sofi.copc.laz`,
+    id: "millsite-reservoir",
+    label: "Millsite Reservoir (USGS 3DEP)",
+    url: `${HOBU_LIDAR_SAMPLE_ROOT}/millsite.copc.laz`,
     description:
-      "Public COPC sample using WGS84 / UTM zone 11N coordinates detected from its WKT metadata.",
+      "Hobu-hosted COPC matching the public-domain USGS 3DEP Millsite collection, using NAD83(2011) / UTM zone 12N coordinates detected from its WKT metadata.",
     coordinateTransforms: createDefaultCopcCoordinateTransforms,
   },
 ] as const satisfies readonly SampleCopcSource[];

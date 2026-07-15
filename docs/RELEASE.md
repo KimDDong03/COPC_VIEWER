@@ -1,0 +1,106 @@
+# Release Procedure
+
+Releases are manual and intentional. The `Release Candidate` workflow produces
+evidence and a package candidate; it does not publish to npm or create a GitHub
+release. The separate `Publish npm Package` workflow is manual-only, requires
+the protected `npm` GitHub Environment, an existing matching version tag, and
+an explicit confirmation input.
+
+## 1. Prepare
+
+1. Start from a clean, reviewed commit on the intended release branch.
+2. Choose the semantic version and update `package.json`, `package-lock.json`,
+   and `CHANGELOG.md` together.
+   Before the first tag, keep all entries under `Unreleased`; the tag-triggered
+   workflow rejects any `v*` tag that does not exactly equal the package version.
+3. Confirm the public API, browser/bundler runtime target, Node development
+   toolchain, and Cesium compatibility range.
+4. Regenerate `THIRD_PARTY_NOTICES.md` and `docs/sbom.spdx.json` after every
+   dependency or lockfile change.
+5. Confirm sample-data provenance and that no dataset bytes enter the package.
+
+## 2. Verify
+
+Run from a clean clone with Node 22 and the package-manager version declared in
+`package.json`:
+
+```powershell
+npm ci
+npm run license:evidence:self-test
+npm audit
+npm run qc:contest-device
+npm pack --dry-run
+git diff --check
+git status --short
+```
+
+Preserve the package tarball, checksum, JSON reports, screenshots, and actual
+WebGL renderer. Confirm each benchmark's machine-readable `runEvidence` records
+the expected UTC, commit SHA, clean/dirty state, source fingerprint, runtime,
+and browser version; a dirty candidate must be explained and rerun from the
+final clean commit before publication. Confirm the GitHub CI, browser smoke,
+and CodeQL runs for that same SHA.
+Also confirm `output/package-smoke/browser-result.json` retains the same
+validated `runEvidence` together with the exact `releaseCandidateArtifact`
+tarball byte length and SHA-256; this is the source-to-candidate identity link.
+
+## 3. Stage a candidate
+
+Trigger `.github/workflows/release-candidate.yml` manually. Download the
+artifact and verify that it contains:
+
+- the `.tgz` package candidate;
+- the adjacent `.tgz.sha256` checksum generated from that exact candidate;
+- renderer and smoothness JSON;
+- browser smoke screenshots;
+- `THIRD_PARTY_NOTICES.md` and `docs/sbom.spdx.json`.
+
+Install that exact tarball into a fresh consumer project before approval. Do
+not rebuild a different tarball for publication. Record the successful
+`Release Candidate` workflow run ID; the publish workflow requires it and
+rejects a run from any other workflow, commit, or conclusion.
+
+## 4. Publish
+
+Publishing, tagging, and GitHub release creation require maintainer approval.
+Before publishing:
+
+- verify the npm account, organization, package name, access level, and 2FA or
+  trusted-publishing configuration;
+- verify the tarball SHA-256 and unpacked file list;
+- create an annotated Git tag that exactly matches the package version;
+- configure the GitHub `npm` Environment with required reviewers;
+- configure npm trusted publishing for repository
+  `KimDDong03/COPC_VIEWER`, workflow `npm-publish.yml`, and environment `npm`;
+- for the first publication only, when trusted publishing cannot yet be bound
+  to the new package, place a short-lived granular `NPM_TOKEN` in that protected
+  environment and remove it immediately after trusted publishing is enabled;
+- manually dispatch `Publish npm Package` on the exact tag, set
+  `confirm_publish`, and provide the approved Release Candidate run ID; the
+  workflow reruns release QC, downloads the approved same-SHA artifact,
+  verifies its checksum, requires the locally reproduced tarball SHA to match,
+  and publishes the downloaded approved tarball with npm provenance;
+- attach the approved candidate and checksums to the GitHub release;
+- verify a clean consumer install from the public registry.
+
+The publish job has `id-token: write` for Sigstore/npm OIDC and never runs on a
+push by itself. Prefer trusted publishing over a long-lived token. After the
+registry install, run `npm audit signatures` from a clean consumer to verify
+registry signatures and provenance attestations. The configuration follows the
+current npm guidance for
+[trusted publishing](https://docs.npmjs.com/trusted-publishers/) and
+[provenance statements](https://docs.npmjs.com/generating-provenance-statements/).
+
+Never force-move a published tag or silently replace release assets. Correct a
+bad release with a documented patch version or deprecation notice.
+
+## 5. Post-release
+
+- Confirm README links, security reporting, API docs, declarations, worker
+  assets, and Cesium static-asset setup from the installed package. Source maps
+  and TypeScript sources are intentionally not part of the current package.
+- Record the public npm and GitHub release URLs in `CHANGELOG.md` link
+  references.
+- Keep the release commit and evidence artifacts reachable for contest review.
+- For a competition award, retain the public source repository for the period
+  required by the official rules.

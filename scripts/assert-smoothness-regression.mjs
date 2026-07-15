@@ -1,26 +1,40 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  validateBrowserEnvironment,
+  validateRunEvidence,
+} from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const outputRoot = path.join(repoRoot, "output");
 const defaultBenchmarkRoot = path.join(outputRoot, "smoothness-benchmark");
-const defaultInputPath = path.join(defaultBenchmarkRoot, "smoothness-assertion.json");
+const defaultInputPath = path.join(
+  defaultBenchmarkRoot,
+  "smoothness-warm-zoom-detail.json",
+);
+const defaultBaselinePath = path.join(
+  repoRoot,
+  "benchmarks",
+  "baselines",
+  "smoothness-warm-zoom-detail-rtx3060.json",
+);
 const defaultOutputPath = path.join(
   defaultBenchmarkRoot,
   "smoothness-regression.json",
 );
 
-const inputPath = readStringArg("--input") ?? defaultInputPath;
-const baselinePath = readStringArg("--baseline") ?? readFirstPositionalArg();
-const outputPath = readStringArg("--output") ?? defaultOutputPath;
+const inputPaths = readStringArgs("--input");
 
-if (!baselinePath) {
-  throw new Error(
-    "A baseline report is required. Pass <path-to-smoothness-assertion.json> or --baseline <path>.",
-  );
+if (inputPaths.length === 0) {
+  inputPaths.push(defaultInputPath);
 }
+
+const baselinePath =
+  readStringArg("--baseline") ?? readFirstPositionalArg() ?? defaultBaselinePath;
+const outputPath = readStringArg("--output") ?? defaultOutputPath;
 
 const thresholds = {
   minAverageFpsRatio: readNumberEnv(
@@ -35,6 +49,10 @@ const thresholds = {
     "COPC_SMOOTHNESS_REGRESSION_MAX_FRAME_RATIO",
     1.35,
   ),
+  maxFrameAbsoluteDeltaMilliseconds: readNumberEnv(
+    "COPC_SMOOTHNESS_REGRESSION_MAX_FRAME_DELTA_MS",
+    20,
+  ),
   maxFramesOver50Ratio: readNumberEnv(
     "COPC_SMOOTHNESS_REGRESSION_MAX_FRAMES_OVER_50_RATIO",
     1.5,
@@ -43,13 +61,21 @@ const thresholds = {
     "COPC_SMOOTHNESS_REGRESSION_MAX_STREAM_TOTAL_RATIO",
     1.2,
   ),
+  maxCameraStreamTotalMinimumDeltaMilliseconds: readNumberEnv(
+    "COPC_SMOOTHNESS_REGRESSION_MAX_STREAM_TOTAL_MIN_DELTA_MS",
+    150,
+  ),
+  maxCameraStreamTotalRobustSigmaMultiplier: readNumberEnv(
+    "COPC_SMOOTHNESS_REGRESSION_MAX_STREAM_TOTAL_ROBUST_SIGMA",
+    2,
+  ),
   maxCameraStreamFirstResponseRatio: readNumberEnv(
     "COPC_SMOOTHNESS_REGRESSION_MAX_FIRST_RESPONSE_RATIO",
     1.2,
   ),
-  maxAverageGeometryQueueRatio: readNumberEnv(
-    "COPC_SMOOTHNESS_REGRESSION_MAX_AVG_GEOMETRY_QUEUE_RATIO",
-    1.3,
+  maxCameraStreamFirstResponseAbsoluteDeltaMilliseconds: readNumberEnv(
+    "COPC_SMOOTHNESS_REGRESSION_MAX_FIRST_RESPONSE_DELTA_MS",
+    10,
   ),
   minRenderedPointRatio: readNumberEnv(
     "COPC_SMOOTHNESS_REGRESSION_MIN_RENDERED_POINT_RATIO",
@@ -65,53 +91,392 @@ const thresholds = {
   ),
 };
 
-const current = JSON.parse(await readFile(inputPath, "utf8"));
+const currentReports = await Promise.all(
+  inputPaths.map(async (currentInputPath) =>
+    JSON.parse(await readFile(currentInputPath, "utf8")),
+  ),
+);
 const baseline = JSON.parse(await readFile(baselinePath, "utf8"));
-const currentGroups = groupResults(readSmoothnessResults(current));
-const baselineGroups = groupResults(readSmoothnessResults(baseline));
-const currentBrowserGraphics = current.browserGraphics;
+const currentBrowserGraphics = currentReports[0]?.browserGraphics;
 const baselineBrowserGraphics = baseline.browserGraphics;
+const currentBrowserEnvironment = currentReports[0]?.browserEnvironment;
+const baselineBrowserEnvironment = baseline.browserEnvironment;
+const currentAbsoluteThresholds = currentReports[0]?.absoluteThresholds;
+const baselineAbsoluteThresholds = baseline.absoluteThresholds;
 const failures = [];
 const comparisons = [];
+const dataFailures = [];
+const currentSessions = expandReportSessions(
+  currentReports,
+  "current",
+  failures,
+);
+const baselineSessions = expandReportSessions([baseline], "baseline", failures);
+const currentRunEvidence = currentSessions.map(
+  ({ report }) => report.runEvidence ?? report.sourceRunEvidence,
+);
+const baselineSourceRunEvidence = baselineSessions.map(
+  ({ report }) => report.runEvidence ?? report.sourceRunEvidence,
+);
 
-compareBrowserGraphics(
+for (const [index, evidence] of currentRunEvidence.entries()) {
+  failures.push(
+    ...validateRunEvidence(evidence, `current.sessions[${index}].runEvidence`),
+  );
+}
+
+for (const [index, evidence] of baselineSourceRunEvidence.entries()) {
+  failures.push(
+    ...validateRunEvidence(
+      evidence,
+      `baseline.sessions[${index}].sourceRunEvidence`,
+    ),
+  );
+}
+
+failures.push(
+  ...validateBrowserEnvironment(
+    baselineBrowserEnvironment,
+    "baseline.browserEnvironment",
+  ),
+);
+
+for (const [index, currentReport] of currentReports.entries()) {
+  failures.push(
+    ...validateBrowserEnvironment(
+      currentReport.browserEnvironment,
+      `currentReports[${index}].browserEnvironment`,
+    ),
+  );
+  compareProfileContract(currentReport, baseline, failures);
+  compareBrowserGraphics(
+    currentReport.browserGraphics,
+    baselineBrowserGraphics,
+    failures,
+  );
+  compareBrowserEnvironment(
+    currentReport.browserEnvironment,
+    baselineBrowserEnvironment,
+    failures,
+  );
+}
+
+function expandReportSessions(reports, collectionLabel, failures) {
+  const sessions = [];
+
+  for (const [reportIndex, report] of reports.entries()) {
+    if (!report || typeof report !== "object" || Array.isArray(report)) {
+      failures.push(`${collectionLabel}Reports[${reportIndex}] must be an object.`);
+      continue;
+    }
+
+    if (report.sessions === undefined) {
+      sessions.push({
+        report,
+        label: `${collectionLabel}Reports[${reportIndex}]`,
+        sessionIndex: reportIndex + 1,
+        sessionLifecycle: undefined,
+      });
+      continue;
+    }
+
+    if (!Array.isArray(report.sessions) || report.sessions.length === 0) {
+      failures.push(
+        `${collectionLabel}Reports[${reportIndex}].sessions must contain at least one session.`,
+      );
+      continue;
+    }
+
+    for (const [sessionOffset, session] of report.sessions.entries()) {
+      const label = `${collectionLabel}Reports[${reportIndex}].sessions[${sessionOffset}]`;
+
+      if (!session || typeof session !== "object" || Array.isArray(session)) {
+        failures.push(`${label} must be an object.`);
+        continue;
+      }
+
+      sessions.push({
+        report: session,
+        label,
+        sessionIndex: session.sessionIndex,
+        sessionLifecycle: session.sessionLifecycle,
+      });
+    }
+  }
+
+  return sessions;
+}
+
+function validateSessionContracts(
+  currentSessions,
+  baselineSessions,
+  baselineReport,
+  failures,
+) {
+  const approvedSessionCount = baselineReport?.approval?.sessionCount;
+  const minimumCurrentSessionCount =
+    baselineReport?.approval?.minimumCurrentSessionCount;
+  const approvedAggregation = baselineReport?.approval?.aggregation;
+
+  if (approvedSessionCount !== undefined) {
+    if (!Number.isInteger(approvedSessionCount) || approvedSessionCount < 5) {
+      failures.push(
+        "baseline.approval.sessionCount must be an integer of at least 5 when provided.",
+      );
+    } else if (baselineSessions.length !== approvedSessionCount) {
+      failures.push(
+        `Baseline contains ${baselineSessions.length} session(s); approval requires ${approvedSessionCount}.`,
+      );
+    }
+  }
+
+  if (minimumCurrentSessionCount !== undefined) {
+    if (
+      !Number.isInteger(minimumCurrentSessionCount) ||
+      minimumCurrentSessionCount < 3 ||
+      minimumCurrentSessionCount % 2 === 0
+    ) {
+      failures.push(
+        "baseline.approval.minimumCurrentSessionCount must be an odd integer of at least 3 when provided.",
+      );
+    } else if (currentSessions.length < minimumCurrentSessionCount) {
+      failures.push(
+        `Current comparison contains ${currentSessions.length} session(s); baseline requires at least ${minimumCurrentSessionCount}.`,
+      );
+    }
+  }
+
+  if (
+    approvedAggregation !== undefined &&
+    approvedAggregation !== "median-of-session-group-summaries"
+  ) {
+    failures.push(
+      'baseline.approval.aggregation must be "median-of-session-group-summaries".',
+    );
+  }
+
+  validateIndependentSessionSet("current", currentSessions, failures);
+  validateIndependentSessionSet("baseline", baselineSessions, failures);
+}
+
+function validateIndependentSessionSet(label, sessions, failures) {
+  if (sessions.length <= 1) {
+    return;
+  }
+
+  if (sessions.length % 2 === 0) {
+    failures.push(`${label} session count must be odd for median aggregation.`);
+  }
+
+  const expectedIndices = Array.from(
+    { length: sessions.length },
+    (_, index) => index + 1,
+  );
+  const observedIndices = sessions.map((session) => session.sessionIndex);
+
+  if (
+    observedIndices.some(
+      (sessionIndex, index) => sessionIndex !== expectedIndices[index],
+    )
+  ) {
+    failures.push(
+      `${label} sessionIndex values must be ${formatRunIndices(expectedIndices)}; received ${formatRunIndices(observedIndices)}.`,
+    );
+  }
+
+  for (const [index, session] of sessions.entries()) {
+    if (session.sessionLifecycle !== "fresh-browser") {
+      failures.push(
+        `${label}.sessions[${index}].sessionLifecycle must be "fresh-browser" for independent-session aggregation.`,
+      );
+    }
+  }
+
+  const evidence = sessions.map(
+    ({ report }) => report.runEvidence ?? report.sourceRunEvidence,
+  );
+  const generatedAtValues = evidence.map((value) => value?.generatedAt);
+
+  if (new Set(generatedAtValues).size !== generatedAtValues.length) {
+    failures.push(`${label} sessions must have unique run-evidence timestamps.`);
+  }
+
+  const sourceIdentities = evidence.map(
+    (value) =>
+      `${value?.git?.headSha ?? "missing-head"}:${
+        value?.git?.fingerprint?.value ?? "missing-fingerprint"
+      }`,
+  );
+
+  if (new Set(sourceIdentities).size !== 1) {
+    failures.push(
+      `${label} sessions must use one identical Git HEAD and source fingerprint.`,
+    );
+  }
+}
+
+function validateSessionBrowserContracts(
+  label,
+  sessions,
+  expectedGraphics,
+  expectedEnvironment,
+  failures,
+) {
+  if (sessions.length <= 1) {
+    return;
+  }
+
+  for (const [index, session] of sessions.entries()) {
+    const sessionGraphics = session.report.browserGraphics;
+    const sessionEnvironment = session.report.browserEnvironment;
+    failures.push(
+      ...validateBrowserEnvironment(
+        sessionEnvironment,
+        `${label}.sessions[${index}].browserEnvironment`,
+      ),
+    );
+
+    for (const field of ["vendor", "renderer", "version"]) {
+      if (
+        readBrowserGraphicsField(sessionGraphics, field) !==
+        readBrowserGraphicsField(expectedGraphics, field)
+      ) {
+        failures.push(
+          `${label}.sessions[${index}].browserGraphics.${field} must match the bundle browser contract.`,
+        );
+      }
+    }
+
+    for (const field of ["userAgent", "version"]) {
+      if (sessionEnvironment?.[field] !== expectedEnvironment?.[field]) {
+        failures.push(
+          `${label}.sessions[${index}].browserEnvironment.${field} must match the bundle browser contract.`,
+        );
+      }
+    }
+  }
+}
+
+const currentSessionResults = currentSessions.map(({ report, label }) =>
+  readSmoothnessResults(report, label, dataFailures),
+);
+const baselineSessionResults = baselineSessions.map(({ report, label }) =>
+  readSmoothnessResults(report, label, dataFailures),
+);
+
+failures.push(...dataFailures);
+validateSessionContracts(
+  currentSessions,
+  baselineSessions,
+  baseline,
+  failures,
+);
+validateSessionBrowserContracts(
+  "current",
+  currentSessions,
   currentBrowserGraphics,
+  currentBrowserEnvironment,
+  failures,
+);
+validateAbsoluteThresholdContracts(
+  currentSessions,
+  baselineSessions,
+  currentAbsoluteThresholds,
+  baselineAbsoluteThresholds,
+  failures,
+);
+validateSessionBrowserContracts(
+  "baseline",
+  baselineSessions,
   baselineBrowserGraphics,
+  baselineBrowserEnvironment,
   failures,
 );
 
-for (const [key, baselineGroup] of baselineGroups) {
-  const currentGroup = currentGroups.get(key);
+if (dataFailures.length === 0) {
+  const currentResultGroups = currentSessionResults.map(groupResultValues);
+  const baselineResultGroups = baselineSessionResults.map(groupResultValues);
+  const referenceBaselineGroups = baselineResultGroups[0] ?? new Map();
 
-  if (!currentGroup) {
-    failures.push(`${key}: missing current benchmark group.`);
+  for (const [index, resultGroups] of baselineResultGroups.entries()) {
+    validateSessionResultGroups(
+      `baseline session ${index + 1}`,
+      resultGroups,
+      referenceBaselineGroups,
+      baseline,
+      failures,
+    );
+  }
+
+  for (const [index, resultGroups] of currentResultGroups.entries()) {
+    validateSessionResultGroups(
+      `current session ${index + 1}`,
+      resultGroups,
+      referenceBaselineGroups,
+      baseline,
+      failures,
+    );
+  }
+
+  const currentGroups = aggregateSessionResultGroups(currentResultGroups);
+  const baselineGroups = aggregateSessionResultGroups(baselineResultGroups);
+
+  for (const [key, baselineGroup] of baselineGroups) {
+    const currentGroup = currentGroups.get(key);
+
+    if (!currentGroup) {
+      comparisons.push({
+        key,
+        baseline: baselineGroup,
+        current: undefined,
+        passed: false,
+        failures: [`${key}: missing current benchmark group.`],
+      });
+      continue;
+    }
+
+    const groupFailures = compareGroup(key, currentGroup, baselineGroup);
+
+    failures.push(...groupFailures);
     comparisons.push({
       key,
       baseline: baselineGroup,
-      current: undefined,
-      passed: false,
-      failures: [`${key}: missing current benchmark group.`],
+      current: currentGroup,
+      passed: groupFailures.length === 0,
+      failures: groupFailures,
     });
-    continue;
   }
 
-  const groupFailures = compareGroup(key, currentGroup, baselineGroup);
+  for (const [key, currentGroup] of currentGroups) {
+    if (baselineGroups.has(key)) {
+      continue;
+    }
 
-  failures.push(...groupFailures);
-  comparisons.push({
-    key,
-    baseline: baselineGroup,
-    current: currentGroup,
-    passed: groupFailures.length === 0,
-    failures: groupFailures,
-  });
+    comparisons.push({
+      key,
+      baseline: undefined,
+      current: currentGroup,
+      passed: false,
+      failures: [`${key}: unexpected current benchmark group.`],
+    });
+  }
 }
 
 const regression = {
-  inputPath,
+  inputPaths,
   baselinePath,
+  aggregation: "median-of-session-group-summaries",
+  currentSessionCount: currentSessions.length,
+  baselineSessionCount: baselineSessions.length,
   currentBrowserGraphics,
   baselineBrowserGraphics,
+  currentBrowserEnvironment,
+  baselineBrowserEnvironment,
+  currentRunEvidence,
+  baselineSourceRunEvidence,
+  currentAbsoluteThresholds,
+  baselineAbsoluteThresholds,
+  informationalMetrics: ["averageGeometryQueueMilliseconds"],
   thresholds,
   comparedGroupCount: comparisons.length,
   failureCount: failures.length,
@@ -137,76 +502,304 @@ if (failures.length > 0) {
   );
 }
 
+function compareProfileContract(currentReport, baselineReport, failures) {
+  const contractFields = [
+    "profile",
+    "repeatCount",
+    "warmupRunCount",
+    "warmupSettleTimeoutMilliseconds",
+    "prefetchWaitTimeoutMilliseconds",
+    "waitForFinalDetail",
+    "finalDetailTimeoutMilliseconds",
+    "interactiveTimeoutMilliseconds",
+    "durationMilliseconds",
+    "cameraSteps",
+    "moveMeters",
+    "cameraHeightAboveCloudMeters",
+    "cacheResetMode",
+    "requestedPointRenderer",
+    "pointRenderer",
+    "maxPointCountPerNode",
+  ];
+
+  for (const field of contractFields) {
+    const currentValue = readProfileContractValue(currentReport, field);
+    const baselineValue = readProfileContractValue(baselineReport, field);
+
+    if (currentValue === undefined || baselineValue === undefined) {
+      const missingLocations = [
+        currentValue === undefined ? "current" : undefined,
+        baselineValue === undefined ? "baseline" : undefined,
+      ].filter(Boolean);
+      failures.push(
+        `Benchmark profile contract ${field} is missing from ${missingLocations.join(
+          " and ",
+        )}.`,
+      );
+      continue;
+    }
+
+    if (!isDeepStrictEqual(currentValue, baselineValue)) {
+      failures.push(
+        `Benchmark profile contract ${field} changed from ${formatContractValue(
+          baselineValue,
+        )} to ${formatContractValue(currentValue)}.`,
+      );
+    }
+  }
+}
+
+function readProfileContractValue(report, field) {
+  if (
+    report?.approval &&
+    Object.prototype.hasOwnProperty.call(report.approval, field)
+  ) {
+    return report.approval[field];
+  }
+
+  return report?.[field];
+}
+
+function formatContractValue(value) {
+  return JSON.stringify(value);
+}
+
 function compareBrowserGraphics(currentGraphics, baselineGraphics, failures) {
   if (!thresholds.requireSameBrowserGraphics) {
     return;
   }
 
-  const currentRenderer = currentGraphics?.renderer?.trim();
-  const baselineRenderer = baselineGraphics?.renderer?.trim();
+  const fields = ["vendor", "renderer", "version"];
 
-  if (!currentRenderer || !baselineRenderer) {
-    failures.push(
-      "Current and baseline reports must both include browserGraphics.renderer.",
-    );
+  for (const field of fields) {
+    const currentValue = readBrowserGraphicsField(currentGraphics, field);
+    const baselineValue = readBrowserGraphicsField(baselineGraphics, field);
+
+    if (!currentValue || !baselineValue) {
+      failures.push(
+        `Current and baseline reports must both include browserGraphics.${field}.`,
+      );
+      continue;
+    }
+
+    if (currentValue !== baselineValue) {
+      failures.push(
+        `Browser WebGL ${field} changed from "${baselineValue}" to "${currentValue}"; performance reports are not comparable.`,
+      );
+    }
+  }
+}
+
+function readBrowserGraphicsField(graphics, field) {
+  const value = graphics?.[field];
+
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
+function compareBrowserEnvironment(
+  currentEnvironment,
+  baselineEnvironment,
+  failures,
+) {
+  for (const field of ["userAgent", "version"]) {
+    const currentValue = currentEnvironment?.[field];
+    const baselineValue = baselineEnvironment?.[field];
+
+    if (
+      typeof currentValue !== "string" ||
+      currentValue.trim().length === 0 ||
+      typeof baselineValue !== "string" ||
+      baselineValue.trim().length === 0
+    ) {
+      failures.push(
+        `Current and baseline reports must both include browserEnvironment.${field}.`,
+      );
+      continue;
+    }
+
+    if (currentValue !== baselineValue) {
+      failures.push(
+        `Browser environment ${field} changed from "${baselineValue}" to "${currentValue}"; performance reports are not comparable.`,
+      );
+    }
+  }
+}
+
+function validateAbsoluteThresholdContracts(
+  currentSessions,
+  baselineSessions,
+  currentThresholds,
+  baselineThresholds,
+  failures,
+) {
+  if (currentSessions.length <= 1 && baselineSessions.length <= 1) {
     return;
   }
 
-  if (currentRenderer !== baselineRenderer) {
+  if (!isRecord(currentThresholds)) {
     failures.push(
-      `Browser WebGL renderer changed from "${baselineRenderer}" to "${currentRenderer}"; performance reports are not comparable.`,
+      "Current independent-session bundle must contain absoluteThresholds.",
     );
   }
-}
 
-function readSmoothnessResults(report) {
-  if (Array.isArray(report.checkedResults)) {
-    return report.checkedResults.map(normalizeAssertionResult);
+  if (!isRecord(baselineThresholds)) {
+    failures.push(
+      "Baseline independent-session bundle must contain absoluteThresholds.",
+    );
   }
 
-  if (Array.isArray(report.results)) {
-    return report.results.map(normalizeBenchmarkResult);
+  if (
+    isRecord(currentThresholds) &&
+    isRecord(baselineThresholds) &&
+    !isDeepStrictEqual(currentThresholds, baselineThresholds)
+  ) {
+    failures.push(
+      "Current and baseline absolute smoothness thresholds are not comparable.",
+    );
   }
 
-  throw new Error(
-    "Smoothness report must contain checkedResults or raw benchmark results.",
+  validateSessionAbsoluteThresholds(
+    "current",
+    currentSessions,
+    currentThresholds,
+    failures,
+  );
+  validateSessionAbsoluteThresholds(
+    "baseline",
+    baselineSessions,
+    baselineThresholds,
+    failures,
   );
 }
 
-function normalizeAssertionResult(result) {
+function validateSessionAbsoluteThresholds(
+  label,
+  sessions,
+  expectedThresholds,
+  failures,
+) {
+  for (const [index, session] of sessions.entries()) {
+    if (
+      !isRecord(session.report.absoluteThresholds) ||
+      !isDeepStrictEqual(
+        session.report.absoluteThresholds,
+        expectedThresholds,
+      )
+    ) {
+      failures.push(
+        `${label}.sessions[${index}].absoluteThresholds must match the bundle threshold snapshot.`,
+      );
+    }
+  }
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readSmoothnessResults(report, reportLabel, failures) {
+  let results;
+  let resultKind;
+
+  if (Array.isArray(report.checkedResults)) {
+    results = report.checkedResults;
+    resultKind = "checkedResults";
+  } else if (Array.isArray(report.results)) {
+    results = report.results;
+    resultKind = "results";
+  } else {
+    failures.push(
+      `${reportLabel} smoothness report must contain checkedResults or raw benchmark results.`,
+    );
+    return [];
+  }
+
+  if (results.length === 0) {
+    failures.push(`${reportLabel}.${resultKind} must contain at least one run.`);
+    return [];
+  }
+
+  return results.map((result, index) => {
+    const valuePath = `${reportLabel}.${resultKind}[${index}]`;
+
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      failures.push(`${valuePath} must be an object.`);
+      return createInvalidResult();
+    }
+
+    return resultKind === "checkedResults"
+      ? normalizeAssertionResult(result, valuePath, failures)
+      : normalizeBenchmarkResult(result, valuePath, failures);
+  });
+}
+
+function normalizeAssertionResult(result, valuePath, failures) {
   return {
-    sampleId: result.sampleId ?? "unknown-sample",
-    streamPointBudget: readFiniteNumber(result.streamPointBudget, 0),
-    renderedPointCount: readFiniteNumber(result.renderedPointCount, 0),
-    renderedFinalNodeCoverageRatio: readFiniteNumber(
-      result.renderedFinalNodeCoverageRatio,
-      0,
+    sampleId: readRequiredString(result.sampleId, `${valuePath}.sampleId`, failures),
+    runIndex: readRequiredPositiveInteger(
+      result.runIndex,
+      `${valuePath}.runIndex`,
+      failures,
     ),
-    renderedFinalNodeWeightCoverageRatio: readFiniteNumber(
+    streamPointBudget: readRequiredPositiveNumber(
+      result.streamPointBudget,
+      `${valuePath}.streamPointBudget`,
+      failures,
+    ),
+    renderedPointCount: readRequiredNonNegativeNumber(
+      result.renderedPointCount,
+      `${valuePath}.renderedPointCount`,
+      failures,
+    ),
+    renderedFinalNodeCoverageRatio: readRequiredRatio(
+      result.renderedFinalNodeCoverageRatio,
+      `${valuePath}.renderedFinalNodeCoverageRatio`,
+      failures,
+    ),
+    renderedFinalNodeWeightCoverageRatio: readRequiredRatio(
       result.renderedFinalNodeWeightCoverageRatio,
-      result.renderedFinalNodeCoverageRatio,
+      `${valuePath}.renderedFinalNodeWeightCoverageRatio`,
+      failures,
     ),
-    averageFps: readFiniteNumber(result.averageFps, 0),
-    p95FrameMilliseconds: readFiniteNumber(result.p95FrameMilliseconds, 0),
-    maxFrameMilliseconds: readFiniteNumber(result.maxFrameMilliseconds, 0),
-    framesOver50Milliseconds: readFiniteNumber(
+    averageFps: readRequiredPositiveNumber(
+      result.averageFps,
+      `${valuePath}.averageFps`,
+      failures,
+    ),
+    p95FrameMilliseconds: readRequiredNonNegativeNumber(
+      result.p95FrameMilliseconds,
+      `${valuePath}.p95FrameMilliseconds`,
+      failures,
+    ),
+    maxFrameMilliseconds: readRequiredNonNegativeNumber(
+      result.maxFrameMilliseconds,
+      `${valuePath}.maxFrameMilliseconds`,
+      failures,
+    ),
+    framesOver50Milliseconds: readRequiredNonNegativeInteger(
       result.framesOver50Milliseconds,
-      0,
+      `${valuePath}.framesOver50Milliseconds`,
+      failures,
     ),
-    cameraStreamTotalMilliseconds: readFiniteNumber(
+    cameraStreamTotalMilliseconds: readRequiredNonNegativeNumber(
       result.cameraStreamTotalMilliseconds,
-      0,
+      `${valuePath}.cameraStreamTotalMilliseconds`,
+      failures,
     ),
-    cameraStreamFirstResponseMilliseconds: readOptionalFiniteNumber(
+    cameraStreamFirstResponseMilliseconds: readOptionalNonNegativeNumber(
       result.cameraStreamFirstResponseMilliseconds,
+      `${valuePath}.cameraStreamFirstResponseMilliseconds`,
+      failures,
     ),
-    averageGeometryQueueMilliseconds: readOptionalFiniteNumber(
+    averageGeometryQueueMilliseconds: readOptionalNonNegativeNumber(
       result.averageGeometryQueueMilliseconds,
+      `${valuePath}.averageGeometryQueueMilliseconds`,
+      failures,
     ),
   };
 }
 
-function normalizeBenchmarkResult(result) {
+function normalizeBenchmarkResult(result, valuePath, failures) {
   const summary = result.summary ?? {};
   const diagnostics =
     result.cameraStreamDiagnostics ??
@@ -215,39 +808,111 @@ function normalizeBenchmarkResult(result) {
   const pointGeometryTiming = result.pointGeometryTiming;
 
   return {
-    sampleId: result.sampleId ?? "unknown-sample",
-    streamPointBudget: readFiniteNumber(result.streamPointBudget, 0),
-    renderedPointCount: readFiniteNumber(result.renderedPointCount, 0),
-    renderedFinalNodeCoverageRatio: readFiniteNumber(
-      result.renderedFinalNodeCoverageRatio,
-      0,
+    sampleId: readRequiredString(result.sampleId, `${valuePath}.sampleId`, failures),
+    runIndex: readRequiredPositiveInteger(
+      result.runIndex,
+      `${valuePath}.runIndex`,
+      failures,
     ),
-    renderedFinalNodeWeightCoverageRatio: readFiniteNumber(
+    streamPointBudget: readRequiredPositiveNumber(
+      result.streamPointBudget,
+      `${valuePath}.streamPointBudget`,
+      failures,
+    ),
+    renderedPointCount: readRequiredNonNegativeNumber(
+      result.renderedPointCount,
+      `${valuePath}.renderedPointCount`,
+      failures,
+    ),
+    renderedFinalNodeCoverageRatio: readRequiredRatio(
+      result.renderedFinalNodeCoverageRatio,
+      `${valuePath}.renderedFinalNodeCoverageRatio`,
+      failures,
+    ),
+    renderedFinalNodeWeightCoverageRatio: readRequiredRatio(
       result.renderedFinalNodeWeightCoverageRatio,
-      result.renderedFinalNodeCoverageRatio,
+      `${valuePath}.renderedFinalNodeWeightCoverageRatio`,
+      failures,
     ),
-    averageFps: readFiniteNumber(summary.estimatedAverageFps, 0),
-    p95FrameMilliseconds: readFiniteNumber(summary.p95FrameMilliseconds, 0),
-    maxFrameMilliseconds: readFiniteNumber(summary.maxFrameMilliseconds, 0),
-    framesOver50Milliseconds: readFiniteNumber(
+    averageFps: readRequiredPositiveNumber(
+      summary.estimatedAverageFps,
+      `${valuePath}.summary.estimatedAverageFps`,
+      failures,
+    ),
+    p95FrameMilliseconds: readRequiredNonNegativeNumber(
+      summary.p95FrameMilliseconds,
+      `${valuePath}.summary.p95FrameMilliseconds`,
+      failures,
+    ),
+    maxFrameMilliseconds: readRequiredNonNegativeNumber(
+      summary.maxFrameMilliseconds,
+      `${valuePath}.summary.maxFrameMilliseconds`,
+      failures,
+    ),
+    framesOver50Milliseconds: readRequiredNonNegativeInteger(
       summary.frameDeltasOver50Milliseconds,
-      0,
+      `${valuePath}.summary.frameDeltasOver50Milliseconds`,
+      failures,
     ),
-    cameraStreamTotalMilliseconds: readFiniteNumber(
+    cameraStreamTotalMilliseconds: readRequiredNonNegativeNumber(
       diagnostics.totalMilliseconds,
-      0,
+      `${valuePath}.cameraStreamDiagnostics.totalMilliseconds`,
+      failures,
     ),
-    cameraStreamFirstResponseMilliseconds: readOptionalFiniteNumber(
+    cameraStreamFirstResponseMilliseconds: readOptionalNonNegativeNumber(
       result.cameraStreamFirstResponseMilliseconds,
+      `${valuePath}.cameraStreamFirstResponseMilliseconds`,
+      failures,
     ),
-    averageGeometryQueueMilliseconds: pointGeometryTiming
-      ? readFiniteNumber(pointGeometryTiming.sumQueueMilliseconds, 0) /
-        Math.max(1, readFiniteNumber(pointGeometryTiming.nodeCount, 0))
-      : undefined,
+    averageGeometryQueueMilliseconds: readAverageGeometryQueueMilliseconds(
+      pointGeometryTiming,
+      valuePath,
+      failures,
+    ),
   };
 }
 
-function groupResults(results) {
+function createInvalidResult() {
+  return {
+    sampleId: "invalid-sample",
+    runIndex: Number.NaN,
+    streamPointBudget: Number.NaN,
+  };
+}
+
+function readAverageGeometryQueueMilliseconds(
+  pointGeometryTiming,
+  valuePath,
+  failures,
+) {
+  if (pointGeometryTiming === undefined) {
+    return undefined;
+  }
+
+  if (
+    !pointGeometryTiming ||
+    typeof pointGeometryTiming !== "object" ||
+    Array.isArray(pointGeometryTiming)
+  ) {
+    failures.push(`${valuePath}.pointGeometryTiming must be an object.`);
+    return Number.NaN;
+  }
+
+  const sumQueueMilliseconds = readRequiredNonNegativeNumber(
+    pointGeometryTiming.sumQueueMilliseconds,
+    `${valuePath}.pointGeometryTiming.sumQueueMilliseconds`,
+    failures,
+  );
+  const nodeCount = readRequiredNonNegativeInteger(
+    pointGeometryTiming.nodeCount,
+    `${valuePath}.pointGeometryTiming.nodeCount`,
+    failures,
+  );
+
+  return sumQueueMilliseconds / Math.max(1, nodeCount);
+}
+
+function groupResultValues(results) {
   const groupedValues = new Map();
 
   for (const result of results) {
@@ -255,12 +920,94 @@ function groupResults(results) {
     groupedValues.set(key, [...(groupedValues.get(key) ?? []), result]);
   }
 
+  return groupedValues;
+}
+
+function summarizeResultGroups(resultGroups) {
   return new Map(
-    [...groupedValues].map(([key, groupResults]) => [
-      key,
-      summarizeGroup(groupResults),
-    ]),
+    [...resultGroups].map(([key, results]) => [key, summarizeGroup(results)]),
   );
+}
+
+function aggregateSessionResultGroups(resultGroupsBySession) {
+  const sessionSummaries = resultGroupsBySession.map(summarizeResultGroups);
+  const keys = new Set(
+    sessionSummaries.flatMap((summaries) => [...summaries.keys()]),
+  );
+
+  return new Map(
+    [...keys].map((key) => {
+      const groupSessions = sessionSummaries
+        .map((summaries) => summaries.get(key))
+        .filter((summary) => summary !== undefined);
+
+      return [key, aggregateSessionGroup(groupSessions)];
+    }),
+  );
+}
+
+function aggregateSessionGroup(sessionSummaries) {
+  const first = sessionSummaries[0] ?? {};
+  const streamTotalValues = sessionSummaries.map(
+    (summary) => summary.cameraStreamTotalMilliseconds,
+  );
+  const streamTotalMedian = median(streamTotalValues);
+  const streamTotalMad = medianAbsoluteDeviation(
+    streamTotalValues,
+    streamTotalMedian,
+  );
+  const geometryQueueValues = sessionSummaries
+    .map((summary) => summary.averageGeometryQueueMilliseconds)
+    .filter((value) => value !== undefined);
+  const geometryQueueMedian = medianDefined(geometryQueueValues);
+
+  return {
+    aggregation: "median-of-session-group-summaries",
+    sampleId: first.sampleId ?? "unknown-sample",
+    streamPointBudget: first.streamPointBudget ?? 0,
+    sessionCount: sessionSummaries.length,
+    runCount: first.runCount ?? 0,
+    runIndices: first.runIndices ?? [],
+    averageFps: median(
+      sessionSummaries.map((summary) => summary.averageFps),
+    ),
+    p95FrameMilliseconds: median(
+      sessionSummaries.map((summary) => summary.p95FrameMilliseconds),
+    ),
+    maxFrameMilliseconds: median(
+      sessionSummaries.map((summary) => summary.maxFrameMilliseconds),
+    ),
+    framesOver50Milliseconds: median(
+      sessionSummaries.map((summary) => summary.framesOver50Milliseconds),
+    ),
+    cameraStreamTotalMilliseconds: streamTotalMedian,
+    cameraStreamTotalMadMilliseconds: streamTotalMad,
+    cameraStreamTotalRobustSigmaMilliseconds: streamTotalMad * 1.4826,
+    cameraStreamFirstResponseMilliseconds: medianDefined(
+      sessionSummaries
+        .map((summary) => summary.cameraStreamFirstResponseMilliseconds)
+        .filter((value) => value !== undefined),
+    ),
+    averageGeometryQueueMilliseconds: geometryQueueMedian,
+    averageGeometryQueueMadMilliseconds:
+      geometryQueueMedian === undefined
+        ? undefined
+        : medianAbsoluteDeviation(geometryQueueValues, geometryQueueMedian),
+    renderedPointCount: median(
+      sessionSummaries.map((summary) => summary.renderedPointCount),
+    ),
+    renderedFinalNodeCoverageRatio: median(
+      sessionSummaries.map(
+        (summary) => summary.renderedFinalNodeCoverageRatio,
+      ),
+    ),
+    renderedFinalNodeWeightCoverageRatio: median(
+      sessionSummaries.map(
+        (summary) => summary.renderedFinalNodeWeightCoverageRatio,
+      ),
+    ),
+    sessionSummaries,
+  };
 }
 
 function summarizeGroup(results) {
@@ -268,6 +1015,7 @@ function summarizeGroup(results) {
     sampleId: results[0]?.sampleId ?? "unknown-sample",
     streamPointBudget: results[0]?.streamPointBudget ?? 0,
     runCount: results.length,
+    runIndices: results.map((result) => result.runIndex),
     averageFps: average(results.map((result) => result.averageFps)),
     p95FrameMilliseconds: average(
       results.map((result) => result.p95FrameMilliseconds),
@@ -300,6 +1048,116 @@ function summarizeGroup(results) {
   };
 }
 
+function validateExactGroupSet(
+  currentResultGroups,
+  baselineResultGroups,
+  failures,
+) {
+  for (const key of baselineResultGroups.keys()) {
+    if (!currentResultGroups.has(key)) {
+      failures.push(`${key}: missing current benchmark group.`);
+    }
+  }
+
+  for (const key of currentResultGroups.keys()) {
+    if (!baselineResultGroups.has(key)) {
+      failures.push(`${key}: unexpected current benchmark group.`);
+    }
+  }
+}
+
+function validateSessionResultGroups(
+  sessionLabel,
+  resultGroups,
+  referenceBaselineGroups,
+  baselineReport,
+  failures,
+) {
+  const sessionFailures = [];
+  validateExactGroupSet(
+    resultGroups,
+    referenceBaselineGroups,
+    sessionFailures,
+  );
+  const approvedRepeatCount =
+    readApprovedRepeatCount(baselineReport, sessionFailures) ??
+    [...referenceBaselineGroups.values()][0]?.length ??
+    0;
+
+  for (const [key, runs] of resultGroups) {
+    validateGroupRuns(
+      "session",
+      key,
+      runs,
+      approvedRepeatCount,
+      sessionFailures,
+    );
+  }
+
+  failures.push(
+    ...sessionFailures.map((failure) => `${sessionLabel}: ${failure}`),
+  );
+}
+
+function readApprovedRepeatCount(baselineReport, failures) {
+  const repeatCount = baselineReport?.approval?.repeatCount;
+
+  if (repeatCount === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isInteger(repeatCount) || repeatCount <= 0) {
+    failures.push(
+      "baseline.approval.repeatCount must be a positive integer when provided.",
+    );
+    return undefined;
+  }
+
+  return repeatCount;
+}
+
+function validateGroupRuns(label, key, runs, expectedRunCount, failures) {
+  if (runs.length !== expectedRunCount) {
+    failures.push(
+      `${key}: ${label} has ${runs.length} run(s); expected ${expectedRunCount}.`,
+    );
+  }
+
+  const runIndices = runs.map((run) => run.runIndex);
+  const uniqueRunIndices = new Set(runIndices);
+
+  if (uniqueRunIndices.size !== runIndices.length) {
+    failures.push(
+      `${key}: ${label} runIndex values must be unique; received ${formatRunIndices(
+        runIndices,
+      )}.`,
+    );
+  }
+
+  const expectedRunIndices = Array.from(
+    { length: expectedRunCount },
+    (_, index) => index + 1,
+  );
+  const missingRunIndices = expectedRunIndices.filter(
+    (runIndex) => !uniqueRunIndices.has(runIndex),
+  );
+  const unexpectedRunIndices = [...uniqueRunIndices].filter(
+    (runIndex) => !expectedRunIndices.includes(runIndex),
+  );
+
+  if (missingRunIndices.length > 0 || unexpectedRunIndices.length > 0) {
+    failures.push(
+      `${key}: ${label} runIndex set must be ${formatRunIndices(
+        expectedRunIndices,
+      )}; received ${formatRunIndices(runIndices)}.`,
+    );
+  }
+}
+
+function formatRunIndices(runIndices) {
+  return `[${runIndices.join(", ")}]`;
+}
+
 function compareGroup(key, current, baseline) {
   const failures = [];
 
@@ -319,13 +1177,14 @@ function compareGroup(key, current, baseline) {
     baseline.p95FrameMilliseconds,
     thresholds.maxP95FrameRatio,
   );
-  checkMaximumRatio(
+  checkMaximumRatioWithAbsoluteDelta(
     failures,
     key,
     "max frame",
     current.maxFrameMilliseconds,
     baseline.maxFrameMilliseconds,
     thresholds.maxFrameRatio,
+    thresholds.maxFrameAbsoluteDeltaMilliseconds,
   );
   checkMaximumRatio(
     failures,
@@ -335,29 +1194,28 @@ function compareGroup(key, current, baseline) {
     baseline.framesOver50Milliseconds,
     thresholds.maxFramesOver50Ratio,
   );
-  checkMaximumRatio(
+  const streamTotalAbsoluteDeltaMilliseconds = Math.max(
+    thresholds.maxCameraStreamTotalMinimumDeltaMilliseconds,
+    baseline.cameraStreamTotalRobustSigmaMilliseconds *
+      thresholds.maxCameraStreamTotalRobustSigmaMultiplier,
+  );
+  checkMaximumRatioWithAbsoluteDelta(
     failures,
     key,
     "camera stream total",
     current.cameraStreamTotalMilliseconds,
     baseline.cameraStreamTotalMilliseconds,
     thresholds.maxCameraStreamTotalRatio,
+    streamTotalAbsoluteDeltaMilliseconds,
   );
-  checkOptionalMaximumRatio(
+  checkOptionalMaximumRatioWithAbsoluteDelta(
     failures,
     key,
     "camera stream first response",
     current.cameraStreamFirstResponseMilliseconds,
     baseline.cameraStreamFirstResponseMilliseconds,
     thresholds.maxCameraStreamFirstResponseRatio,
-  );
-  checkOptionalMaximumRatio(
-    failures,
-    key,
-    "average geometry queue",
-    current.averageGeometryQueueMilliseconds,
-    baseline.averageGeometryQueueMilliseconds,
-    thresholds.maxAverageGeometryQueueRatio,
+    thresholds.maxCameraStreamFirstResponseAbsoluteDeltaMilliseconds,
   );
   checkMinimumRatio(
     failures,
@@ -462,19 +1320,63 @@ function checkMaximumRatio(
   }
 }
 
-function checkOptionalMaximumRatio(
+function checkMaximumRatioWithAbsoluteDelta(
   failures,
   key,
   label,
   currentValue,
   baselineValue,
   maxRatio,
+  maxAbsoluteDelta,
+) {
+  if (!Number.isFinite(currentValue) || !Number.isFinite(baselineValue)) {
+    failures.push(`${key}: ${label} could not be compared.`);
+    return;
+  }
+
+  const ratioLimit = baselineValue > 0 ? baselineValue * maxRatio : 0;
+  const additiveLimit = baselineValue + maxAbsoluteDelta;
+  const allowedValue = Math.max(ratioLimit, additiveLimit);
+
+  if (currentValue <= allowedValue) {
+    return;
+  }
+
+  const observedRatio =
+    baselineValue > 0 ? currentValue / baselineValue : Number.POSITIVE_INFINITY;
+  failures.push(
+    `${key}: ${label} ${formatNumber(currentValue)} exceeds allowed ${formatNumber(
+      allowedValue,
+    )} from baseline ${formatNumber(baselineValue)} (${formatRatio(
+      maxRatio,
+    )} or +${formatNumber(maxAbsoluteDelta)} ms; observed ${formatRatio(
+      observedRatio,
+    )}).`,
+  );
+}
+
+function checkOptionalMaximumRatioWithAbsoluteDelta(
+  failures,
+  key,
+  label,
+  currentValue,
+  baselineValue,
+  maxRatio,
+  maxAbsoluteDelta,
 ) {
   if (currentValue === undefined && baselineValue === undefined) {
     return;
   }
 
-  checkMaximumRatio(failures, key, label, currentValue, baselineValue, maxRatio);
+  checkMaximumRatioWithAbsoluteDelta(
+    failures,
+    key,
+    label,
+    currentValue,
+    baselineValue,
+    maxRatio,
+    maxAbsoluteDelta,
+  );
 }
 
 function createGroupKey(result) {
@@ -491,12 +1393,102 @@ function averageDefined(values) {
   return definedValues.length === 0 ? undefined : average(definedValues);
 }
 
-function readFiniteNumber(value, fallback) {
-  return Number.isFinite(value) ? value : fallback;
+function median(values) {
+  if (values.length === 0) {
+    return Number.NaN;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
 }
 
-function readOptionalFiniteNumber(value) {
-  return Number.isFinite(value) ? value : undefined;
+function medianDefined(values) {
+  return values.length === 0 ? undefined : median(values);
+}
+
+function medianAbsoluteDeviation(values, center = median(values)) {
+  return median(values.map((value) => Math.abs(value - center)));
+}
+
+function readRequiredString(value, valuePath, failures) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    failures.push(`${valuePath} must be a non-empty string.`);
+    return "invalid-sample";
+  }
+
+  return value;
+}
+
+function readRequiredPositiveInteger(value, valuePath, failures) {
+  if (!Number.isInteger(value) || value <= 0) {
+    failures.push(`${valuePath} must be a positive integer.`);
+    return Number.NaN;
+  }
+
+  return value;
+}
+
+function readRequiredFiniteNumber(value, valuePath, failures) {
+  if (!Number.isFinite(value)) {
+    failures.push(`${valuePath} must be a finite number.`);
+    return Number.NaN;
+  }
+
+  return value;
+}
+
+function readRequiredNonNegativeNumber(value, valuePath, failures) {
+  const number = readRequiredFiniteNumber(value, valuePath, failures);
+
+  if (Number.isFinite(number) && number < 0) {
+    failures.push(`${valuePath} must be non-negative.`);
+    return Number.NaN;
+  }
+
+  return number;
+}
+
+function readRequiredPositiveNumber(value, valuePath, failures) {
+  const number = readRequiredFiniteNumber(value, valuePath, failures);
+
+  if (Number.isFinite(number) && number <= 0) {
+    failures.push(`${valuePath} must be positive.`);
+    return Number.NaN;
+  }
+
+  return number;
+}
+
+function readRequiredNonNegativeInteger(value, valuePath, failures) {
+  if (!Number.isInteger(value) || value < 0) {
+    failures.push(`${valuePath} must be a non-negative integer.`);
+    return Number.NaN;
+  }
+
+  return value;
+}
+
+function readRequiredRatio(value, valuePath, failures) {
+  const number = readRequiredFiniteNumber(value, valuePath, failures);
+
+  if (Number.isFinite(number) && (number < 0 || number > 1)) {
+    failures.push(`${valuePath} must be between 0 and 1.`);
+    return Number.NaN;
+  }
+
+  return number;
+}
+
+function readOptionalNonNegativeNumber(value, valuePath, failures) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return readRequiredNonNegativeNumber(value, valuePath, failures);
 }
 
 function readStringArg(name) {
@@ -513,6 +1505,27 @@ function readStringArg(name) {
   }
 
   return path.resolve(value);
+}
+
+function readStringArgs(name) {
+  const values = [];
+
+  for (let index = 2; index < process.argv.length; index += 1) {
+    if (process.argv[index] !== name) {
+      continue;
+    }
+
+    const value = process.argv[index + 1];
+
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${name} requires a path value.`);
+    }
+
+    values.push(path.resolve(value));
+    index += 1;
+  }
+
+  return values;
 }
 
 function readFirstPositionalArg() {

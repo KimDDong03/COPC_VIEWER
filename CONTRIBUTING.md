@@ -17,8 +17,14 @@ This project is not a general point cloud viewer app, not a live LiDAR ingestion
 
 ## Setup
 
+Use Node.js 22 and preferably npm 11.16.0. The root `devEngines` contract fails
+on a mismatched Node runtime and warns on an older npm; CI and release checks
+use the exact npm version declared by `packageManager`.
+
 ```bash
-npm install
+node --version
+npm --version
+npm ci
 npm run dev
 ```
 
@@ -30,6 +36,7 @@ Before opening a pull request, run the checks closest to your change:
 
 ```bash
 npm test
+npm run license:evidence:self-test
 npm run build
 npm run smoke:package
 ```
@@ -64,6 +71,11 @@ npm run smoke:example:install-browser
 - Avoid broad refactors unless they are required for the feature or bug fix.
 - Add focused tests for changed behavior.
 - Keep example UI changes tied to demonstrating library behavior.
+- Run `npm run license:evidence` and commit both generated artifacts whenever
+  dependency metadata changes.
+- Do not add a sample-data preset without recording its canonical source,
+  reuse terms, attribution, CRS, and redistribution status in
+  `docs/DATASETS.md`.
 
 ## Reporting Issues
 

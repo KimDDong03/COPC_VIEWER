@@ -1,8 +1,8 @@
 # API
 
-`copc-cesium` is a pre-1.0 ESM package. Version `0.1.0` establishes the first
-package-consumer-verified API baseline; minor releases may still refine public
-types while the library is below 1.0.
+`copc-cesium` is a pre-1.0 ESM package. The planned `0.1.0` release establishes
+the first package-consumer-verified API baseline; minor releases may still
+refine public types while the library is below 1.0.
 
 The main integration point is `CopcPointCloudLayer`. It opens a COPC URL or
 browser `File`/`Blob`, loads metadata and hierarchy information, reads selected
@@ -23,6 +23,39 @@ import { CesiumPrimitivePointRenderer } from "copc-cesium/cesium";
 - `copc-cesium/cesium` exports Cesium layer, renderer, bounds, and coordinate
   transform helpers.
 
+The supported runtime contract is a modern browser application built with an
+ESM bundler and CesiumJS `>=1.140.0 <2`. CesiumJS 1.140.0 is the lower bound
+because the public experimental `CesiumBufferPointRenderer` uses the
+`BufferPointCollection` family introduced in that release. Native Node.js ESM
+execution is not a supported runtime: Node.js 22 and npm 11 are the repository
+development, build, and QC toolchain. Package smoke installs the exact Cesium
+lower bound before strict Bundler and NodeNext declaration checks, a consumer
+bundle build, and a package-installed browser render.
+
+## Consumer Setup
+
+```bash
+npm install copc-cesium cesium
+npm install --save-dev vite vite-plugin-cesium typescript
+```
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import cesium from "vite-plugin-cesium";
+
+export default defineConfig({
+  plugins: [cesium()],
+});
+```
+
+The Vite plugin copies Cesium's runtime assets and configures their base URL.
+For another bundler, provide the equivalent `Workers`, `Assets`, `Widgets`, and
+`ThirdParty` copy step and `CESIUM_BASE_URL`. Always import
+`cesium/Build/Cesium/Widgets/widgets.css` when constructing a `Viewer` with
+widgets. The package's COPC point-sample and geometry workers are resolved
+relative to its emitted modules and ship inside the tarball.
+
 Core range helpers are also exported for integrations that need to compose their
 own source layer:
 
@@ -39,9 +72,35 @@ A remote HTTP source must honor exact byte ranges with `206 Partial Content`.
 Cross-origin hosts must permit the viewer origin and the `Range` request header
 through CORS. A browser-selected `File`/`Blob` avoids network and CORS
 requirements while preserving the same getter contract.
+The HTTP getter rejects truncated bodies even when the server returns `206`.
+When `Content-Range` is exposed through CORS, its start/end values and complete
+length must also be well formed and consistent with the requested half-open
+byte range. This prevents corrupt metadata or LAZ chunks from reaching the COPC
+parser as apparently successful reads.
 It wraps exact byte-range reads with a small in-memory cache, so duplicate
 metadata, hierarchy, or point-data requests can share an in-flight read and
 later receive copied cached bytes without mutating the retained cache entry.
+Both URL and `Blob` getters reject a single requested range larger than
+`256 * 1024 * 1024` bytes by default, before fetching or slicing it. Override
+that defensive ceiling with the positive integer `maxRangeByteLength` only for
+a trusted dataset that genuinely contains a larger contiguous hierarchy or
+point-data record. Blob reads also reject ranges outside `blob.size` and verify
+the exact slice length.
+
+HTTP reads use a 30-second request deadline by default. Set
+`requestTimeoutMilliseconds` to another positive integer when the deployment
+has a measured latency requirement, and pass `signal` to cancel all reads made
+by that getter. The caller signal is combined with an internal timeout signal;
+the helper never aborts or reuses the caller's controller.
+
+```ts
+const controller = new AbortController();
+const getter = createCopcRangeGetter("https://example.com/data.copc.laz", {
+  maxRangeByteLength: 64 * 1024 * 1024,
+  requestTimeoutMilliseconds: 15_000,
+  signal: controller.signal,
+});
+```
 
 ## Minimal Cesium Usage
 
@@ -115,8 +174,10 @@ readable by browser HTTP range requests, or `options.source` for a browser
 | `maxCachedPointSampleBytes` | `32 * 1024 * 1024` | Estimated decoded point sample cache byte limit. |
 | `maxCachedPointGeometryBatches` | `96` | Integrated COPC geometry batch cache limit for worker-prepared Cesium payloads. |
 | `maxCachedTransformedPointGeometryBatches` | `96` | Cache limit for transformed point geometry batches produced from decoded node samples. |
+| `maxCachedPointGeometryBytes` | unset | Optional hard resident-byte cap shared by the loaded and transformed geometry caches. Backing buffers are counted once by identity even when both caches reference them; resolved least-recently-used entries are evicted without canceling pending requests. The basic viewer sets `384 * 1024 * 1024`. |
 | `maxDecodedPointDataViewsPerWorker` | `48` in each worker | Decoded COPC point-data view count retained inside point-sample and integrated geometry workers. Raising this can speed repeated visits or density upgrades at higher memory cost. |
 | `maxDecodedPointDataViewBytesPerWorker` | `192 * 1024 * 1024` in each worker | Estimated decoded point-data bytes retained inside each point-sample or integrated geometry worker. |
+| `maxDecodedPointDataViewBytesAcrossWorkers` | unset | Optional layer-wide decoded-view byte ceiling across the point-sample and integrated COPC geometry worker pools. The layer divides the ceiling by active worker slots, then applies `maxDecodedPointDataViewBytesPerWorker` as an additional per-worker ceiling. The basic viewer uses a 768 MiB aggregate ceiling and a 128 MiB per-worker ceiling. |
 | `pointSampleLoading` | `"main-thread"` unless a worker factory is provided | Use `"worker"` to move point-data reads and LAZ decoding into a Web Worker. |
 | `pointGeometryLoading` | `"main-thread"` | Use `"worker"` for point-data-to-Cesium geometry conversion workers or `"integrated-worker"` to combine COPC node reads, sampling, and Cesium geometry preparation in one worker path. |
 | `maxConcurrentPointSampleWorkerRequests` | `3` | Backpressure limit for point sample worker requests. |
@@ -129,6 +190,23 @@ readable by browser HTTP range requests, or `options.source` for a browser
 | `createPointRenderer` | `CesiumPrimitivePointRenderer` | Renderer factory implementing `CopcPointCloudRenderer`. |
 | `showBounds` | `true` | Whether render calls draw debug hierarchy bounds by default. |
 | `coordinateTransforms` | `createDefaultCopcCoordinateTransforms` | Factory that maps COPC source XYZ to Cesium longitude, latitude, and height. |
+
+`getDecodedPointDataCacheStats()` reports the aggregate retained/peak bytes,
+hits, misses, evictions, oversized-entry skips, and affinity count, plus separate
+`pointSample` and `integratedPointGeometry` pool snapshots. Cache ownership is
+recorded only after a response proves that decoded data is retained (including
+a completed decode followed by soft cancellation) and is removed when the worker
+reports an eviction. Failed or oversized requests do not create new affinity;
+a canceled request does so only when its cancellation snapshot proves the
+decoded view was retained. Error and canceled responses still synchronize the
+post-operation retained-byte and eviction snapshot, so a failed decode cannot
+leave an older node falsely marked as cached.
+
+`getRendererRevision()` returns a monotonic number that advances after every
+successful mutation of the layer's point renderer, including `clear()`. It does
+not identify a node set by itself. An application may use it with an exact
+committed node/density/budget record to prove that no intervening layer render
+has invalidated a retained frame.
 
 ### Load
 
@@ -146,6 +224,13 @@ Returns:
 - `hierarchy`: currently loaded hierarchy nodes and pending hierarchy pages.
 - `coordinateTransform`: transform label, kind, and whether camera-based
   selection can run.
+
+After loading, `getCameraHeightAbovePointCloudMeters(absoluteHeightMeters)`
+returns the non-negative camera height above the highest transformed top corner
+of the COPC bounds. It applies the configured horizontal and vertical
+coordinate transform before subtraction. The method returns `undefined` before
+metadata is loaded, allowing camera integrations to retain an absolute-height
+fallback during startup.
 
 ### Render One Node
 
@@ -186,20 +271,31 @@ good enough. When this callback returns `true`, still-pending node loads for
 that progressive render are aborted instead of letting slow tail nodes hold the
 visible update open.
 
-Set `continueLoadingAfterStop: true` when the foreground response should be
-considered complete, but already queued target nodes should keep loading and
-eventually replace the scene with denser current-view detail. By default the
-returned Promise still waits for that post-stop loading to finish. Set
-`postStopLoadingMode: "background"` when the Promise should resolve as soon as
-the stop condition is reached while the remaining queued work continues only as
-cache-warming background work. This is useful for camera streaming: panning away
-still aborts the parent render signal, while staying on the same view lets
-worker caches and Cesium geometry fill in without blocking the first "rendered"
-status.
+`shouldRenderProgress(candidate)` is the pre-commit counterpart for
+intermediate frames. The candidate contains the post-budget `nodeKeys` and
+`sampledPointCount`; returning `false` keeps the existing point renderer,
+bounds renderer, and `getRendererRevision()` unchanged and suppresses that
+`onProgress` notification. The callback is never asked to approve the final
+candidate after all requested progressive loads finish; that frame is always
+committed. This lets an application keep an already visible same-view coverage
+frame instead of briefly replacing it with lower-density partial detail.
+
+Set `continueLoadingAfterStop: true` when the stop callback marks an interactive
+readiness point but already queued target nodes should keep loading. By default,
+and with `postStopLoadingMode: "await"`, the returned Promise waits for every
+bounded request window and can commit one complete final render after the
+interactive threshold. Set `postStopLoadingMode: "background"` only when the
+Promise should resolve at that intermediate point; only requests already active
+at that moment continue in the background.
 Set `postStopProgressMode: "load-only"` with `continueLoadingAfterStop` when
 the queued tail work should warm COPC/geometry caches without submitting another
 Cesium render during the same foreground camera update. This keeps camera moves
 smoother while still making the same or nearby view cheaper to refine later.
+The early Promise result in this mode is intentionally non-terminal: cache-only
+work cannot retroactively make its rendered node set complete. A final-quality
+camera stream should use `postStopLoadingMode: "await"`,
+`postStopProgressMode: "render"`, and verify the final composition with
+`createCopcCameraStreamVisualQualityState()`.
 Set `nodeRequestOrder` when the rendered node order should stay spatially
 stable but worker requests should use a different loading priority and active
 progressive request order. The
@@ -291,6 +387,7 @@ import {
   createCopcCameraStreamLodSettings,
   createCopcCameraStreamPrefetchSettings,
   createCopcPointCloudQualitySettings,
+  resolveCopcCameraStreamHierarchyExpansionDepth,
   updateCopcCameraStreamAdaptiveBudget,
 } from "copc-cesium";
 
@@ -299,6 +396,11 @@ const lod = createCopcCameraStreamLodSettings({
   cameraHeightMeters,
   qualitySettings,
 });
+const hierarchyExpansionDepth =
+  resolveCopcCameraStreamHierarchyExpansionDepth(
+    lod.maxDepth,
+    cameraSelection.selectedDepth,
+  );
 const lastRenderedMaxPointCountPerNode = 2_500;
 
 const prefetch = createCopcCameraStreamPrefetchSettings({
@@ -339,7 +441,7 @@ const budgetUpdate = updateCopcCameraStreamAdaptiveBudget({
 adaptiveBudgetState = budgetUpdate.state;
 ```
 
-`createCopcCameraStreamLodSettings()` maps camera height to bounded stream
+`createCopcCameraStreamLodSettings()` maps height above the point cloud to bounded stream
 budgets for node count, hierarchy depth, compressed point-data reads, and
 screen-space point spacing. `createCopcPointCloudQualitySettings()` provides the
 same preview, balanced, detail, and ultra presets used by the basic viewer, so
@@ -354,11 +456,21 @@ the same nodes again.
 `createCopcCameraStreamEffectiveBudget()` applies the current adaptive state to
 the configured LOD limits, and `updateCopcCameraStreamAdaptiveBudget()` lowers
 or recovers those adaptive limits from render/worker timing feedback.
+`resolveCopcCameraStreamHierarchyExpansionDepth()` caps hierarchy loading at
+the complete frontier that the current point/node/data budgets can actually
+render. Use that value as `expandHierarchyForCamera({ maxDepth })`; expanding
+to a deeper screen-space target cannot improve the current bounded frame and
+can otherwise churn a small hierarchy-page cache on wide datasets.
 
 These helpers do not start requests or render points by themselves. They are
 small policy helpers intended to feed `expandHierarchyForCamera()`,
 `selectNodesForCamera()`, `renderNodesProgressively()`, and
 `prepareNodesProgressively()` from an application-owned camera-stream loop.
+
+`CopcPointCloudCameraStream` obtains this relative height from a loaded
+`CopcPointCloudLayer`. Custom layer-like adapters that do not implement
+`getCameraHeightAbovePointCloudMeters()` retain the backward-compatible
+absolute ellipsoid-height behavior.
 
 ### Camera Stream Node Planning
 
@@ -368,6 +480,7 @@ import {
   createCopcCameraStreamFinalNodeKeys,
   createCopcCameraStreamPreviewNodeKeys,
   createCopcCameraStreamRenderNodeKeys,
+  orderCopcCameraStreamNodeKeysForAdditiveProgress,
   orderCopcCameraStreamNodeKeysForProgressiveCoverage,
   shouldReuseCopcCameraStreamNodeKeys,
 } from "copc-cesium";
@@ -386,6 +499,9 @@ const finalNodeKeys = orderCopcCameraStreamNodeKeysForProgressiveCoverage(
     coverageNodeKeys,
   ),
 );
+const additiveRenderNodeKeys = orderCopcCameraStreamNodeKeysForAdditiveProgress(
+  renderNodeKeys,
+);
 const previewNodeKeys = createCopcCameraStreamPreviewNodeKeys(
   coverageNodeKeys,
   layer.hierarchy,
@@ -396,18 +512,28 @@ const previewNodeKeys = createCopcCameraStreamPreviewNodeKeys(
 );
 ```
 
-These helpers keep the first visible camera-stream pass coverage-oriented, then
-let an application refine the selected detail nodes progressively. They also
+These helpers keep an interactive camera-stream pass coverage-oriented, then let
+an application refine the selected detail nodes progressively.
+`orderCopcCameraStreamNodeKeysForProgressiveCoverage()` is an interactive
+request-order helper; its mixed coarse/detail result is not by itself a terminal
+frontier. `orderCopcCameraStreamNodeKeysForAdditiveProgress()` orders a known
+additive closure coarse-to-fine without dropping ancestors. The helpers also
 provide node-family overlap checks through
 `shouldReuseCopcCameraStreamNodeKeys()` so a viewer can decide whether an older
 background request is still useful after a small pan or zoom.
 
 ### Camera Stream Render Plan
 
+The terminal example below assumes `cameraSelection.coverageMode` is
+`"complete-depth"`. A progressive mixed-depth selection can use the same
+planning helpers for an interactive preview, but should not be labeled
+terminal.
+
 ```ts
 import {
   createCopcCameraStreamDetailProgressState,
   createCopcCameraStreamRenderPlan,
+  createCopcCameraStreamVisualQualityState,
 } from "copc-cesium";
 
 const plan = createCopcCameraStreamRenderPlan({
@@ -425,16 +551,17 @@ const plan = createCopcCameraStreamRenderPlan({
 
 if (!requestController.hasRenderSignature(plan.renderSignature)) {
   requestController.setActiveNodeKeys(plan.finalNodeKeys);
-  await layer.renderNodesProgressively(plan.finalNodeKeys, {
+  const result = await layer.renderNodesProgressively(plan.finalNodeKeys, {
     maxPointCountPerNode: plan.maxPointCountPerNode,
     maxRenderedPointCount: plan.renderedPointBudget,
     continueLoadingAfterStop: true,
-    postStopLoadingMode: "background",
-    postStopProgressMode: "load-only",
+    postStopLoadingMode: "await",
+    postStopProgressMode: "render",
     shouldStopAfterProgress: (result) => {
       const progress = createCopcCameraStreamDetailProgressState({
         finalNodeKeys: plan.finalNodeKeys,
         renderedNodeKeys: result.pointSamples.nodeKeys,
+        // Interactive readiness only; not the terminal-quality test.
         minBudgetCompletionNodeCoverageRatio: 0.9,
         renderedPointBudget: plan.renderedPointBudget,
         renderedPointCount: result.pointSamples.sampledPointCount,
@@ -443,16 +570,44 @@ if (!requestController.hasRenderSignature(plan.renderSignature)) {
       return progress.isComplete;
     },
   });
+
+  const visualQuality = createCopcCameraStreamVisualQualityState({
+    frontierNodeKeys: plan.selectedNodeKeys,
+    requiredNodeKeys: plan.finalNodeKeys,
+    renderedNodeKeys: result.pointSamples.nodeKeys,
+  });
+
+  if (!visualQuality.isTerminalReady) {
+    throw new Error("Camera stream did not reach terminal visual quality.");
+  }
 }
 ```
 
 `createCopcCameraStreamRenderPlan()` turns a camera selection into the concrete
 node sets a streaming layer needs: selected nodes, ancestor-backed render nodes,
-coverage nodes, final detail nodes, preview nodes, a per-node point cap, and a
-stable render signature. This keeps app code from duplicating the same
-COPC-octree planning rules. `previewMinFinalNodeCount` lets an application skip
-the temporary coverage preview when only a few final detail nodes are needed, so
-those dense current-view nodes can be submitted to workers immediately.
+coverage nodes, the terminal node set, preview nodes, a per-node point cap, and a
+stable render signature. For a `complete-depth` selection, `finalNodeKeys` is the
+full available additive ancestor closure of the selected frontier. The complete
+frontier is not truncated by the progressive final-node cap, and the rendered
+point budget is divided across the closure instead of being consumed by a
+contiguous node prefix. `previewMinFinalNodeCount` can still skip a temporary
+interactive preview when the terminal set is already small.
+
+COPC uses [EPT's additive hierarchy
+semantics](https://entwine.io/en/latest/entwine-point-tile.html), so descendants
+do not replace their ancestors. `createCopcCameraStreamVisualQualityState()`
+therefore treats a frame as terminal only when the frontier is an antichain, the
+entire required additive set is rendered, and there are no missing, stale, or
+unexpected nodes. A numeric point budget or 85-95% detail-node ratio is only an
+interactive readiness signal.
+
+`runCopcCameraStreamTerminalRender()` packages the correctness-critical part of
+that low-level flow. It keeps a bounded request window running after interactive
+readiness, requires post-stop progress to render, and resolves only after the
+returned layer result passes the exact additive terminal gate. The caller still
+owns the request ID, `AbortSignal`, hierarchy expansion, prefetch, render
+signature, and any later camera update; a superseded request therefore cannot
+schedule an unowned follow-up render.
 
 ### High-Level Camera Stream
 
@@ -469,8 +624,8 @@ const cameraStream = new CopcPointCloudCameraStream({
   camera: viewer.camera,
   layer,
   quality: "balanced",
-  onUpdate: ({ phase, requestId, lodSettings, result }) => {
-    renderStatus({ phase, requestId, lodSettings, result });
+  onUpdate: ({ phase, stage, requestId, lodSettings, result, visualQuality }) => {
+    renderStatus({ phase, stage, requestId, lodSettings, result, visualQuality });
   },
   onError: (error) => {
     showCameraStreamError(error);
@@ -489,11 +644,37 @@ cameraStream.destroy();
 `CopcPointCloudCameraStream` is the reusable default camera loop. It subscribes
 to Cesium `moveStart`, `changed`, and `moveEnd`, debounces duplicate updates,
 aborts stale renders, maps camera height and a quality preset to bounded LOD and
-byte budgets, expands nearby hierarchy pages, and calls
-`renderAutomaticProgressively()` for the latest view. `renderOptions` can
-override individual selection or progressive-render settings without replacing
-the lifecycle controller. `lastResult`, `lastError`, `isRunning`, and
-`isRendering` expose state for application UI and diagnostics.
+byte budgets, and renders the latest view. With a real `CopcPointCloudLayer`, an
+internal headless engine expands hierarchy pages, selects the camera frontier,
+creates the additive render plan and source-point weights, then delegates the
+bounded final pass to `runCopcCameraStreamTerminalRender()`. Its defaults are
+`coverageMode: "complete-depth"` and `includeAncestorNodes: true`, so the final
+render contains the selected same-depth frontier plus every available additive
+COPC ancestor. That default path distributes the full LOD render budget over the
+additive set and keeps active progressive node requests bounded. It does not
+reuse the small per-node preview cap, so moving from an overview profile to a
+closer profile can produce the intended density increase.
+
+`phase` remains the backward-compatible request lifecycle alias:
+`"progress"` is emitted while work is advancing and `"complete"` when that
+request settles. Use `stage` for visual semantics. Its values are `"preview"`,
+`"refining"`, `"interactive-ready"`, and `"terminal"`; only `"terminal"`
+asserts the exact additive visual-quality contract. On the default real-layer
+engine path, the terminal update is reported as `phase: "complete"` and
+`stage: "terminal"`. Structurally limited layer-like test adapters and callers
+that explicitly request mixed-depth, ancestor-omitting, or custom low-level
+progressive completion behavior retain the legacy
+`renderAutomaticProgressively()` fallback. For that compatibility path,
+`phase: "complete"` means only that the requested operation settled, so callers
+must still inspect `stage` and `visualQuality` before claiming terminal quality.
+
+Each update includes `visualQuality` when the layer exposes hierarchy data;
+terminal state requires a same-depth antichain, complete ancestor closure, and
+zero missing or stale nodes. `renderOptions` can explicitly opt into mixed-depth
+progressive selection or omit ancestors for a non-terminal preview without
+replacing the lifecycle controller. `lastResult`, `lastVisualQuality`,
+`lastError`, `isRunning`, and `isRendering` expose state for application UI and
+diagnostics.
 
 Call `render()` directly when an application needs an awaited refresh. `start()`
 uses the same method for camera events and reports asynchronous failures through
@@ -528,6 +709,14 @@ const nodeSamples = new CopcCameraStreamNodeSampleCache({
 
 `CopcCameraStreamRequestController` owns active camera-stream abort signals,
 debounced render scheduling, node-family request reuse, and render signatures.
+Call `abortSupersededRenderRequests(previousRequest)` before starting a new task
+that can mutate a shared renderer. It aborts the direct predecessor and any
+grace-retained request; `reconcilePreviousRequestForNodeReuse()` is appropriate
+only for load-only overlap. `canReuseCopcCameraStreamCommittedRender()` verifies
+exact required-node equality, fresh per-node density, and unchanged per-node and
+total point budgets. The caller must additionally verify layer identity and
+`layer.getRendererRevision()` because the helper deliberately cannot inspect
+external renderer state.
 `CopcCameraStreamPrefetchController` limits background preparation to one active
 task and aborts it when a newer view supersedes it. `CopcCameraStreamNodeSampleCache`
 keeps retained node samples ordered by node and density so an application can
@@ -616,14 +805,15 @@ const priority = createCopcCameraStreamRequestPriority({
   offset: priorities.detail,
 });
 requests.queueRender(runtime.moveDebounceMilliseconds, renderCurrentView);
-const progress = createCopcCameraStreamDetailProgressState({
+const interactiveProgress = createCopcCameraStreamDetailProgressState({
   finalNodeKeys,
   renderedNodeKeys: progressResult.pointSamples.nodeKeys,
+  // Readiness threshold only. Use visual quality for terminal status.
   minBudgetCompletionNodeCoverageRatio: 0.9,
   renderedPointBudget: 240_000,
   renderedPointCount: progressResult.pointSamples.sampledPointCount,
 });
-const isDetailComplete = progress.isComplete;
+const isInteractiveReady = interactiveProgress.isComplete;
 const workers = createCopcWorkerPoolSettings({
   hardwareConcurrency: navigator.hardwareConcurrency,
 });
@@ -657,8 +847,8 @@ viewer passes to `CopcPointCloudLayer` to balance worker-local decoded-cache
 reuse with foreground camera-stream latency.
 Use
 `createCopcCameraStreamRuntimeSettings()` for the default debounce, request
-reuse, retained sample cache, prefetch, preview, warmup, and cold-detail
-completion thresholds used by the basic viewer, then override only the values
+reuse, retained sample cache, prefetch, preview, warmup, and interactive-detail
+readiness thresholds used by the basic viewer, then override only the values
 your application needs. `previewMaxPointDataLength` caps the compressed point
 data used for quick coverage preview candidates; when coverage candidates are
 too large and detail candidates exist, preview planning falls back to distributed
@@ -674,13 +864,12 @@ enough current-view nodes are already available. The default runtime requires
 35% same-node initial coverage before warmup starts, which prevents background
 warmup from delaying the first dense render for a mostly cold view.
 `createCopcCameraStreamDetailProgressState()` reports how many current-view
-detail nodes are represented in the latest progressive render and whether that
-render can stop. Pass `minBudgetCompletionNodeCoverageRatio` when a point budget
-fill should not be enough by itself; this keeps a cold camera view from
-finishing with only one dense patch while other visible nodes are still sparse.
-Pass the same completion policy to `renderNodesProgressively()` through
-`shouldStopAfterProgress` when the desired behavior is to abort the remaining
-tail work only after the visible current-view coverage threshold is met.
+detail nodes are represented in the latest progressive render and whether it is
+interactive-ready. Pass `minBudgetCompletionNodeCoverageRatio` when a point
+budget fill should not be enough by itself; this keeps an early camera response
+from containing only one dense patch. This state must not be used as a terminal
+quality claim. Use `createCopcCameraStreamVisualQualityState()` after the final
+render for exact frontier, additive-closure, missing-node, and stale-node checks.
 
 `createCopcCameraStreamPrefetchSelectionPlan()` makes the background camera
 selection one depth step denser than the foreground view and tightens
@@ -690,6 +879,10 @@ and density-aware point budgets into the concrete node list for
 `prepareNodesProgressively()`. Pass `nodeWeights` when the prefetch list should
 prioritize source-point-heavy nodes while keeping the same progressive coverage
 ordering; the basic viewer uses camera-selected node point counts for this.
+The reference viewer adds application-owned scheduling around these helpers:
+after an exact retained render it skips predictive prefetch during active
+camera movement and otherwise delays it by at least 350 ms. This timing is not
+a library API default.
 
 ### Camera Stream Telemetry
 
@@ -753,7 +946,7 @@ await layer.expandHierarchyForCamera({
 const selection = await layer.selectNodesForCamera({
   camera: viewer.camera,
   selectionMode: "coverage",
-  coverageMode: "progressive",
+  coverageMode: "complete-depth",
   maxNodes: 64,
   targetNodeScreenPixels: 120,
   maxTotalPointDataLength: 128_000_000,
@@ -768,11 +961,26 @@ Camera selection requires coordinate transforms with both `toCesium` and
 `toCopc`. If `toCopc` is unavailable, `coordinateTransform.supportsCameraSelection`
 will be `false`.
 
+`CopcPointCloudLayer.selectNodesForCamera()` derives two distinct COPC-space
+positions from the Cesium camera: the viewport-center target orders candidate
+nodes, while the camera-eye position drives projected node-size and point-spacing
+estimates. Low-level `selectHierarchyNodesForCamera()` callers can provide the
+same separation with the optional `cameraPosition` field; omitting it preserves
+the legacy behavior of using `target` for both roles.
+
 `selectionMode: "coverage"` defaults to `coverageMode: "complete-depth"`,
 which only selects a same-depth coverage set when the whole depth fits the
 configured node and byte budgets. Use `coverageMode: "progressive"` for camera
 streaming flows that should keep a coarse full-view coverage layer while also
-adding distributed target-depth detail nodes inside the same selection.
+adding distributed target-depth detail nodes inside the same selection. That
+mixed selection is suitable for an interactive preview, not a terminal
+frontier, because it can contain ancestor/descendant overlaps.
+
+Hierarchy cache telemetry distinguishes global source state from current-frame
+quality. `CopcHierarchyCacheStats.pendingPageCount` may include deeper pages
+that are irrelevant to the selected frontier. Terminal camera-stream checks
+must use `pendingRelevantHierarchyPageCount`, which counts only visible pending
+pages through the resource-bounded selected depth.
 
 ### Automatic Camera Render
 
@@ -782,7 +990,8 @@ const result = await layer.renderAutomatic({
   expandHierarchy: true,
   maxHierarchyPages: 2,
   selectionMode: "coverage",
-  coverageMode: "progressive",
+  coverageMode: "complete-depth",
+  includeAncestorNodes: true,
   maxNodes: 64,
   targetNodeScreenPixels: 120,
   maxPointCountPerNode: 5_000,
@@ -794,7 +1003,8 @@ const result = await layer.renderAutomatic({
 pages, select camera-relevant nodes, and render them in one call.
 Use `selectionMode: "coverage"` when the goal is to fill the current view with
 COPC nodes instead of only rendering the nearest few nodes around the camera
-target.
+target. Set `includeAncestorNodes: true` when the automatic result must preserve
+COPC/EPT additive semantics; `CopcPointCloudCameraStream` enables it by default.
 
 ### Lifecycle
 
@@ -806,7 +1016,7 @@ layer.destroy();
 ```
 
 - `clear()` removes rendered points and bounds while keeping the source and
-  caches.
+  caches, and advances `getRendererRevision()`.
 - `clearPointSampleCache()` drops decoded point sample cache entries.
 - `resetStreamingCaches()` drops point sample and geometry caches, terminates
   active layer worker pools, rejects pending layer-owned point requests, and
@@ -872,6 +1082,13 @@ number of selected nodes may change as the camera moves.
 one Cesium `Primitive` from typed position and color arrays, avoiding one
 Cesium point object per rendered COPC point. This keeps the default renderer
 Cesium-native while moving closer to the final high-density path.
+
+Decoded point attributes preserve RGB, Classification, and Intensity. Rendering
+uses complete RGB first, then fixed colors for known ASPRS classifications.
+Created-never-classified, unclassified, and unknown values use gamma-adjusted
+intensity when available, followed by a neutral gray; cyan remains the final
+fallback only when none of those attributes exists. The typed-geometry and
+object renderer paths share this policy.
 
 You can configure the default typed-array primitive renderer explicitly when you
 need to tune point size or primitive chunking.

@@ -6,6 +6,8 @@ import {
   createCesiumPointGeometryTransform,
   createPointGeometryBatchFromCopc,
   createPointGeometryBatchFromSerializableTransform,
+  estimatePointGeometryBatchByteSize,
+  getPointGeometryBatchBackingBuffers,
 } from "./pointGeometryBatch";
 import {
   createDefaultCopcCoordinateTransforms,
@@ -14,6 +16,28 @@ import {
 } from "./copcCoordinateTransform";
 
 describe("point geometry batch creation", () => {
+  it("measures distinct geometry backing buffers instead of typed array views", () => {
+    const sharedBuffer = new ArrayBuffer(64);
+    const sharedBatch = {
+      key: "shared",
+      pointCount: 2,
+      positions: new Float64Array(sharedBuffer, 0, 6),
+      colors: new Uint8Array(sharedBuffer, 48, 8),
+    };
+    const separateBatch = {
+      key: "separate",
+      pointCount: 2,
+      positions: new Float64Array(6),
+      colors: new Uint8Array(8),
+    };
+
+    expect(getPointGeometryBatchBackingBuffers(sharedBatch)).toEqual([
+      sharedBuffer,
+    ]);
+    expect(estimatePointGeometryBatchByteSize(sharedBatch)).toBe(64);
+    expect(estimatePointGeometryBatchByteSize(separateBatch)).toBe(56);
+  });
+
   it("matches Cesium Cartesian positions for geographic coordinates", () => {
     const inspection = createGeographicInspection();
     const transforms = createDefaultCopcCoordinateTransforms(inspection);
@@ -27,6 +51,29 @@ describe("point geometry batch creation", () => {
     expect(result.positions[1]).toBeCloseTo(expected.y, 6);
     expect(result.positions[2]).toBeCloseTo(expected.z, 6);
     expect(result.colors).toEqual(new Uint8Array([10, 20, 30, 255]));
+  });
+
+  it("uses classification colors when RGB is unavailable", () => {
+    const inspection = createGeographicInspection();
+    const transforms = createDefaultCopcCoordinateTransforms(inspection);
+    const result = createPointGeometryBatchFromCopc(
+      {
+        nodeKey: "0-0-0-0",
+        nodePointCount: 1,
+        sampledPointCount: 1,
+        points: [],
+        pointData: {
+          x: new Float64Array([127]),
+          y: new Float64Array([37]),
+          z: new Float64Array([10]),
+          classification: new Uint8Array([2]),
+          intensity: new Uint16Array([65_535]),
+        },
+      },
+      transforms.toCesium,
+    );
+
+    expect(result.colors).toEqual(new Uint8Array([166, 124, 82, 255]));
   });
 
   it("builds the same batch from a serializable geographic transform", () => {
@@ -211,6 +258,8 @@ function createTypedNodePointSampleResult(): CopcNodePointSampleResult {
       red: new Uint8Array([10]),
       green: new Uint8Array([20]),
       blue: new Uint8Array([30]),
+      classification: new Uint8Array([2]),
+      intensity: new Uint16Array([65_535]),
     },
   };
 }

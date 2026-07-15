@@ -13,6 +13,8 @@ describe("sampleCopcPointDataView", () => {
       Red: [0, 65_535, 32_768, 257],
       Green: [257, 32_768, 65_535, 0],
       Blue: [65_535, 257, 0, 32_768],
+      Classification: [2, 6, 9, 5],
+      Intensity: [0, 65_535, 32_768, 257],
     });
 
     const result = sampleCopcPointDataView({
@@ -35,6 +37,8 @@ describe("sampleCopcPointDataView", () => {
             green: 1,
             blue: 255,
           },
+          classification: 2,
+          intensity: 0,
         },
         {
           x: 30,
@@ -45,6 +49,8 @@ describe("sampleCopcPointDataView", () => {
             green: 255,
             blue: 0,
           },
+          classification: 9,
+          intensity: 32_768,
         },
       ],
     });
@@ -58,6 +64,8 @@ describe("sampleCopcPointDataView", () => {
       Red: [0, 65_535, 32_768, 257],
       Green: [257, 32_768, 65_535, 0],
       Blue: [65_535, 257, 0, 32_768],
+      Classification: [2, 6, 9, 5],
+      Intensity: [0, 65_535, 32_768, 257],
     });
 
     const result = sampleCopcPointDataView({
@@ -74,6 +82,59 @@ describe("sampleCopcPointDataView", () => {
     expect(result.pointData?.red).toEqual(new Uint8Array([0, 128]));
     expect(result.pointData?.green).toEqual(new Uint8Array([1, 255]));
     expect(result.pointData?.blue).toEqual(new Uint8Array([255, 0]));
+    expect(result.pointData?.classification).toEqual(new Uint8Array([2, 9]));
+    expect(result.pointData?.intensity).toEqual(
+      new Uint16Array([0, 32_768]),
+    );
+  });
+
+  it("keeps classification and intensity when RGB dimensions are absent", () => {
+    const view = createPointDataView({
+      X: [10, 20],
+      Y: [1, 2],
+      Z: [100, 200],
+      Classification: [6, 9],
+      Intensity: [12_345, 54_321],
+    });
+
+    const result = sampleCopcPointDataView({
+      nodeKey: "1-0-0-0",
+      view,
+      maxPointCount: 2,
+      sampleFormat: "typed",
+    });
+
+    expect(result.pointData?.red).toBeUndefined();
+    expect(result.pointData?.green).toBeUndefined();
+    expect(result.pointData?.blue).toBeUndefined();
+    expect(result.pointData?.classification).toEqual(new Uint8Array([6, 9]));
+    expect(result.pointData?.intensity).toEqual(
+      new Uint16Array([12_345, 54_321]),
+    );
+  });
+
+  it("clamps classification and intensity to their LAS unsigned ranges", () => {
+    const view = createPointDataView({
+      X: [10, 20, 30],
+      Y: [1, 2, 3],
+      Z: [100, 200, 300],
+      Classification: [-1, 12.6, 300],
+      Intensity: [-1, 32_768.4, 70_000],
+    });
+
+    const result = sampleCopcPointDataView({
+      nodeKey: "1-0-0-0",
+      view,
+      maxPointCount: 3,
+      sampleFormat: "typed",
+    });
+
+    expect(result.pointData?.classification).toEqual(
+      new Uint8Array([0, 13, 255]),
+    );
+    expect(result.pointData?.intensity).toEqual(
+      new Uint16Array([0, 32_768, 65_535]),
+    );
   });
 });
 

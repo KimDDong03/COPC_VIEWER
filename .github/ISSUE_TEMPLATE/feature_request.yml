@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a focused addition to the COPC-to-Cesium library
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is a CesiumJS-native COPC library, not a general viewer, live LiDAR ingestion system, or COPC-to-3D-Tiles converter. Explain how the proposal supports that scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and use case
+      description: Describe the user problem and why existing APIs or documented workflows do not solve it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest public behavior or API change that would solve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include workarounds, existing project patterns, or external prior art you evaluated.
+    validations:
+      required: true
+
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture and compatibility impact
+      description: Note effects on core/Cesium separation, public APIs, workers, caching, CRS handling, browser support, or performance.
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Acceptance and verification
+      description: State observable acceptance criteria and the tests, browser checks, or benchmarks that should prove completion.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies_data
+    attributes:
+      label: Dependency, license, and sample-data considerations
+      description: Identify any proposed dependency or dataset, its license/reuse terms, provenance, and whether it would be bundled.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and project documents for a matching proposal.
+          required: true
+        - label: This request stays within the documented project scope.
+          required: true

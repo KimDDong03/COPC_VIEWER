@@ -3,9 +3,17 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRunEvidence } from "./run-evidence.mjs";
+import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
+const playwrightCliPath = resolveLocalPackageBinary(
+  repoRoot,
+  "@playwright/cli",
+  "playwright-cli",
+);
+const viteCliPath = resolveLocalPackageBinary(repoRoot, "vite", "vite");
 const outputRoot = path.join(repoRoot, "output");
 const benchmarkRoot = path.join(outputRoot, "renderer-benchmark");
 const benchmarkFlowPath = path.join(benchmarkRoot, "renderer-benchmark-flow.mjs");
@@ -16,8 +24,6 @@ const playwrightConfigPath = path.join(
 );
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
-const npxCommand = "npx";
-const playwrightCliPackage = "@playwright/cli@0.1.14";
 const benchmarkPointCount = readPositiveIntegerEnv(
   "COPC_BENCHMARK_POINT_COUNT",
   10_000,
@@ -73,12 +79,12 @@ function run(command, args, cwd) {
 
 function runPlaywrightCli(args) {
   const result = spawnSync(
-    npxCommand,
-    ["--yes", "--package", playwrightCliPackage, "playwright-cli", ...args],
+    process.execPath,
+    [playwrightCliPath, ...args],
     {
       cwd: repoRoot,
       encoding: "utf8",
-      shell: isWindows,
+      shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -260,6 +266,17 @@ function createBenchmarkFlow(baseUrl, targetPointCount, repeatCount) {
     });
   }
 
+  async function readBrowserEnvironment() {
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    const version = page.context().browser()?.version() ?? "";
+
+    if (!userAgent || !version) {
+      throw new Error("Browser user agent and version metadata are required.");
+    }
+
+    return { userAgent, version };
+  }
+
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
       consoleProblems.push(\`\${message.type()}: \${message.text()}\`);
@@ -410,6 +427,7 @@ function createBenchmarkFlow(baseUrl, targetPointCount, repeatCount) {
     targetPointCount,
     repeatCount,
     browserGraphics: await readBrowserGraphics(),
+    browserEnvironment: await readBrowserEnvironment(),
     sourcePreset: await metadataValue("Source preset"),
     coordinateTransform: await metadataValue("Coordinate transform"),
     summaries: renderers.map(summarizeRenderer),
@@ -448,9 +466,9 @@ const port = await findAvailablePort(4273);
 const baseUrl = `http://localhost:${port}`;
 const serverOutput = [];
 const serverProcess = spawn(
-  npxCommand,
+  process.execPath,
   [
-    "vite",
+    viteCliPath,
     "preview",
     "examples/basic-viewer",
     "--config",
@@ -465,7 +483,7 @@ const serverProcess = spawn(
   ],
   {
     cwd: repoRoot,
-    shell: isWindows,
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
@@ -497,8 +515,12 @@ try {
   ]);
   const output = runPlaywrightCli(["run-code", "--filename", benchmarkFlowPath]);
   const result = extractPlaywrightResult(output);
-  await writeFile(benchmarkResultPath, `${JSON.stringify(result, null, 2)}\n`);
-  printBenchmarkSummary(result);
+  const report = {
+    ...result,
+    runEvidence: await createRunEvidence({ repoRoot }),
+  };
+  await writeFile(benchmarkResultPath, `${JSON.stringify(report, null, 2)}\n`);
+  printBenchmarkSummary(report);
   console.log(`Renderer benchmark result written: ${benchmarkResultPath}`);
 } finally {
   try {

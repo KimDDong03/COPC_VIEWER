@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { Copc } from "copc";
 import type { Copc as CopcData, Hierarchy } from "copc";
+import { describe, expect, it, vi } from "vitest";
 import { CopcSource } from "./CopcSource";
+import type { CopcDecodedPointDataCacheSnapshot } from "./CopcDecodedPointDataCache";
 import type { CopcNodePointSampleResult } from "./CopcPointDataSample";
 import type {
   CopcPointSampleWorkerLoadRequest,
@@ -114,6 +116,85 @@ describe("CopcSource point sample cache", () => {
         cachedSampleSetCount: 1,
         cacheHitCount: 1,
         cacheMissCount: 1,
+      }),
+    );
+  });
+
+  it("downsamples and accounts for typed classification and intensity data", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const mutableSource = source as unknown as {
+      loadNodePointSamplesWithoutCache: (
+        nodeKey: string,
+        maxPointCount: number,
+      ) => Promise<CopcNodePointSampleResult>;
+    };
+
+    mutableSource.loadNodePointSamplesWithoutCache = async (
+      nodeKey,
+      maxPointCount,
+    ) => ({
+      nodeKey,
+      nodePointCount: maxPointCount,
+      sampledPointCount: maxPointCount,
+      points: [],
+      pointData: {
+        x: new Float64Array([0, 1, 2, 3]),
+        y: new Float64Array([10, 11, 12, 13]),
+        z: new Float64Array([20, 21, 22, 23]),
+        classification: new Uint8Array([2, 3, 6, 9]),
+        intensity: new Uint16Array([100, 200, 300, 400]),
+      },
+    });
+
+    await source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 4,
+      sampleFormat: "typed",
+    });
+    const reused = await source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 2,
+      sampleFormat: "typed",
+    });
+
+    expect(reused.pointData?.x).toEqual(new Float64Array([0, 2]));
+    expect(reused.pointData?.classification).toEqual(new Uint8Array([2, 6]));
+    expect(reused.pointData?.intensity).toEqual(new Uint16Array([100, 300]));
+    expect(source.getPointSampleCacheStats()).toEqual(
+      expect.objectContaining({
+        cachedPointSampleBytes: 108,
+        cacheHitCount: 1,
+      }),
+    );
+  });
+
+  it("counts object classification and intensity fields toward cache limits", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      maxCachedPointSampleBytes: 26,
+    });
+    const mutableSource = source as unknown as {
+      loadNodePointSamplesWithoutCache: (
+        nodeKey: string,
+      ) => Promise<CopcNodePointSampleResult>;
+    };
+
+    mutableSource.loadNodePointSamplesWithoutCache = async (nodeKey) => ({
+      nodeKey,
+      nodePointCount: 1,
+      sampledPointCount: 1,
+      points: [{ x: 0, y: 0, z: 0, classification: 2, intensity: 1_000 }],
+    });
+
+    await source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 1,
+    });
+
+    expect(source.getPointSampleCacheStats()).toEqual(
+      expect.objectContaining({
+        cachedSampleSetCount: 0,
+        cachedPointSampleBytes: 0,
+        cacheEvictionCount: 1,
       }),
     );
   });
@@ -304,6 +385,15 @@ describe("CopcSource point sample cache", () => {
     expect(
       () =>
         new CopcSource("https://example.com/sample.copc.laz", {
+          maxDecodedPointDataViewBytesAcrossWorkers: 0,
+        }),
+    ).toThrow(
+      "maxDecodedPointDataViewBytesAcrossWorkers must be a positive integer.",
+    );
+
+    expect(
+      () =>
+        new CopcSource("https://example.com/sample.copc.laz", {
           pointSampleLoading: "invalid",
         } as never),
     ).toThrow("pointSampleLoading must be either 'main-thread' or 'worker'.");
@@ -428,11 +518,20 @@ describe("CopcSource point sample cache", () => {
           },
         ],
       },
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 20 * 1024 * 1024,
+        peakRetainedBytes: 20 * 1024 * 1024,
+        cacheMissCount: 1,
+        requestedNodeRetained: true,
+      }),
     }));
     const source = new CopcSource("https://example.com/sample.copc.laz", {
       pointSampleLoading: "worker",
       maxDecodedPointDataViewsPerWorker: 80,
       maxDecodedPointDataViewBytesPerWorker: 200 * 1024 * 1024,
+      maxDecodedPointDataViewBytesAcrossWorkers: 75 * 1024 * 1024,
+      maxConcurrentPointSampleWorkerRequests: 3,
       createPointSampleWorker: () => worker as unknown as Worker,
     });
     const mutableSource = source as unknown as {
@@ -470,7 +569,7 @@ describe("CopcSource point sample cache", () => {
         node: createNode(100),
         maxPointCount: 5,
         maxDecodedPointDataViews: 80,
-        maxDecodedPointDataViewBytes: 200 * 1024 * 1024,
+        maxDecodedPointDataViewBytes: 25 * 1024 * 1024,
       }),
     ]);
     expect(result).toEqual({
@@ -491,6 +590,19 @@ describe("CopcSource point sample cache", () => {
         cacheMissCount: 1,
       }),
     );
+    expect(source.getDecodedPointDataCacheStats()).toEqual({
+      workerCount: 1,
+      retainedViewCount: 1,
+      retainedBytes: 20 * 1024 * 1024,
+      peakRetainedBytes: 20 * 1024 * 1024,
+      cacheHitCount: 0,
+      cacheMissCount: 1,
+      cacheEvictionCount: 0,
+      oversizedEntrySkipCount: 0,
+      affinityEntryCount: 1,
+      maxDecodedPointDataViewBytesPerWorker: 25 * 1024 * 1024,
+      maxDecodedPointDataViewBytesAcrossWorkers: 75 * 1024 * 1024,
+    });
   });
 
   it("limits concurrent worker point sample requests", async () => {
@@ -565,6 +677,201 @@ describe("CopcSource point sample cache", () => {
     const result = await promise;
     expect(result.nodeKeys).toEqual(nodeKeys);
     expect(result.sampledPointCount).toBe(3);
+  });
+
+  it("records decoded-node affinity after success and removes worker evictions", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+      decodedNodePointSampleWorkers: Map<string, Worker>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+      },
+      pages: {},
+    });
+
+    const firstResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+    expect(source.getDecodedPointDataCacheStats().affinityEntryCount).toBe(0);
+
+    const firstRequest = worker.requests.find(isLoadRequest);
+    if (!firstRequest) {
+      throw new Error("Expected first point sample worker request.");
+    }
+    worker.emit(
+      createWorkerSuccessResponse(
+        firstRequest,
+        createDecodedPointDataCacheSnapshot({
+          retainedViewCount: 1,
+          retainedBytes: 1_600,
+          peakRetainedBytes: 1_600,
+          cacheMissCount: 1,
+          requestedNodeRetained: true,
+        }),
+      ),
+    );
+    await firstResult;
+    expect([...mutableSource.decodedNodePointSampleWorkers.keys()]).toEqual([
+      "0-0-0-0",
+    ]);
+
+    const secondResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+    const secondRequest = worker.requests.filter(isLoadRequest)[1];
+    if (!secondRequest) {
+      throw new Error("Expected second point sample worker request.");
+    }
+    worker.emit(
+      createWorkerSuccessResponse(
+        secondRequest,
+        createDecodedPointDataCacheSnapshot({
+          retainedViewCount: 1,
+          retainedBytes: 800,
+          peakRetainedBytes: 1_600,
+          cacheMissCount: 2,
+          cacheEvictionCount: 1,
+          requestedNodeRetained: true,
+          evictedNodeKeys: [
+            {
+              sourceKey: source.sourceKey,
+              nodeKey: "0-0-0-0",
+            },
+          ],
+        }),
+      ),
+    );
+    await secondResult;
+
+    expect([...mutableSource.decodedNodePointSampleWorkers.keys()]).toEqual([
+      "1-0-0-0",
+    ]);
+    expect(source.getDecodedPointDataCacheStats()).toEqual(
+      expect.objectContaining({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        affinityEntryCount: 1,
+      }),
+    );
+  });
+
+  it("applies worker error snapshots without creating affinity for the failed request", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      maxConcurrentPointSampleWorkerRequests: 1,
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+      decodedNodePointSampleWorkers: Map<string, Worker>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+        "1-0-0-0": createNode(50),
+      },
+      pages: {},
+    });
+
+    const firstResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+    const firstRequest = worker.requests.find(isLoadRequest);
+    if (!firstRequest) {
+      throw new Error("Expected first point sample worker request.");
+    }
+    worker.emit(
+      createWorkerSuccessResponse(
+        firstRequest,
+        createDecodedPointDataCacheSnapshot({
+          retainedViewCount: 1,
+          retainedBytes: 1_600,
+          peakRetainedBytes: 1_600,
+          cacheMissCount: 1,
+          requestedNodeRetained: true,
+        }),
+      ),
+    );
+    await firstResult;
+
+    const failedResult = source.loadNodePointSamples({
+      nodeKey: "1-0-0-0",
+      maxPointCount: 5,
+    });
+    await waitForWorkerLoadRequestCount(worker, 2);
+    const secondRequest = worker.requests.filter(isLoadRequest)[1];
+    if (!secondRequest) {
+      throw new Error("Expected second point sample worker request.");
+    }
+    worker.emit({
+      id: secondRequest.id,
+      type: "loadNodePointSamples:error",
+      cache: createDecodedPointDataCacheSnapshot({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        peakRetainedBytes: 1_600,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        requestedNodeRetained: true,
+        evictedNodeKeys: [
+          {
+            sourceKey: source.sourceKey,
+            nodeKey: "0-0-0-0",
+          },
+        ],
+      }),
+      error: { message: "sampling failed" },
+    });
+    await expect(failedResult).rejects.toThrow("sampling failed");
+
+    expect([...mutableSource.decodedNodePointSampleWorkers.keys()]).toEqual([]);
+    expect(source.getDecodedPointDataCacheStats()).toEqual(
+      expect.objectContaining({
+        retainedViewCount: 1,
+        retainedBytes: 800,
+        cacheMissCount: 2,
+        cacheEvictionCount: 1,
+        affinityEntryCount: 0,
+      }),
+    );
   });
 
   it("sends queued worker point sample requests to the worker that became idle", async () => {
@@ -1166,6 +1473,141 @@ describe("CopcSource point sample cache", () => {
     );
   });
 
+  it("keeps a shared same-node load alive when its first consumer aborts", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+      },
+      pages: {},
+    });
+
+    const firstAbort = new AbortController();
+    const firstResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+      signal: firstAbort.signal,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+
+    const secondResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+    });
+    const firstRejects = expect(firstResult).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
+    firstAbort.abort();
+    await firstRejects;
+    expect(worker.terminateCount).toBe(0);
+    expect(worker.requests.filter(isLoadRequest)).toHaveLength(1);
+
+    const request = worker.requests.find(isLoadRequest);
+
+    if (!request) {
+      throw new Error("Expected a shared worker load request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(request));
+    await expect(secondResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+      sampledPointCount: 1,
+    });
+    expect(source.getPointSampleCacheStats()).toEqual(
+      expect.objectContaining({
+        cacheMissCount: 1,
+        cacheHitCount: 1,
+      }),
+    );
+  });
+
+  it("starts a fresh same-node load after the previous shared task is abandoned", async () => {
+    const worker = new FakePointSampleWorker();
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      pointSampleLoading: "worker",
+      createPointSampleWorker: () => worker as unknown as Worker,
+    });
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+      loadHierarchyPageData: (
+        page: Hierarchy.Page,
+      ) => Promise<Hierarchy.Subtree>;
+    };
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    mutableSource.loadHierarchyPageData = async () => ({
+      nodes: {
+        "0-0-0-0": createNode(100),
+      },
+      pages: {},
+    });
+
+    const abortController = new AbortController();
+    const firstResult = source.loadNodePointSamples({
+      nodeKey: "0-0-0-0",
+      maxPointCount: 5,
+      signal: abortController.signal,
+    });
+    await waitForWorkerLoadRequestCount(worker, 1);
+    const firstRejects = expect(firstResult).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    let secondResult: Promise<CopcNodePointSampleResult> | undefined;
+
+    abortController.abort();
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        secondResult = source.loadNodePointSamples({
+          nodeKey: "0-0-0-0",
+          maxPointCount: 5,
+        });
+        resolve();
+      });
+    });
+    await firstRejects;
+
+    if (!secondResult) {
+      throw new Error("Expected a replacement same-node load.");
+    }
+
+    await waitForWorkerLoadRequestCount(worker, 2);
+    const replacementRequest = worker.requests.filter(isLoadRequest)[1];
+
+    if (!replacementRequest) {
+      throw new Error("Expected a replacement worker load request.");
+    }
+
+    worker.emit(createWorkerSuccessResponse(replacementRequest));
+    await expect(secondResult).resolves.toMatchObject({
+      nodeKey: "0-0-0-0",
+      sampledPointCount: 1,
+    });
+    expect(worker.terminateCount).toBe(1);
+  });
+
   it("does not send queued worker point sample requests after abort", async () => {
     const worker = new FakePointSampleWorker();
     const abortController = new AbortController();
@@ -1295,6 +1737,349 @@ describe("CopcSource point sample cache", () => {
         cacheMissCount: 1,
       }),
     );
+  });
+
+  it("aborts a hierarchy page waiter without canceling or merging the shared page load", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const childPage = createDeferred<Hierarchy.Subtree>();
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+    };
+    let childPageLoadCount = 0;
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    const pageSpy = vi
+      .spyOn(Copc, "loadHierarchyPage")
+      .mockImplementation(async (_getter, page) => {
+        if (page.pageOffset === 10) {
+          return {
+            nodes: {
+              "0-0-0-0": createNode(100),
+            },
+            pages: {
+              "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+            },
+          };
+        }
+
+        childPageLoadCount += 1;
+        return childPage.promise;
+      });
+
+    try {
+      await source.loadHierarchySummary();
+      const abortController = new AbortController();
+      const abortedLoad = source.loadHierarchyPage("1-0-0-0", {
+        signal: abortController.signal,
+      });
+      await waitForValue(() => childPageLoadCount, 1);
+
+      abortController.abort();
+
+      await expect(abortedLoad).rejects.toMatchObject({ name: "AbortError" });
+      const afterAbort = await source.loadHierarchySummary();
+
+      expect(afterAbort.nodes.map(({ key }) => key)).toEqual(["0-0-0-0"]);
+      expect(afterAbort.pendingPages.map(({ key }) => key)).toEqual([
+        "1-0-0-0",
+      ]);
+
+      childPage.resolve({
+        nodes: {
+          "1-0-0-0": createNode(50),
+        },
+        pages: {},
+      });
+      await childPage.promise;
+      await Promise.resolve();
+
+      const beforeRetry = await source.loadHierarchySummary();
+
+      expect(beforeRetry.nodes.map(({ key }) => key)).toEqual(["0-0-0-0"]);
+      expect(beforeRetry.pendingPages.map(({ key }) => key)).toEqual([
+        "1-0-0-0",
+      ]);
+
+      const retried = await source.loadHierarchyPage("1-0-0-0");
+
+      expect(childPageLoadCount).toBe(1);
+      expect(retried.nodes.map(({ key }) => key)).toEqual([
+        "0-0-0-0",
+        "1-0-0-0",
+      ]);
+    } finally {
+      pageSpy.mockRestore();
+    }
+  });
+
+  it("merges concurrent hierarchy page waiters once and preserves eviction ancestry", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz", {
+      maxCachedHierarchyPages: 3,
+    });
+    const deepPage = createDeferred<Hierarchy.Subtree>();
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+    };
+    let deepPageLoadCount = 0;
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    const pageSpy = vi
+      .spyOn(Copc, "loadHierarchyPage")
+      .mockImplementation(async (_getter, page) => {
+        if (page.pageOffset === 10) {
+          return {
+            nodes: {
+              "0-0-0-0": createNode(100),
+            },
+            pages: {
+              "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+              "1-1-0-0": { pageOffset: 90, pageLength: 10 },
+            },
+          };
+        }
+
+        if (page.pageOffset === 30) {
+          return {
+            nodes: {
+              "1-0-0-0": createNode(50),
+            },
+            pages: {
+              "2-0-0-0": { pageOffset: 70, pageLength: 80 },
+            },
+          };
+        }
+
+        if (page.pageOffset === 70) {
+          deepPageLoadCount += 1;
+          return deepPage.promise;
+        }
+
+        return {
+          nodes: {
+            "1-1-0-0": createNode(40),
+          },
+          pages: {},
+        };
+      });
+
+    try {
+      await source.loadHierarchySummary();
+      await source.loadHierarchyPage("1-0-0-0");
+      const firstLoad = source.loadHierarchyPage("2-0-0-0");
+      const secondLoad = source.loadHierarchyPage("2-0-0-0");
+      await waitForValue(() => deepPageLoadCount, 1);
+
+      deepPage.resolve({
+        nodes: {
+          "2-0-0-0": createNode(25),
+        },
+        pages: {},
+      });
+      await Promise.all([firstLoad, secondLoad]);
+
+      expect(deepPageLoadCount).toBe(1);
+
+      const hierarchy = await source.loadHierarchyPage("1-1-0-0");
+
+      expect(hierarchy.nodes.map(({ key }) => key)).toEqual([
+        "0-0-0-0",
+        "1-0-0-0",
+        "1-1-0-0",
+      ]);
+      expect(hierarchy.pendingPages.map(({ key }) => key)).toEqual([
+        "2-0-0-0",
+      ]);
+      expect(hierarchy.pendingPages[0]?.sourceHierarchyPageId).toBe("30:40");
+      expect(source.getHierarchyCacheStats()).toEqual(
+        expect.objectContaining({
+          loadedPageCount: 3,
+          cacheEvictionCount: 1,
+          isOverLimit: false,
+        }),
+      );
+    } finally {
+      pageSpy.mockRestore();
+    }
+  });
+
+  it("keeps a shared hierarchy merge alive when only one waiter aborts", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const childPage = createDeferred<Hierarchy.Subtree>();
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+    };
+    let childPageLoadCount = 0;
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    const pageSpy = vi
+      .spyOn(Copc, "loadHierarchyPage")
+      .mockImplementation(async (_getter, page) => {
+        if (page.pageOffset === 10) {
+          return {
+            nodes: {
+              "0-0-0-0": createNode(100),
+            },
+            pages: {
+              "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+            },
+          };
+        }
+
+        childPageLoadCount += 1;
+        return childPage.promise;
+      });
+
+    try {
+      await source.loadHierarchySummary();
+      const abortController = new AbortController();
+      const abortedLoad = source.loadHierarchyPage("1-0-0-0", {
+        signal: abortController.signal,
+      });
+      const activeLoad = source.loadHierarchyPage("1-0-0-0");
+      await waitForValue(() => childPageLoadCount, 1);
+
+      abortController.abort();
+      await expect(abortedLoad).rejects.toMatchObject({ name: "AbortError" });
+
+      childPage.resolve({
+        nodes: {
+          "1-0-0-0": createNode(50),
+        },
+        pages: {
+          "2-0-0-0": { pageOffset: 70, pageLength: 80 },
+        },
+      });
+
+      const hierarchy = await activeLoad;
+
+      expect(childPageLoadCount).toBe(1);
+      expect(hierarchy.nodes.map(({ key }) => key)).toEqual([
+        "0-0-0-0",
+        "1-0-0-0",
+      ]);
+      expect(hierarchy.pendingPages).toEqual([
+        expect.objectContaining({
+          key: "2-0-0-0",
+          sourceHierarchyPageId: "30:40",
+        }),
+      ]);
+    } finally {
+      pageSpy.mockRestore();
+    }
+  });
+
+  it("retries metadata and root hierarchy loads after a rejected shared promise", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const copc = {
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData;
+    const createSpy = vi
+      .spyOn(Copc, "create")
+      .mockRejectedValueOnce(new Error("metadata failed"))
+      .mockResolvedValueOnce(copc);
+    const pageSpy = vi.spyOn(Copc, "loadHierarchyPage").mockResolvedValue({
+      nodes: {
+        "0-0-0-0": createNode(100),
+      },
+      pages: {},
+    });
+
+    try {
+      await expect(source.loadHierarchySummary()).rejects.toThrow(
+        "metadata failed",
+      );
+      await expect(source.loadHierarchySummary()).resolves.toMatchObject({
+        loadedPageCount: 1,
+        pendingPageCount: 0,
+      });
+      expect(createSpy).toHaveBeenCalledTimes(2);
+      expect(pageSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      createSpy.mockRestore();
+      pageSpy.mockRestore();
+    }
+  });
+
+  it("retries a rejected hierarchy page without losing the pending page", async () => {
+    const source = new CopcSource("https://example.com/sample.copc.laz");
+    const mutableSource = source as unknown as {
+      copcPromise: Promise<CopcData>;
+    };
+    let childPageAttemptCount = 0;
+
+    mutableSource.copcPromise = Promise.resolve({
+      info: {
+        cube: [0, 0, 0, 8, 8, 8],
+        rootHierarchyPage: { pageOffset: 10, pageLength: 20 },
+      },
+    } as CopcData);
+    const pageSpy = vi
+      .spyOn(Copc, "loadHierarchyPage")
+      .mockImplementation(async (_getter, page) => {
+        if (page.pageOffset === 10) {
+          return {
+            nodes: {
+              "0-0-0-0": createNode(100),
+            },
+            pages: {
+              "1-0-0-0": { pageOffset: 30, pageLength: 40 },
+            },
+          };
+        }
+
+        childPageAttemptCount += 1;
+
+        if (childPageAttemptCount === 1) {
+          throw new Error("child page failed");
+        }
+
+        return {
+          nodes: {
+            "1-0-0-0": createNode(50),
+          },
+          pages: {},
+        };
+      });
+
+    try {
+      await source.loadHierarchySummary();
+      await expect(source.loadHierarchyPage("1-0-0-0")).rejects.toThrow(
+        "child page failed",
+      );
+      const afterFailure = await source.loadHierarchySummary();
+
+      expect(afterFailure.nodes.map(({ key }) => key)).toEqual(["0-0-0-0"]);
+      expect(afterFailure.pendingPages.map(({ key }) => key)).toEqual([
+        "1-0-0-0",
+      ]);
+
+      await expect(source.loadHierarchyPage("1-0-0-0")).resolves.toMatchObject({
+        loadedPageCount: 2,
+        pendingPageCount: 0,
+      });
+      expect(childPageAttemptCount).toBe(2);
+      expect(pageSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      pageSpy.mockRestore();
+    }
   });
 
   it("loads and merges additional hierarchy pages on demand", async () => {
@@ -1667,6 +2452,7 @@ function isLoadRequest(
 
 function createWorkerSuccessResponse(
   request: CopcPointSampleWorkerLoadRequest,
+  cache?: CopcDecodedPointDataCacheSnapshot,
 ): CopcPointSampleWorkerResponse {
   return {
     id: request.id,
@@ -1677,6 +2463,7 @@ function createWorkerSuccessResponse(
       sampledPointCount: 1,
       points: [{ x: request.id, y: request.id, z: request.id }],
     },
+    cache,
   };
 }
 
@@ -1693,6 +2480,23 @@ function createWorkerSuccessResponseWithPointCount(
       sampledPointCount: pointCount,
       points: createSamplePoints(pointCount),
     },
+  };
+}
+
+function createDecodedPointDataCacheSnapshot(
+  overrides: Partial<CopcDecodedPointDataCacheSnapshot> = {},
+): CopcDecodedPointDataCacheSnapshot {
+  return {
+    retainedViewCount: 0,
+    retainedBytes: 0,
+    peakRetainedBytes: 0,
+    cacheHitCount: 0,
+    cacheMissCount: 0,
+    cacheEvictionCount: 0,
+    oversizedEntrySkipCount: 0,
+    requestedNodeRetained: false,
+    evictedNodeKeys: [],
+    ...overrides,
   };
 }
 
@@ -1806,4 +2610,31 @@ async function waitForWorkerPoolLoadRequestCount(
   throw new Error(
     `Timed out waiting for ${requestCount} worker pool load requests.`,
   );
+}
+
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve: (value: T | PromiseLike<T>) => void = () => undefined;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
+}
+
+async function waitForValue(
+  readValue: () => number,
+  expectedValue: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (readValue() === expectedValue) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  throw new Error(`Timed out waiting for value ${expectedValue}.`);
 }

@@ -4,6 +4,12 @@ import type { CopcTargetPoint } from "./suggestHierarchyNode";
 
 export interface SelectHierarchyNodesForCameraOptions {
   readonly target: CopcTargetPoint;
+  /**
+   * Camera-eye position in COPC coordinates used only for screen-space size
+   * estimates. `target` remains the view-center used to prioritize nodes.
+   * Defaults to `target` for backwards compatibility.
+   */
+  readonly cameraPosition?: CopcTargetPoint;
   readonly viewDirection?: CopcTargetVector;
   readonly viewportHeightPixels: number;
   readonly selectionMode?: CopcHierarchyNodeSelectionMode;
@@ -76,7 +82,10 @@ export function selectHierarchyNodesForCamera(
     return undefined;
   }
 
-  assertFiniteTarget(options.target);
+  assertFiniteTarget(options.target, "target");
+  if (options.cameraPosition !== undefined) {
+    assertFiniteTarget(options.cameraPosition, "cameraPosition");
+  }
   assertFiniteViewDirection(options.viewDirection);
 
   const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
@@ -94,6 +103,7 @@ export function selectHierarchyNodesForCamera(
     options.viewDirection === undefined
       ? undefined
       : options.maxViewAngleDegrees ?? DEFAULT_MAX_VIEW_ANGLE_DEGREES;
+  const screenSpaceOrigin = options.cameraPosition ?? options.target;
 
   if (!Number.isSafeInteger(maxNodes) || maxNodes <= 0) {
     throw new Error("maxNodes must be a positive integer.");
@@ -193,13 +203,13 @@ export function selectHierarchyNodesForCamera(
   const rootBounds = boundsForHierarchy(nodes);
   const estimatedRootScreenPixels = estimateBoundsScreenPixels(
     rootBounds,
-    options.target,
+    screenSpaceOrigin,
     viewportHeightPixels,
   );
   const depthEstimates = estimateAvailableDepthsScreenSize(
     candidateNodes.nodes,
     availableDepths,
-    options.target,
+    screenSpaceOrigin,
     viewportHeightPixels,
     options.spacing,
   );
@@ -273,13 +283,13 @@ export function selectHierarchyNodesForCamera(
   };
 }
 
-function assertFiniteTarget(target: CopcTargetPoint): void {
+function assertFiniteTarget(target: CopcTargetPoint, label: string): void {
   if (
     !Number.isFinite(target.x) ||
     !Number.isFinite(target.y) ||
     !Number.isFinite(target.z)
   ) {
-    throw new Error("target must contain finite x, y, and z values.");
+    throw new Error(`${label} must contain finite x, y, and z values.`);
   }
 }
 
@@ -320,7 +330,7 @@ function sortedAvailableDepths(
 function estimateAvailableDepthsScreenSize(
   nodes: readonly CopcHierarchyNodeSummary[],
   availableDepths: readonly number[],
-  target: CopcTargetPoint,
+  screenSpaceOrigin: CopcTargetPoint,
   viewportHeightPixels: number,
   spacing: number | undefined,
 ): CopcHierarchyNodeDepthEstimate[] {
@@ -329,7 +339,7 @@ function estimateAvailableDepthsScreenSize(
     const nearestNode = nodesAtDepth
       .map((node) => ({
         node,
-        distanceToBounds: distanceToBounds3d(target, node.bounds),
+        distanceToBounds: distanceToBounds3d(screenSpaceOrigin, node.bounds),
       }))
       .sort(
         (left, right) =>
@@ -350,7 +360,7 @@ function estimateAvailableDepthsScreenSize(
         : estimateLinearScreenPixels(
             pointSpacing,
             nearestNode.bounds,
-            target,
+            screenSpaceOrigin,
             viewportHeightPixels,
           );
 
@@ -360,7 +370,7 @@ function estimateAvailableDepthsScreenSize(
       nearestNodeKey: nearestNode.key,
       estimatedNodeScreenPixels: estimateBoundsScreenPixels(
         nearestNode.bounds,
-        target,
+        screenSpaceOrigin,
         viewportHeightPixels,
       ),
       pointSpacing,
@@ -485,7 +495,11 @@ function filterNodesForView(
   },
 ): ViewFilteredNodeSelection {
   const depthFilteredNodes = nodes.filter(
-    (node) => node.depth >= minDepth && node.depth <= maxDepth,
+    (node) =>
+      node.pointCount > 0 &&
+      node.pointDataLength > 0 &&
+      node.depth >= minDepth &&
+      node.depth <= maxDepth,
   );
 
   if (

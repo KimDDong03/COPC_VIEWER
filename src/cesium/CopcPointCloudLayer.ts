@@ -14,6 +14,12 @@ import type {
   CopcHierarchySummary,
 } from "../core/copc/CopcHierarchySummary";
 import type { CopcInspection } from "../core/copc/CopcInspection";
+import {
+  DEFAULT_MAX_CONCURRENT_COPC_POINT_GEOMETRY_WORKER_REQUESTS,
+  DEFAULT_MAX_CONCURRENT_POINT_SAMPLE_WORKER_REQUESTS,
+  mergeDecodedPointDataCacheStats,
+  type CopcDecodedPointDataCacheStats,
+} from "../core/copc/CopcDecodedPointDataCache";
 import type {
   CopcMultiNodePointSampleResult,
   CopcNodePointSampleResult,
@@ -40,6 +46,14 @@ import {
   type CopcTargetPoint,
 } from "../core/copc/suggestHierarchyNode";
 import type { PointSample } from "../core/PointSample";
+import {
+  consumeSharedAbortableTask,
+  createFulfilledSharedAbortableTask,
+  createSharedAbortableTask,
+  isReusableSharedAbortableTask,
+  type SharedAbortableTask,
+} from "../core/SharedAbortableTask";
+import { calculateCameraHeightAboveCopcBoundsMeters } from "./calculateCameraHeightAboveCopcBounds";
 import { CesiumBoundsRenderer } from "./CesiumBoundsRenderer";
 import { CesiumPrimitivePointRenderer } from "./CesiumPrimitivePointRenderer";
 import {
@@ -73,9 +87,19 @@ import {
   createCesiumPointGeometryTransform,
   createNodePointSampleBatchKey,
   createPointGeometryBatchFromCopc,
+  estimatePointGeometryBatchByteSize,
+  getPointGeometryBatchBackingBuffers,
   getPointDataSamples,
   type CesiumPointGeometryTransform,
 } from "./pointGeometryBatch";
+import {
+  createProgressPointGeometryResults,
+  limitNodeSampleProgressEntries,
+  limitPointGeometryBatchResult,
+  limitPointGeometryProgressEntries,
+  markPointGeometryBatchResultCacheHit,
+} from "./progressivePointResultBudget";
+import { createCopcNodeAncestorKeys } from "./CopcCameraStreamNodePlan";
 
 export interface CopcPointCloudLayerOptions {
   readonly url?: string;
@@ -87,8 +111,10 @@ export interface CopcPointCloudLayerOptions {
   readonly maxCachedPointSampleBytes?: number;
   readonly maxCachedPointGeometryBatches?: number;
   readonly maxCachedTransformedPointGeometryBatches?: number;
+  readonly maxCachedPointGeometryBytes?: number;
   readonly maxDecodedPointDataViewsPerWorker?: number;
   readonly maxDecodedPointDataViewBytesPerWorker?: number;
+  readonly maxDecodedPointDataViewBytesAcrossWorkers?: number;
   readonly maxConcurrentPointSampleWorkerRequests?: number;
   readonly maxConcurrentPointGeometryWorkerRequests?: number;
   readonly activePointGeometryWorkerCancellation?: CesiumCopcPointGeometryWorkerCancellationMode;
@@ -163,6 +189,17 @@ export interface CopcPointCloudLayerPointGeometryCacheStats {
   readonly transformedBatchCacheHitCount: number;
   readonly transformedBatchCacheMissCount: number;
   readonly transformedBatchCacheEvictionCount: number;
+  readonly cachedPointGeometryBytes: number;
+  readonly maxCachedPointGeometryBytes: number | undefined;
+  readonly peakCachedPointGeometryBytes: number;
+  readonly pointGeometryCacheByteEvictionCount: number;
+  readonly pointGeometryCacheEvictedBytes: number;
+  readonly oversizedPointGeometryBatchCacheSkipCount: number;
+}
+
+export interface CopcPointCloudLayerDecodedPointDataCacheStats extends CopcDecodedPointDataCacheStats {
+  readonly pointSample: CopcDecodedPointDataCacheStats;
+  readonly integratedPointGeometry: CopcDecodedPointDataCacheStats;
 }
 
 export interface CopcPointCloudLayerStreamingCacheResetResult {
@@ -218,42 +255,38 @@ export interface CopcPointCloudLayerPrefetchNodePointDataResult {
   readonly skippedNodeCount: number;
 }
 
-export interface CopcPointCloudLayerPrefetchNodePointGeometryOptions
-  extends CopcPointCloudLayerPrefetchNodePointDataOptions {
+export interface CopcPointCloudLayerPrefetchNodePointGeometryOptions extends CopcPointCloudLayerPrefetchNodePointDataOptions {
   readonly maxPointCountPerNode?: number;
 }
 
-export interface CopcPointCloudLayerPrefetchNodePointGeometryResult
-  extends CopcPointCloudLayerPrefetchNodePointDataResult {}
+export interface CopcPointCloudLayerPrefetchNodePointGeometryResult extends CopcPointCloudLayerPrefetchNodePointDataResult {}
 
-export interface CopcPointCloudLayerProgressivePrepareNodesOptions
-  extends CopcPointCloudLayerPrepareNodesOptions {
+export interface CopcPointCloudLayerProgressivePrepareNodesOptions extends CopcPointCloudLayerPrepareNodesOptions {
   readonly maxActiveProgressiveNodeRequests?: number;
   readonly progressBatchNodeCount?: number;
-  readonly onProgress?: (
-    result: CopcPointCloudLayerPrepareNodesResult,
-  ) => void;
+  readonly onProgress?: (result: CopcPointCloudLayerPrepareNodesResult) => void;
 }
 
 export type CopcPointCloudLayerProgressiveRenderMode =
-  | "incremental"
-  | "final-only";
+  "incremental" | "final-only";
 
-export type CopcPointCloudLayerPostStopProgressMode =
-  | "render"
-  | "load-only";
+export type CopcPointCloudLayerPostStopProgressMode = "render" | "load-only";
 
-export type CopcPointCloudLayerPostStopLoadingMode =
-  | "await"
-  | "background";
+export type CopcPointCloudLayerPostStopLoadingMode = "await" | "background";
 
 export type CopcPointCloudLayerProgressiveNodeOrder =
-  | "selection"
-  | "lightweight-first"
-  | "source-points-first";
+  "selection" | "lightweight-first" | "source-points-first";
 
-export interface CopcPointCloudLayerProgressiveRenderNodesOptions
-  extends CopcPointCloudLayerRenderNodesOptions {
+/**
+ * Describes an intermediate progressive frame after point-budget limiting but
+ * before it mutates the shared renderer.
+ */
+export interface CopcPointCloudLayerProgressiveRenderCandidate {
+  readonly nodeKeys: readonly string[];
+  readonly sampledPointCount: number;
+}
+
+export interface CopcPointCloudLayerProgressiveRenderNodesOptions extends CopcPointCloudLayerRenderNodesOptions {
   readonly backgroundNodeResults?: readonly CopcNodePointSampleResult[];
   readonly continueLoadingAfterStop?: boolean;
   readonly initialNodeResults?: readonly CopcNodePointSampleResult[];
@@ -263,19 +296,25 @@ export interface CopcPointCloudLayerProgressiveRenderNodesOptions
   readonly postStopProgressMode?: CopcPointCloudLayerPostStopProgressMode;
   readonly progressBatchNodeCount?: number;
   readonly progressRenderMode?: CopcPointCloudLayerProgressiveRenderMode;
-  readonly onProgress?: (
-    result: CopcPointCloudLayerNodesRenderResult,
-  ) => void;
+  readonly skipInitialProgressRender?: boolean;
+  /**
+   * Returning false keeps the currently committed renderer frame and skips
+   * this intermediate progress notification. The final render is never
+   * offered to this callback and is always committed.
+   */
+  readonly shouldRenderProgress?: (
+    candidate: CopcPointCloudLayerProgressiveRenderCandidate,
+  ) => boolean;
+  readonly onProgress?: (result: CopcPointCloudLayerNodesRenderResult) => void;
   readonly shouldStopAfterProgress?: (
     result: CopcPointCloudLayerNodesRenderResult,
   ) => boolean;
 }
 
-export interface CopcPointCloudLayerCameraSelectionOptions
-  extends Omit<
-    SelectHierarchyNodesForCameraOptions,
-    "target" | "viewDirection" | "viewportHeightPixels"
-  > {
+export interface CopcPointCloudLayerCameraSelectionOptions extends Omit<
+  SelectHierarchyNodesForCameraOptions,
+  "target" | "viewDirection" | "viewportHeightPixels"
+> {
   readonly camera: Camera;
   readonly viewportWidthPixels?: number;
   readonly viewportHeightPixels?: number;
@@ -292,8 +331,9 @@ export interface CopcPointCloudLayerHierarchyExpansionOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface CopcPointCloudLayerAutomaticRenderOptions
-  extends CopcPointCloudLayerCameraSelectionOptions {
+export interface CopcPointCloudLayerAutomaticRenderOptions extends CopcPointCloudLayerCameraSelectionOptions {
+  /** Include every available additive COPC ancestor for selected camera nodes. */
+  readonly includeAncestorNodes?: boolean;
   readonly maxPointCountPerNode?: number;
   readonly maxRenderedPointCount?: number;
   readonly includePointsInResult?: boolean;
@@ -305,8 +345,7 @@ export interface CopcPointCloudLayerAutomaticRenderOptions
   readonly signal?: AbortSignal;
 }
 
-export interface CopcPointCloudLayerProgressiveAutomaticRenderOptions
-  extends CopcPointCloudLayerAutomaticRenderOptions {
+export interface CopcPointCloudLayerProgressiveAutomaticRenderOptions extends CopcPointCloudLayerAutomaticRenderOptions {
   readonly backgroundNodeResults?: readonly CopcNodePointSampleResult[];
   readonly continueLoadingAfterStop?: boolean;
   readonly initialNodeResults?: readonly CopcNodePointSampleResult[];
@@ -317,6 +356,7 @@ export interface CopcPointCloudLayerProgressiveAutomaticRenderOptions
   readonly postStopProgressMode?: CopcPointCloudLayerPostStopProgressMode;
   readonly progressBatchNodeCount?: number;
   readonly progressRenderMode?: CopcPointCloudLayerProgressiveRenderMode;
+  readonly skipInitialProgressRender?: boolean;
   readonly onProgress?: (
     result: CopcPointCloudLayerAutomaticRenderResult,
   ) => void;
@@ -351,18 +391,22 @@ export interface CopcPointCloudLayerPrepareNodesResult {
   readonly pointSamples: CopcMultiNodePointSampleResult;
 }
 
-export interface CopcPointCloudLayerAutomaticRenderResult
-  extends CopcPointCloudLayerNodesRenderResult {
+export interface CopcPointCloudLayerAutomaticRenderResult extends CopcPointCloudLayerNodesRenderResult {
   readonly cameraSelection: CopcHierarchyNodeCameraSelection;
   readonly hierarchyExpansion:
-    | CopcPointCloudLayerHierarchyExpansionResult
-    | undefined;
+    CopcPointCloudLayerHierarchyExpansionResult | undefined;
 }
 
 export interface CopcPointCloudLayerHierarchyExpansionResult {
   readonly hierarchy: CopcHierarchySummary;
   readonly pageSelection: CopcHierarchyPageTargetSelection;
   readonly loadedPageKeys: readonly string[];
+  /** Pending hierarchy pages covering the camera target after this bounded expansion. */
+  readonly pendingRelevantHierarchyPageCount: number;
+  /** Stable residual-page identity used to stop cache-eviction/no-progress cycles. */
+  readonly pendingRelevantHierarchyPageSignature: string | undefined;
+  /** Whether the current camera target has no more hierarchy pages through the requested depth. */
+  readonly isHierarchyCompleteForView: boolean;
 }
 
 interface LoadedNodePointGeometryBatchCacheEntry {
@@ -371,7 +415,15 @@ interface LoadedNodePointGeometryBatchCacheEntry {
   readonly transformKey: string;
   readonly promise: Promise<CopcNodePointGeometryBatchResult>;
   state: "pending" | "resolved";
+  lastAccessSequence: number;
 }
+
+interface PointGeometryBufferAllocation {
+  readonly byteSize: number;
+  referenceCount: number;
+}
+
+type PointGeometryCacheKind = "loaded" | "transformed";
 
 const DEFAULT_MAX_CACHED_POINT_GEOMETRY_BATCHES = 96;
 const DEFAULT_MAX_CACHED_TRANSFORMED_POINT_GEOMETRY_BATCHES = 96;
@@ -398,7 +450,7 @@ export class CopcPointCloudLayer {
   >();
   private readonly transformedNodeResultGeometryBatches = new Map<
     string,
-    Promise<PointGeometryBatch>
+    SharedAbortableTask<PointGeometryBatch>
   >();
   private readonly loadedNodePointGeometryBatches = new Map<
     string,
@@ -406,6 +458,31 @@ export class CopcPointCloudLayer {
   >();
   private readonly maxCachedPointGeometryBatches: number;
   private readonly maxCachedTransformedPointGeometryBatches: number;
+  private readonly maxCachedPointGeometryBytes: number | undefined;
+  private readonly maxDecodedPointDataViewBytesAcrossWorkers:
+    number | undefined;
+  private readonly loadedPointGeometryCacheBatches = new Map<
+    string,
+    PointGeometryBatch
+  >();
+  private readonly transformedPointGeometryCacheBatches = new Map<
+    string,
+    PointGeometryBatch
+  >();
+  private readonly pointGeometryBufferAllocations = new Map<
+    ArrayBufferLike,
+    PointGeometryBufferAllocation
+  >();
+  private readonly transformedPointGeometryCacheAccessSequences = new Map<
+    string,
+    number
+  >();
+  private pointGeometryCacheAccessSequence = 0;
+  private cachedPointGeometryBytes = 0;
+  private peakCachedPointGeometryBytes = 0;
+  private pointGeometryCacheByteEvictionCount = 0;
+  private pointGeometryCacheEvictedBytes = 0;
+  private oversizedPointGeometryBatchCacheSkipCount = 0;
   private loadedBatchCacheHitCount = 0;
   private loadedBatchCacheMissCount = 0;
   private loadedBatchCacheReuseCount = 0;
@@ -416,6 +493,7 @@ export class CopcPointCloudLayer {
   private loadPromise: Promise<void> | undefined;
   private loadedInspection: CopcInspection | undefined;
   private loadedHierarchy: CopcHierarchySummary | undefined;
+  private rendererRevision = 0;
   private destroyed = false;
 
   constructor(scene: Scene, options: CopcPointCloudLayerOptions) {
@@ -426,6 +504,20 @@ export class CopcPointCloudLayer {
       throw new Error("CopcPointCloudLayer requires a COPC url or source.");
     }
 
+    this.maxDecodedPointDataViewBytesAcrossWorkers =
+      readOptionalPositiveIntegerOption(
+        "maxDecodedPointDataViewBytesAcrossWorkers",
+        options.maxDecodedPointDataViewBytesAcrossWorkers,
+      );
+    const decodedPointDataWorkerBudgets = allocateDecodedPointDataWorkerBudgets(
+      {
+        maxBytesAcrossWorkers: this.maxDecodedPointDataViewBytesAcrossWorkers,
+        pointSampleWorkerSlotCount: getPointSampleWorkerSlotCount(options),
+        integratedPointGeometryWorkerSlotCount:
+          getIntegratedPointGeometryWorkerSlotCount(options),
+      },
+    );
+
     this.source = new CopcSource(sourceInput, {
       maxCachedHierarchyPages: options.maxCachedHierarchyPages,
       maxCachedHierarchyPageBytes: options.maxCachedHierarchyPageBytes,
@@ -435,6 +527,8 @@ export class CopcPointCloudLayer {
         options.maxDecodedPointDataViewsPerWorker,
       maxDecodedPointDataViewBytesPerWorker:
         options.maxDecodedPointDataViewBytesPerWorker,
+      maxDecodedPointDataViewBytesAcrossWorkers:
+        decodedPointDataWorkerBudgets.pointSample,
       maxConcurrentPointSampleWorkerRequests:
         options.maxConcurrentPointSampleWorkerRequests,
       pointSampleLoading: options.pointSampleLoading,
@@ -454,14 +548,15 @@ export class CopcPointCloudLayer {
       pointGeometryLoading: options.pointGeometryLoading,
       maxConcurrentPointGeometryWorkerRequests:
         options.maxConcurrentPointGeometryWorkerRequests,
-      activeRequestCancellation:
-        options.activePointGeometryWorkerCancellation,
+      activeRequestCancellation: options.activePointGeometryWorkerCancellation,
       decodedNodeWorkerFallbackDelayMilliseconds:
         options.decodedNodeWorkerFallbackDelayMilliseconds,
       maxDecodedPointDataViewsPerWorker:
         options.maxDecodedPointDataViewsPerWorker,
       maxDecodedPointDataViewBytesPerWorker:
         options.maxDecodedPointDataViewBytesPerWorker,
+      maxDecodedPointDataViewBytesAcrossWorkers:
+        decodedPointDataWorkerBudgets.integratedPointGeometry,
       createCopcPointGeometryWorker: options.createCopcPointGeometryWorker,
     });
     this.boundsRenderer = new CesiumBoundsRenderer(scene);
@@ -480,6 +575,10 @@ export class CopcPointCloudLayer {
       options.maxCachedTransformedPointGeometryBatches,
       DEFAULT_MAX_CACHED_TRANSFORMED_POINT_GEOMETRY_BATCHES,
     );
+    this.maxCachedPointGeometryBytes = readOptionalPositiveIntegerOption(
+      "maxCachedPointGeometryBytes",
+      options.maxCachedPointGeometryBytes,
+    );
   }
 
   get inspection(): CopcInspection | undefined {
@@ -494,20 +593,46 @@ export class CopcPointCloudLayer {
     return this.coordinateTransformStatus;
   }
 
+  getCameraHeightAbovePointCloudMeters(
+    cameraHeightMeters: number,
+  ): number | undefined {
+    this.assertNotDestroyed();
+
+    if (!this.loadedInspection) {
+      return undefined;
+    }
+
+    return calculateCameraHeightAboveCopcBoundsMeters(
+      cameraHeightMeters,
+      this.loadedInspection.bounds,
+      this.getCoordinateTransforms(this.loadedInspection).toCesium,
+    );
+  }
+
   async load(): Promise<CopcPointCloudLayerLoadResult> {
     this.assertNotDestroyed();
 
-    this.loadPromise ??= Promise.all([
-      this.source.inspect(),
-      this.source.loadHierarchySummary(),
-    ]).then(([inspection, hierarchy]) => {
-      this.assertNotDestroyed();
-      this.loadedInspection = inspection;
-      this.loadedHierarchy = hierarchy;
-      this.getCoordinateTransformStatus(inspection);
-    });
+    let loadPromise = this.loadPromise;
 
-    await this.loadPromise;
+    if (!loadPromise) {
+      loadPromise = Promise.all([
+        this.source.inspect(),
+        this.source.loadHierarchySummary(),
+      ]).then(([inspection, hierarchy]) => {
+        this.assertNotDestroyed();
+        this.loadedInspection = inspection;
+        this.loadedHierarchy = hierarchy;
+        this.getCoordinateTransformStatus(inspection);
+      });
+      this.loadPromise = loadPromise;
+      void loadPromise.catch(() => {
+        if (this.loadPromise === loadPromise) {
+          this.loadPromise = undefined;
+        }
+      });
+    }
+
+    await loadPromise;
     this.assertNotDestroyed();
 
     return {
@@ -546,42 +671,105 @@ export class CopcPointCloudLayer {
 
     const {
       camera,
+      maxPages: configuredMaxPages,
       signal,
       viewportWidthPixels,
       viewportHeightPixels,
       ...selectionOptions
     } = options;
     throwIfAborted(signal);
-    const { inspection, hierarchy } = await this.load();
+    const maxPages = configuredMaxPages ?? 2;
+    if (!Number.isSafeInteger(maxPages) || maxPages <= 0) {
+      throw new Error("maxPages must be a positive integer.");
+    }
+    const { inspection, hierarchy: initialHierarchy } = await this.load();
     throwIfAborted(signal);
-    const pageSelection = selectHierarchyPagesForTarget(
-      hierarchy.pendingPages,
-      {
-        ...selectionOptions,
-        target: this.cameraViewCenterToCopc(
-          camera,
-          inspection,
-          viewportWidthPixels,
-          viewportHeightPixels,
-        ),
-      },
+    const target = this.cameraViewCenterToCopc(
+      camera,
+      inspection,
+      viewportWidthPixels,
+      viewportHeightPixels,
     );
+    let remainingPageCount = maxPages;
+    let hierarchy = initialHierarchy;
+    const selectedPages: CopcHierarchyPageTargetSelection["pages"][number][] =
+      [];
+    const selectedPageKeys = new Set<string>();
+    const loadedPageKeys: string[] = [];
 
-    if (!pageSelection) {
+    while (remainingPageCount > 0) {
+      const currentViewPendingPages = this.selectCurrentViewHierarchyPages(
+        hierarchy.pendingPages,
+        camera,
+        inspection,
+        target,
+        selectionOptions,
+      );
+      const pageSelection = selectHierarchyPagesForTarget(
+        currentViewPendingPages.filter(
+          (page) => !selectedPageKeys.has(page.key),
+        ),
+        {
+          ...selectionOptions,
+          maxPages: remainingPageCount,
+          target,
+        },
+      );
+
+      if (!pageSelection) {
+        break;
+      }
+
+      for (const page of pageSelection.pages) {
+        selectedPages.push(page);
+        selectedPageKeys.add(page.key);
+      }
+      remainingPageCount -= pageSelection.pages.length;
+
+      const result = await this.source.loadHierarchyPages(
+        pageSelection.pages.map((page) => page.key),
+        { signal },
+      );
+      throwIfAborted(signal);
+      this.assertNotDestroyed();
+      hierarchy = result.hierarchy;
+      this.loadedHierarchy = hierarchy;
+
+      for (const pageKey of result.loadedPageKeys) {
+        if (!loadedPageKeys.includes(pageKey)) {
+          loadedPageKeys.push(pageKey);
+        }
+      }
+
+      if (result.loadedPageKeys.length === 0) {
+        break;
+      }
+    }
+
+    if (selectedPages.length === 0) {
       return undefined;
     }
 
-    const result = await this.source.loadHierarchyPages(
-      pageSelection.pages.map((page) => page.key),
+    const pendingRelevantHierarchyPages = this.selectCurrentViewHierarchyPages(
+      hierarchy.pendingPages,
+      camera,
+      inspection,
+      target,
+      selectionOptions,
     );
-    throwIfAborted(signal);
-    this.assertNotDestroyed();
-    this.loadedHierarchy = result.hierarchy;
 
     return {
-      hierarchy: result.hierarchy,
-      pageSelection,
-      loadedPageKeys: result.loadedPageKeys,
+      hierarchy,
+      pageSelection: {
+        pages: selectedPages,
+        reason: `Selected ${selectedPages.length} camera-target hierarchy pages across newly revealed levels.`,
+      },
+      loadedPageKeys,
+      pendingRelevantHierarchyPageCount: pendingRelevantHierarchyPages.length,
+      pendingRelevantHierarchyPageSignature: createHierarchyPageSignature(
+        pendingRelevantHierarchyPages,
+      ),
+      isHierarchyCompleteForView: pendingRelevantHierarchyPages.length === 0,
     };
   }
 
@@ -679,14 +867,13 @@ export class CopcPointCloudLayer {
           continue;
         }
 
-        const result =
-          this.copcPointGeometryWorkerPool.prefetchNodePointData({
-            source,
-            nodeKey: node.key,
-            node: createSourceHierarchyNode(node),
-            priority: requestPriorities[index],
-            signal: options.signal,
-          });
+        const result = this.copcPointGeometryWorkerPool.prefetchNodePointData({
+          source,
+          nodeKey: node.key,
+          node: createSourceHierarchyNode(node),
+          priority: requestPriorities[index],
+          signal: options.signal,
+        });
 
         if (!result) {
           skippedNodeCount += 1;
@@ -836,11 +1023,11 @@ export class CopcPointCloudLayer {
     const node = findRequiredNode(hierarchy, nodeKey);
     const pointSamples = await this.source.loadNodePointSamples({
       nodeKey,
-      maxPointCount:
-        options.maxPointCount ?? this.defaultMaxPointCountPerNode,
+      maxPointCount: options.maxPointCount ?? this.defaultMaxPointCountPerNode,
       requestPriority: options.requestPriority,
       signal: options.signal,
     });
+    throwIfAborted(options.signal);
     this.assertNotDestroyed();
 
     const { points, renderStats } = this.renderPointSamples(
@@ -881,7 +1068,11 @@ export class CopcPointCloudLayer {
     );
     this.getCoordinateTransforms(inspection);
 
-    if (this.shouldUseIntegratedPointGeometryLoading(options.includePointsInResult)) {
+    if (
+      this.shouldUseIntegratedPointGeometryLoading(
+        options.includePointsInResult,
+      )
+    ) {
       return await this.renderNodesWithIntegratedPointGeometry(
         inspection,
         nodes,
@@ -1064,9 +1255,8 @@ export class CopcPointCloudLayer {
       nodes,
       options.requestPriority,
     );
-    const geometryResults: Array<
-      CopcNodePointGeometryBatchResult | undefined
-    > = new Array(nodes.length);
+    const geometryResults: Array<CopcNodePointGeometryBatchResult | undefined> =
+      new Array(nodes.length);
     const maxActiveProgressiveNodeRequests = readPositiveInteger(
       options.maxActiveProgressiveNodeRequests,
       nodes.length,
@@ -1133,10 +1323,9 @@ export class CopcPointCloudLayer {
       enqueueNextProgressiveNodeRequests();
     }
 
-    return latestResult ?? this.createPrepareNodesResult(
-      inspection,
-      nodes,
-      geometryResults,
+    return (
+      latestResult ??
+      this.createPrepareNodesResult(inspection, nodes, geometryResults)
     );
   }
 
@@ -1160,7 +1349,11 @@ export class CopcPointCloudLayer {
       options.maxPointCountPerNode ?? this.defaultMaxPointCountPerNode,
       options.maxRenderedPointCount,
     );
-    if (this.shouldUseIntegratedPointGeometryLoading(options.includePointsInResult)) {
+    if (
+      this.shouldUseIntegratedPointGeometryLoading(
+        options.includePointsInResult,
+      )
+    ) {
       return await this.renderNodesProgressivelyWithIntegratedPointGeometry(
         inspection,
         nodes,
@@ -1187,10 +1380,9 @@ export class CopcPointCloudLayer {
       options.requestPriority,
       options.nodeRequestOrder,
     );
-    const normalizedBackgroundNodeResults =
-      uniqueOptionalNodeSampleResults(
-        options.backgroundNodeResults ?? [],
-      ).filter((nodeResult) => !normalizedNodeKeys.includes(nodeResult.nodeKey));
+    const normalizedBackgroundNodeResults = uniqueOptionalNodeSampleResults(
+      options.backgroundNodeResults ?? [],
+    ).filter((nodeResult) => !normalizedNodeKeys.includes(nodeResult.nodeKey));
     const backgroundNodes = normalizedBackgroundNodeResults.map((nodeResult) =>
       findRequiredNode(hierarchy, nodeResult.nodeKey),
     );
@@ -1198,21 +1390,26 @@ export class CopcPointCloudLayer {
       options.initialNodeResults?.map((result) => [result.nodeKey, result]) ??
         [],
     );
-    const nodeResults: Array<CopcNodePointSampleResult | undefined> =
-      new Array(normalizedNodeKeys.length);
+    const nodeResults: Array<CopcNodePointSampleResult | undefined> = new Array(
+      normalizedNodeKeys.length,
+    );
     normalizedNodeKeys.forEach((nodeKey, index) => {
       nodeResults[index] = initialNodeResultByKey.get(nodeKey);
     });
     const progressiveAbort = createLinkedAbortController(options.signal);
-    let pendingEntries: Array<ProgressivePendingEntry<CopcNodePointSampleResult>> = [];
+    let pendingEntries: Array<
+      ProgressivePendingEntry<CopcNodePointSampleResult>
+    > = [];
     let completedSinceLastProgress = 0;
-    let latestResult:
-      | CopcPointCloudLayerNodesRenderResult
-      | undefined;
+    let latestResult: CopcPointCloudLayerNodesRenderResult | undefined;
     let stopProgressReached = false;
     let cleanupDeferredToBackground = false;
 
     try {
+      const hasMissingInitialNodeResults = normalizedNodeKeys.some(
+        (_nodeKey, index) =>
+          !isNodeSampleResultFresh(nodeResults[index], maxPointCountPerNode),
+      );
       const continuePendingEntriesInBackground = (): void => {
         if (pendingEntries.length === 0) {
           return;
@@ -1241,34 +1438,56 @@ export class CopcPointCloudLayer {
           return false;
         }
 
-        abortPendingProgressiveEntries(progressiveAbort.controller, pendingEntries);
+        abortPendingProgressiveEntries(
+          progressiveAbort.controller,
+          pendingEntries,
+        );
         return true;
       };
 
       if (
+        !options.skipInitialProgressRender &&
         shouldRenderIncrementally &&
         (nodeResults.some(isDefined) ||
           normalizedBackgroundNodeResults.length > 0)
       ) {
         const completedNodeResults = nodeResults.filter(isDefined);
-        latestResult = await this.renderLoadedNodeSampleResults(
+        const initialBackgroundNodes = hasMissingInitialNodeResults
+          ? backgroundNodes
+          : [];
+        const initialBackgroundNodeResults = hasMissingInitialNodeResults
+          ? normalizedBackgroundNodeResults
+          : [];
+        let progressAccepted = true;
+        const progressResult = await this.renderLoadedNodeSampleResults(
           inspection,
           [
             ...nodes.filter((_node, index) => nodeResults[index] !== undefined),
-            ...backgroundNodes,
+            ...initialBackgroundNodes,
           ],
-          [...completedNodeResults, ...normalizedBackgroundNodeResults],
+          [...completedNodeResults, ...initialBackgroundNodeResults],
           options.includePointsInResult,
           maxPointCountPerNode,
           options.maxRenderedPointCount,
           options.showBounds,
           options.signal,
           completedNodeResults.length,
+          hasMissingInitialNodeResults && options.shouldRenderProgress
+            ? (candidate) => {
+                progressAccepted = options.shouldRenderProgress!(candidate);
+                return progressAccepted;
+              }
+            : undefined,
         );
-        options.onProgress?.(latestResult);
+        if (!progressAccepted) {
+          latestResult = undefined;
+        } else {
+          latestResult = progressResult;
+          options.onProgress?.(latestResult);
 
-        if (shouldStopProgressiveRender(latestResult)) {
-          return latestResult;
+          if (shouldStopProgressiveRender(latestResult)) {
+            return latestResult;
+          }
         }
       }
 
@@ -1308,6 +1527,9 @@ export class CopcPointCloudLayer {
           });
         }
       };
+      const hasRemainingProgressiveNodeRequests = (): boolean =>
+        pendingEntries.length > 0 ||
+        nextPendingNodeIndex < pendingNodeIndexes.length;
       enqueueNextProgressiveNodeRequests();
 
       while (pendingEntries.length > 0) {
@@ -1332,7 +1554,10 @@ export class CopcPointCloudLayer {
           continue;
         }
 
-        if (!shouldRenderIncrementally && pendingEntries.length > 0) {
+        if (
+          !shouldRenderIncrementally &&
+          hasRemainingProgressiveNodeRequests()
+        ) {
           completedSinceLastProgress = 0;
           enqueueNextProgressiveNodeRequests();
           continue;
@@ -1344,18 +1569,14 @@ export class CopcPointCloudLayer {
           continue;
         }
 
-        if (stopProgressReached && pendingEntries.length > 0) {
-          completedSinceLastProgress = 0;
-          enqueueNextProgressiveNodeRequests();
-          continue;
-        }
-
         const completedNodeResults = nodeResults.filter(isDefined);
-        const isFinalProgress = pendingEntries.length === 0;
+        const isFinalProgress = !hasRemainingProgressiveNodeRequests();
         const progressNodes =
           normalizedBackgroundNodeResults.length > 0 && !isFinalProgress
             ? [
-                ...nodes.filter((_node, index) => nodeResults[index] !== undefined),
+                ...nodes.filter(
+                  (_node, index) => nodeResults[index] !== undefined,
+                ),
                 ...backgroundNodes,
               ]
             : nodes.filter((_node, index) => nodeResults[index] !== undefined);
@@ -1363,7 +1584,8 @@ export class CopcPointCloudLayer {
           normalizedBackgroundNodeResults.length > 0 && !isFinalProgress
             ? [...completedNodeResults, ...normalizedBackgroundNodeResults]
             : completedNodeResults;
-        latestResult = await this.renderLoadedNodeSampleResults(
+        let progressAccepted = true;
+        const progressResult = await this.renderLoadedNodeSampleResults(
           inspection,
           progressNodes,
           progressNodeResults,
@@ -1375,15 +1597,27 @@ export class CopcPointCloudLayer {
           normalizedBackgroundNodeResults.length > 0 && !isFinalProgress
             ? completedNodeResults.length
             : undefined,
+          !isFinalProgress && options.shouldRenderProgress
+            ? (candidate) => {
+                progressAccepted = options.shouldRenderProgress!(candidate);
+                return progressAccepted;
+              }
+            : undefined,
         );
-        options.onProgress?.(latestResult);
+        if (progressAccepted) {
+          latestResult = progressResult;
+          options.onProgress?.(latestResult);
 
-        if (shouldStopProgressiveRender(latestResult)) {
-          return latestResult;
+          if (shouldStopProgressiveRender(latestResult)) {
+            return latestResult;
+          }
         }
 
         completedSinceLastProgress = 0;
         enqueueNextProgressiveNodeRequests();
+        if (hasRemainingProgressiveNodeRequests()) {
+          await yieldToNextProgressiveRenderFrame(progressiveAbort.signal);
+        }
       }
 
       if (!latestResult) {
@@ -1404,6 +1638,10 @@ export class CopcPointCloudLayer {
       return latestResult;
     } finally {
       if (!cleanupDeferredToBackground) {
+        abortPendingProgressiveEntries(
+          progressiveAbort.controller,
+          pendingEntries,
+        );
         progressiveAbort.cleanup();
       }
     }
@@ -1418,6 +1656,7 @@ export class CopcPointCloudLayer {
       expandHierarchy,
       maxHierarchyPages,
       maxHierarchyPageDepth,
+      includeAncestorNodes,
       maxPointCountPerNode,
       maxRenderedPointCount,
       includePointsInResult,
@@ -1427,16 +1666,17 @@ export class CopcPointCloudLayer {
       ...selectionOptions
     } = options;
     throwIfAborted(signal);
-    const hierarchyExpansion = (expandHierarchy ?? false)
-      ? await this.expandHierarchyForCamera({
-          camera: options.camera,
-          viewportWidthPixels: selectionOptions.viewportWidthPixels,
-          viewportHeightPixels: selectionOptions.viewportHeightPixels,
-          maxPages: maxHierarchyPages,
-          maxDepth: maxHierarchyPageDepth,
-          signal,
-        })
-      : undefined;
+    const hierarchyExpansion =
+      (expandHierarchy ?? false)
+        ? await this.expandHierarchyForCamera({
+            camera: options.camera,
+            viewportWidthPixels: selectionOptions.viewportWidthPixels,
+            viewportHeightPixels: selectionOptions.viewportHeightPixels,
+            maxPages: maxHierarchyPages,
+            maxDepth: maxHierarchyPageDepth,
+            signal,
+          })
+        : undefined;
     const cameraSelection = await this.selectNodesForCamera({
       ...selectionOptions,
       signal,
@@ -1447,8 +1687,14 @@ export class CopcPointCloudLayer {
       return undefined;
     }
 
+    const automaticRenderNodes = includeAncestorNodes
+      ? createAutomaticRenderNodesWithAncestors(
+          cameraSelection.nodes,
+          this.requireHierarchy(),
+        )
+      : cameraSelection.nodes;
     const renderResult = await this.renderNodes(
-      cameraSelection.nodes.map((node) => node.key),
+      automaticRenderNodes.map((node) => node.key),
       {
         maxPointCountPerNode,
         maxRenderedPointCount,
@@ -1475,6 +1721,7 @@ export class CopcPointCloudLayer {
       expandHierarchy,
       maxHierarchyPages,
       maxHierarchyPageDepth,
+      includeAncestorNodes,
       maxPointCountPerNode,
       maxRenderedPointCount,
       includePointsInResult,
@@ -1496,16 +1743,17 @@ export class CopcPointCloudLayer {
       ...selectionOptions
     } = options;
     throwIfAborted(signal);
-    const hierarchyExpansion = (expandHierarchy ?? false)
-      ? await this.expandHierarchyForCamera({
-          camera: options.camera,
-          viewportWidthPixels: selectionOptions.viewportWidthPixels,
-          viewportHeightPixels: selectionOptions.viewportHeightPixels,
-          maxPages: maxHierarchyPages,
-          maxDepth: maxHierarchyPageDepth,
-          signal,
-        })
-      : undefined;
+    const hierarchyExpansion =
+      (expandHierarchy ?? false)
+        ? await this.expandHierarchyForCamera({
+            camera: options.camera,
+            viewportWidthPixels: selectionOptions.viewportWidthPixels,
+            viewportHeightPixels: selectionOptions.viewportHeightPixels,
+            maxPages: maxHierarchyPages,
+            maxDepth: maxHierarchyPageDepth,
+            signal,
+          })
+        : undefined;
     const cameraSelection = await this.selectNodesForCamera({
       ...selectionOptions,
       signal,
@@ -1516,8 +1764,14 @@ export class CopcPointCloudLayer {
       return undefined;
     }
 
+    const automaticRenderNodes = includeAncestorNodes
+      ? createAutomaticRenderNodesWithAncestors(
+          cameraSelection.nodes,
+          this.requireHierarchy(),
+        )
+      : cameraSelection.nodes;
     const renderNodes = orderAutomaticProgressiveNodes(
-      cameraSelection.nodes,
+      automaticRenderNodes,
       nodeRenderOrder ?? "lightweight-first",
     );
     const renderResult = await this.renderNodesProgressively(
@@ -1586,6 +1840,7 @@ export class CopcPointCloudLayer {
       viewportWidthPixels,
       viewportHeightPixels,
     );
+    const cameraPosition = this.cameraPositionToCopc(camera, inspection);
     const frustumFiltered = this.filterNodesForCameraFrustum(
       hierarchy.nodes,
       camera,
@@ -1600,6 +1855,7 @@ export class CopcPointCloudLayer {
       ...selectionOptions,
       spacing: spacing ?? inspection.spacing,
       target,
+      cameraPosition,
       viewDirection,
       viewportHeightPixels:
         viewportHeightPixels ?? this.scene.canvas.clientHeight,
@@ -1639,7 +1895,17 @@ export class CopcPointCloudLayer {
     }
 
     this.pointRenderer.clear();
+    this.rendererRevision += 1;
     this.boundsRenderer.clear();
+  }
+
+  /**
+   * Monotonically increases after every successful point-renderer mutation.
+   * Applications may use this to prove that a retained frame still matches a
+   * previously committed render before skipping an equivalent submission.
+   */
+  getRendererRevision(): number {
+    return this.rendererRevision;
   }
 
   clearPointSampleCache(): number {
@@ -1653,8 +1919,7 @@ export class CopcPointCloudLayer {
       this.loadedNodePointGeometryBatches.size +
       this.transformedNodeResultGeometryBatches.size;
 
-    this.loadedNodePointGeometryBatches.clear();
-    this.transformedNodeResultGeometryBatches.clear();
+    this.clearPointGeometryCacheEntries();
     return clearedCount;
   }
 
@@ -1683,13 +1948,37 @@ export class CopcPointCloudLayer {
       loadedBatchCacheMissCount: this.loadedBatchCacheMissCount,
       loadedBatchCacheReuseCount: this.loadedBatchCacheReuseCount,
       loadedBatchCacheEvictionCount: this.loadedBatchCacheEvictionCount,
-      cachedTransformedBatchCount: this.transformedNodeResultGeometryBatches.size,
+      cachedTransformedBatchCount:
+        this.transformedNodeResultGeometryBatches.size,
       maxCachedTransformedBatchCount:
         this.maxCachedTransformedPointGeometryBatches,
       transformedBatchCacheHitCount: this.transformedBatchCacheHitCount,
       transformedBatchCacheMissCount: this.transformedBatchCacheMissCount,
       transformedBatchCacheEvictionCount:
         this.transformedBatchCacheEvictionCount,
+      cachedPointGeometryBytes: this.cachedPointGeometryBytes,
+      maxCachedPointGeometryBytes: this.maxCachedPointGeometryBytes,
+      peakCachedPointGeometryBytes: this.peakCachedPointGeometryBytes,
+      pointGeometryCacheByteEvictionCount:
+        this.pointGeometryCacheByteEvictionCount,
+      pointGeometryCacheEvictedBytes: this.pointGeometryCacheEvictedBytes,
+      oversizedPointGeometryBatchCacheSkipCount:
+        this.oversizedPointGeometryBatchCacheSkipCount,
+    };
+  }
+
+  getDecodedPointDataCacheStats(): CopcPointCloudLayerDecodedPointDataCacheStats {
+    const pointSample = this.source.getDecodedPointDataCacheStats();
+    const integratedPointGeometry =
+      this.copcPointGeometryWorkerPool.getDecodedPointDataCacheStats();
+
+    return {
+      ...mergeDecodedPointDataCacheStats(
+        [pointSample, integratedPointGeometry],
+        this.maxDecodedPointDataViewBytesAcrossWorkers,
+      ),
+      pointSample,
+      integratedPointGeometry,
     };
   }
 
@@ -1704,8 +1993,7 @@ export class CopcPointCloudLayer {
     this.coordinateTransforms = undefined;
     this.coordinateTransformStatus = undefined;
     this.pointGeometryTransform = undefined;
-    this.loadedNodePointGeometryBatches.clear();
-    this.transformedNodeResultGeometryBatches.clear();
+    this.clearPointGeometryCacheEntries();
     this.source.destroy();
     this.pointGeometryWorkerPool.destroy();
     this.copcPointGeometryWorkerPool.destroy();
@@ -1879,8 +2167,10 @@ export class CopcPointCloudLayer {
     }
 
     const toCesium = this.getCoordinateTransforms(inspection).toCesium;
-    const { frustumCandidateNodes, retainedNodes } =
-      splitNodesBySelectionDepth(nodes, selectionDepth);
+    const { frustumCandidateNodes, retainedNodes } = splitNodesBySelectionDepth(
+      nodes,
+      selectionDepth,
+    );
     const cullingVolume = camera.frustum.computeCullingVolume(
       camera.positionWC,
       camera.directionWC,
@@ -1889,7 +2179,9 @@ export class CopcPointCloudLayer {
     const visibleNodes = frustumCandidateNodes.filter((node) => {
       const boundingSphere = createCesiumBoundsSphere(node, toCesium);
 
-      return cullingVolume.computeVisibility(boundingSphere) !== Intersect.OUTSIDE;
+      return (
+        cullingVolume.computeVisibility(boundingSphere) !== Intersect.OUTSIDE
+      );
     });
 
     return {
@@ -1899,6 +2191,38 @@ export class CopcPointCloudLayer {
           : [...retainedNodes, ...visibleNodes],
       skippedByFrustumCount: frustumCandidateNodes.length - visibleNodes.length,
     };
+  }
+
+  private selectCurrentViewHierarchyPages(
+    pages: CopcHierarchySummary["pendingPages"],
+    camera: Camera,
+    inspection: CopcInspection,
+    target: CopcTargetPoint,
+    depthRange: SelectionDepthRange,
+  ): CopcHierarchySummary["pendingPages"] {
+    if (
+      !camera.frustum ||
+      !camera.directionWC ||
+      !camera.upWC ||
+      !camera.positionWC
+    ) {
+      return selectHierarchyPagesCoveringTarget(pages, target, depthRange);
+    }
+
+    const toCesium = this.getCoordinateTransforms(inspection).toCesium;
+    const cullingVolume = camera.frustum.computeCullingVolume(
+      camera.positionWC,
+      camera.directionWC,
+      camera.upWC,
+    );
+
+    return pages.filter(
+      (page) =>
+        isNodeInsideSelectionDepth(page, depthRange) &&
+        cullingVolume.computeVisibility(
+          createCesiumBoundsSphere(page, toCesium),
+        ) !== Intersect.OUTSIDE,
+    );
   }
 
   private shouldShowBounds(showBounds: boolean | undefined): boolean {
@@ -1927,6 +2251,7 @@ export class CopcPointCloudLayer {
     this.assertNotDestroyed();
     const rendererStartedAt = nowMilliseconds();
     this.pointRenderer.setPoints(points);
+    this.rendererRevision += 1;
     const rendererEndedAt = nowMilliseconds();
 
     const boundsStartedAt = nowMilliseconds();
@@ -2014,7 +2339,9 @@ export class CopcPointCloudLayer {
     const backgroundGeometryResults = (
       await Promise.all(
         uniqueOptionalNodeSampleResults(options.backgroundNodeResults ?? [])
-          .filter((nodeResult) => !normalizedNodeKeys.includes(nodeResult.nodeKey))
+          .filter(
+            (nodeResult) => !normalizedNodeKeys.includes(nodeResult.nodeKey),
+          )
           .map((nodeResult) =>
             this.resolvePointGeometryBatchResult(
               nodeResult,
@@ -2030,9 +2357,8 @@ export class CopcPointCloudLayer {
       options.initialNodeResults?.map((result) => [result.nodeKey, result]) ??
         [],
     );
-    const geometryResults: Array<
-      CopcNodePointGeometryBatchResult | undefined
-    > = new Array(normalizedNodeKeys.length);
+    const geometryResults: Array<CopcNodePointGeometryBatchResult | undefined> =
+      new Array(normalizedNodeKeys.length);
     const initialGeometryResults: Array<
       CopcNodePointGeometryBatchResult | undefined
     > = new Array(normalizedNodeKeys.length);
@@ -2045,7 +2371,10 @@ export class CopcPointCloudLayer {
           return;
         }
 
-        const isFresh = isNodeSampleResultFresh(nodeResult, maxPointCountPerNode);
+        const isFresh = isNodeSampleResultFresh(
+          nodeResult,
+          maxPointCountPerNode,
+        );
 
         if (
           !isFresh &&
@@ -2072,15 +2401,18 @@ export class CopcPointCloudLayer {
     );
 
     const progressiveAbort = createLinkedAbortController(options.signal);
-    let pendingEntries: Array<ProgressivePendingEntry<CopcNodePointGeometryBatchResult>> = [];
+    let pendingEntries: Array<
+      ProgressivePendingEntry<CopcNodePointGeometryBatchResult>
+    > = [];
     let completedSinceLastProgress = 0;
-    let latestResult:
-      | CopcPointCloudLayerNodesRenderResult
-      | undefined;
+    let latestResult: CopcPointCloudLayerNodesRenderResult | undefined;
     let stopProgressReached = false;
     let cleanupDeferredToBackground = false;
 
     try {
+      const hasMissingInitialGeometryResults = nodes.some(
+        (_node, index) => geometryResults[index] === undefined,
+      );
       const continuePendingEntriesInBackground = (): void => {
         if (pendingEntries.length === 0) {
           return;
@@ -2109,11 +2441,15 @@ export class CopcPointCloudLayer {
           return false;
         }
 
-        abortPendingProgressiveEntries(progressiveAbort.controller, pendingEntries);
+        abortPendingProgressiveEntries(
+          progressiveAbort.controller,
+          pendingEntries,
+        );
         return true;
       };
 
       if (
+        !options.skipInitialProgressRender &&
         shouldRenderIncrementally &&
         (geometryResults.some(isDefined) ||
           initialGeometryResults.some(isDefined) ||
@@ -2125,21 +2461,33 @@ export class CopcPointCloudLayer {
           nodes,
           geometryResults,
           initialGeometryResults,
-          includeBackground: true,
+          includeBackground: hasMissingInitialGeometryResults,
           maxRenderedPointCount: options.maxRenderedPointCount,
           maxPointCountPerNode,
         });
-        latestResult = await this.renderPointGeometryBatchResults(
+        let progressAccepted = true;
+        const progressResult = await this.renderPointGeometryBatchResults(
           inspection,
           progress.nodes,
           progress.geometryResults,
           options.showBounds,
           options.signal,
+          hasMissingInitialGeometryResults && options.shouldRenderProgress
+            ? (candidate) => {
+                progressAccepted = options.shouldRenderProgress!(candidate);
+                return progressAccepted;
+              }
+            : undefined,
         );
-        options.onProgress?.(latestResult);
+        if (!progressAccepted) {
+          latestResult = undefined;
+        } else {
+          latestResult = progressResult;
+          options.onProgress?.(latestResult);
 
-        if (shouldStopProgressiveRender(latestResult)) {
-          return latestResult;
+          if (shouldStopProgressiveRender(latestResult)) {
+            return latestResult;
+          }
         }
       }
 
@@ -2173,6 +2521,9 @@ export class CopcPointCloudLayer {
           });
         }
       };
+      const hasRemainingProgressiveNodeRequests = (): boolean =>
+        pendingEntries.length > 0 ||
+        nextPendingNodeIndex < pendingNodeIndexes.length;
       enqueueNextProgressiveNodeRequests();
 
       while (pendingEntries.length > 0) {
@@ -2197,7 +2548,10 @@ export class CopcPointCloudLayer {
           continue;
         }
 
-        if (!shouldRenderIncrementally && pendingEntries.length > 0) {
+        if (
+          !shouldRenderIncrementally &&
+          hasRemainingProgressiveNodeRequests()
+        ) {
           completedSinceLastProgress = 0;
           enqueueNextProgressiveNodeRequests();
           continue;
@@ -2209,13 +2563,7 @@ export class CopcPointCloudLayer {
           continue;
         }
 
-        if (stopProgressReached && pendingEntries.length > 0) {
-          completedSinceLastProgress = 0;
-          enqueueNextProgressiveNodeRequests();
-          continue;
-        }
-
-        const isFinalProgress = pendingEntries.length === 0;
+        const isFinalProgress = !hasRemainingProgressiveNodeRequests();
         const progress = createProgressPointGeometryResults({
           backgroundGeometryResults,
           hierarchy: this.requireHierarchy(),
@@ -2228,21 +2576,34 @@ export class CopcPointCloudLayer {
           maxPointCountPerNode,
         });
 
-        latestResult = await this.renderPointGeometryBatchResults(
+        let progressAccepted = true;
+        const progressResult = await this.renderPointGeometryBatchResults(
           inspection,
           progress.nodes,
           progress.geometryResults,
           options.showBounds,
           options.signal,
+          !isFinalProgress && options.shouldRenderProgress
+            ? (candidate) => {
+                progressAccepted = options.shouldRenderProgress!(candidate);
+                return progressAccepted;
+              }
+            : undefined,
         );
-        options.onProgress?.(latestResult);
+        if (progressAccepted) {
+          latestResult = progressResult;
+          options.onProgress?.(latestResult);
 
-        if (shouldStopProgressiveRender(latestResult)) {
-          return latestResult;
+          if (shouldStopProgressiveRender(latestResult)) {
+            return latestResult;
+          }
         }
 
         completedSinceLastProgress = 0;
         enqueueNextProgressiveNodeRequests();
+        if (hasRemainingProgressiveNodeRequests()) {
+          await yieldToNextProgressiveRenderFrame(progressiveAbort.signal);
+        }
       }
 
       if (!latestResult) {
@@ -2269,6 +2630,10 @@ export class CopcPointCloudLayer {
       return latestResult;
     } finally {
       if (!cleanupDeferredToBackground) {
+        abortPendingProgressiveEntries(
+          progressiveAbort.controller,
+          pendingEntries,
+        );
         progressiveAbort.cleanup();
       }
     }
@@ -2280,6 +2645,9 @@ export class CopcPointCloudLayer {
     geometryResults: readonly CopcNodePointGeometryBatchResult[],
     showBounds: boolean | undefined,
     signal: AbortSignal | undefined,
+    shouldRenderProgress?: (
+      candidate: CopcPointCloudLayerProgressiveRenderCandidate,
+    ) => boolean,
   ): Promise<CopcPointCloudLayerNodesRenderResult> {
     const coordinateTransforms = this.getCoordinateTransforms(inspection);
     const nodeResults = geometryResults.map((result) => result.pointSamples);
@@ -2299,24 +2667,34 @@ export class CopcPointCloudLayer {
       0,
     );
     const transformEndedAt = nowMilliseconds();
+    const shouldCommitRender =
+      shouldRenderProgress?.({
+        nodeKeys: pointSamples.nodeKeys,
+        sampledPointCount: pointSamples.sampledPointCount,
+      }) ?? true;
 
     this.assertNotDestroyed();
     const rendererStartedAt = nowMilliseconds();
-    if (!isCopcPointCloudGeometryBatchRenderer(this.pointRenderer)) {
-      throw new Error("Point geometry batch renderer is required.");
+    if (shouldCommitRender) {
+      if (!isCopcPointCloudGeometryBatchRenderer(this.pointRenderer)) {
+        throw new Error("Point geometry batch renderer is required.");
+      }
+      this.pointRenderer.setPointGeometryBatches(pointGeometryBatches);
+      this.rendererRevision += 1;
     }
-    this.pointRenderer.setPointGeometryBatches(pointGeometryBatches);
     const rendererEndedAt = nowMilliseconds();
 
     const boundsStartedAt = nowMilliseconds();
-    if (this.shouldShowBounds(showBounds)) {
-      this.boundsRenderer.setBoundsList(
-        nodes.map((node) => node.bounds),
-        inspection,
-        coordinateTransforms.toCesium,
-      );
-    } else {
-      this.boundsRenderer.clear();
+    if (shouldCommitRender) {
+      if (this.shouldShowBounds(showBounds)) {
+        this.boundsRenderer.setBoundsList(
+          nodes.map((node) => node.bounds),
+          inspection,
+          coordinateTransforms.toCesium,
+        );
+      } else {
+        this.boundsRenderer.clear();
+      }
     }
     const boundsEndedAt = nowMilliseconds();
 
@@ -2327,9 +2705,12 @@ export class CopcPointCloudLayer {
       points: [],
       renderStats: {
         pointCount: renderPointCount,
-        estimatedRenderPayloadBytes: estimateRenderPayloadBytes(renderPointCount),
-        pointGeometryTimings:
-          summarizePointGeometryBatchTimings(nodes, geometryResults),
+        estimatedRenderPayloadBytes:
+          estimateRenderPayloadBytes(renderPointCount),
+        pointGeometryTimings: summarizePointGeometryBatchTimings(
+          nodes,
+          geometryResults,
+        ),
         coordinateTransformMilliseconds: Math.max(
           0,
           transformEndedAt - transformStartedAt,
@@ -2354,6 +2735,9 @@ export class CopcPointCloudLayer {
     showBounds: boolean | undefined,
     signal: AbortSignal | undefined,
     priorityNodeResultCount?: number,
+    shouldRenderProgress?: (
+      candidate: CopcPointCloudLayerProgressiveRenderCandidate,
+    ) => boolean,
   ): Promise<CopcPointCloudLayerNodesRenderResult> {
     const entries = nodes.map((node, index) => ({
       node,
@@ -2365,8 +2749,9 @@ export class CopcPointCloudLayer {
     const transformStartedAt = nowMilliseconds();
     const rendererSupportsGeometryBatches =
       isCopcPointCloudGeometryBatchRenderer(this.pointRenderer);
-    const rendererSupportsBatches =
-      isCopcPointCloudBatchRenderer(this.pointRenderer);
+    const rendererSupportsBatches = isCopcPointCloudBatchRenderer(
+      this.pointRenderer,
+    );
     let points: readonly PointSample[] = [];
     let renderPointCount = 0;
 
@@ -2417,21 +2802,31 @@ export class CopcPointCloudLayer {
         0,
       );
       const transformEndedAt = nowMilliseconds();
+      const shouldCommitRender =
+        shouldRenderProgress?.({
+          nodeKeys: pointSamples.nodeKeys,
+          sampledPointCount: pointSamples.sampledPointCount,
+        }) ?? true;
 
       this.assertNotDestroyed();
       const rendererStartedAt = nowMilliseconds();
-      this.pointRenderer.setPointGeometryBatches(pointGeometryBatches);
+      if (shouldCommitRender) {
+        this.pointRenderer.setPointGeometryBatches(pointGeometryBatches);
+        this.rendererRevision += 1;
+      }
       const rendererEndedAt = nowMilliseconds();
 
       const boundsStartedAt = nowMilliseconds();
-      if (this.shouldShowBounds(showBounds)) {
-        this.boundsRenderer.setBoundsList(
-          renderNodes.map((node) => node.bounds),
-          inspection,
-          coordinateTransforms.toCesium,
-        );
-      } else {
-        this.boundsRenderer.clear();
+      if (shouldCommitRender) {
+        if (this.shouldShowBounds(showBounds)) {
+          this.boundsRenderer.setBoundsList(
+            renderNodes.map((node) => node.bounds),
+            inspection,
+            coordinateTransforms.toCesium,
+          );
+        } else {
+          this.boundsRenderer.clear();
+        }
       }
       const boundsEndedAt = nowMilliseconds();
 
@@ -2444,11 +2839,10 @@ export class CopcPointCloudLayer {
           pointCount: renderPointCount,
           estimatedRenderPayloadBytes:
             estimateRenderPayloadBytes(renderPointCount),
-          pointGeometryTimings:
-            summarizePointGeometryBatchTimings(
-              renderNodes,
-              renderGeometryResults,
-            ),
+          pointGeometryTimings: summarizePointGeometryBatchTimings(
+            renderNodes,
+            renderGeometryResults,
+          ),
           coordinateTransformMilliseconds: Math.max(
             0,
             transformEndedAt - transformStartedAt,
@@ -2495,25 +2889,36 @@ export class CopcPointCloudLayer {
         ? pointBatches.flatMap((batch) => batch.points)
         : [];
     const transformEndedAt = nowMilliseconds();
+    const shouldCommitRender =
+      shouldRenderProgress?.({
+        nodeKeys: pointSamples.nodeKeys,
+        sampledPointCount: pointSamples.sampledPointCount,
+      }) ?? true;
 
     this.assertNotDestroyed();
     const rendererStartedAt = nowMilliseconds();
-    if (rendererSupportsBatches) {
-      this.pointRenderer.setPointBatches(pointBatches);
-    } else {
-      this.pointRenderer.setPoints(points);
+    if (shouldCommitRender) {
+      if (rendererSupportsBatches) {
+        this.pointRenderer.setPointBatches(pointBatches);
+        this.rendererRevision += 1;
+      } else {
+        this.pointRenderer.setPoints(points);
+        this.rendererRevision += 1;
+      }
     }
     const rendererEndedAt = nowMilliseconds();
 
     const boundsStartedAt = nowMilliseconds();
-    if (this.shouldShowBounds(showBounds)) {
-      this.boundsRenderer.setBoundsList(
-        renderNodes.map((node) => node.bounds),
-        inspection,
-        coordinateTransforms.toCesium,
-      );
-    } else {
-      this.boundsRenderer.clear();
+    if (shouldCommitRender) {
+      if (this.shouldShowBounds(showBounds)) {
+        this.boundsRenderer.setBoundsList(
+          renderNodes.map((node) => node.bounds),
+          inspection,
+          coordinateTransforms.toCesium,
+        );
+      } else {
+        this.boundsRenderer.clear();
+      }
     }
     const boundsEndedAt = nowMilliseconds();
 
@@ -2524,7 +2929,8 @@ export class CopcPointCloudLayer {
       points: shouldIncludePointsInResult ? points : [],
       renderStats: {
         pointCount: renderPointCount,
-        estimatedRenderPayloadBytes: estimateRenderPayloadBytes(renderPointCount),
+        estimatedRenderPayloadBytes:
+          estimateRenderPayloadBytes(renderPointCount),
         coordinateTransformMilliseconds: Math.max(
           0,
           transformEndedAt - transformStartedAt,
@@ -2608,6 +3014,7 @@ export class CopcPointCloudLayer {
         transformKey,
         promise: resultPromise,
         state: reusable.state,
+        lastAccessSequence: 0,
       };
 
       this.trackLoadedNodePointGeometryBatchResolution(cacheKey, entry);
@@ -2626,7 +3033,7 @@ export class CopcPointCloudLayer {
       const existing = this.loadedNodePointGeometryBatches.get(cacheKey);
 
       if (existing?.promise === resultPromise) {
-        this.loadedNodePointGeometryBatches.delete(cacheKey);
+        this.deleteLoadedNodePointGeometryBatch(cacheKey);
       }
 
       throw error;
@@ -2637,6 +3044,7 @@ export class CopcPointCloudLayer {
       transformKey,
       promise: resultPromise,
       state: "pending",
+      lastAccessSequence: 0,
     };
 
     this.trackLoadedNodePointGeometryBatchResolution(cacheKey, entry);
@@ -2741,9 +3149,19 @@ export class CopcPointCloudLayer {
   private hasTransformedPointGeometryBatch(
     nodeResult: CopcNodePointSampleResult,
   ): boolean {
-    return this.transformedNodeResultGeometryBatches.has(
-      createNodePointSampleBatchKey(nodeResult),
-    );
+    const key = createNodePointSampleBatchKey(nodeResult);
+    const task = this.transformedNodeResultGeometryBatches.get(key);
+
+    if (!task) {
+      return false;
+    }
+
+    if (!isReusableSharedAbortableTask(task)) {
+      this.deleteTransformedNodeResultGeometryBatch(key);
+      return false;
+    }
+
+    return true;
   }
 
   private createPointGeometryBatch(
@@ -2751,30 +3169,32 @@ export class CopcPointCloudLayer {
     coordinateTransform: CopcCoordinateTransformSet["toCesium"],
     signal: AbortSignal | undefined,
   ): Promise<PointGeometryBatch> {
+    throwIfAborted(signal);
     const key = createNodePointSampleBatchKey(nodeResult);
-    let batchPromise = this.transformedNodeResultGeometryBatches.get(key);
+    const cachedTask = this.transformedNodeResultGeometryBatches.get(key);
 
-    if (batchPromise) {
+    if (cachedTask && isReusableSharedAbortableTask(cachedTask)) {
       this.transformedBatchCacheHitCount += 1;
-      this.touchTransformedNodeResultGeometryBatch(key, batchPromise);
-      return withAbortSignal(batchPromise, signal);
+      this.touchTransformedNodeResultGeometryBatch(key, cachedTask);
+      return consumeSharedAbortableTask(cachedTask, signal);
+    }
+
+    if (cachedTask) {
+      this.deleteTransformedNodeResultGeometryBatch(key);
     }
 
     this.transformedBatchCacheMissCount += 1;
-    batchPromise = this.createPointGeometryBatchWithoutCache(
-      nodeResult,
-      coordinateTransform,
-      signal,
-    ).catch((error: unknown) => {
-      if (this.transformedNodeResultGeometryBatches.get(key) === batchPromise) {
-        this.transformedNodeResultGeometryBatches.delete(key);
-      }
+    const task = createSharedAbortableTask((taskSignal) =>
+      this.createPointGeometryBatchWithoutCache(
+        nodeResult,
+        coordinateTransform,
+        taskSignal,
+      ),
+    );
 
-      throw error;
-    });
-    this.setTransformedNodeResultGeometryBatch(key, batchPromise);
+    this.setTransformedNodeResultGeometryBatch(key, task);
 
-    return withAbortSignal(batchPromise, signal);
+    return consumeSharedAbortableTask(task, signal);
   }
 
   private async createPointGeometryBatchWithoutCache(
@@ -2783,14 +3203,15 @@ export class CopcPointCloudLayer {
     signal: AbortSignal | undefined,
   ): Promise<PointGeometryBatch> {
     const key = createNodePointSampleBatchKey(nodeResult);
-    const workerResult = nodeResult.pointData && this.pointGeometryTransform
-      ? this.pointGeometryWorkerPool.buildPointGeometryBatch({
-          key,
-          pointData: nodeResult.pointData,
-          transform: this.pointGeometryTransform,
-          signal,
-        })
-      : undefined;
+    const workerResult =
+      nodeResult.pointData && this.pointGeometryTransform
+        ? this.pointGeometryWorkerPool.buildPointGeometryBatch({
+            key,
+            pointData: nodeResult.pointData,
+            transform: this.pointGeometryTransform,
+            signal,
+          })
+        : undefined;
 
     if (workerResult) {
       return workerResult;
@@ -2815,7 +3236,7 @@ export class CopcPointCloudLayer {
   ): void {
     this.setTransformedNodeResultGeometryBatch(
       createNodePointSampleBatchKey(nodeResult),
-      Promise.resolve(geometryBatch),
+      createFulfilledSharedAbortableTask(geometryBatch),
     );
   }
 
@@ -2845,14 +3266,15 @@ export class CopcPointCloudLayer {
   ): LoadedNodePointGeometryBatchCacheEntry | undefined {
     const requiredPointCount = Math.min(node.pointCount, maxPointCount);
     const candidates = [...this.loadedNodePointGeometryBatches.entries()]
-      .filter(([, entry]) =>
-        entry.state === "resolved" &&
-        entry.nodeKey === node.key &&
-        entry.transformKey === transformKey &&
-        entry.maxPointCount >= requiredPointCount,
+      .filter(
+        ([, entry]) =>
+          entry.state === "resolved" &&
+          entry.nodeKey === node.key &&
+          entry.transformKey === transformKey &&
+          entry.maxPointCount >= requiredPointCount,
       )
-      .sort(([, first], [, second]) =>
-        first.maxPointCount - second.maxPointCount,
+      .sort(
+        ([, first], [, second]) => first.maxPointCount - second.maxPointCount,
       );
 
     const reusable = candidates[0];
@@ -2869,7 +3291,8 @@ export class CopcPointCloudLayer {
     key: string,
     entry: LoadedNodePointGeometryBatchCacheEntry,
   ): void {
-    this.loadedNodePointGeometryBatches.delete(key);
+    this.deleteLoadedNodePointGeometryBatch(key);
+    entry.lastAccessSequence = this.nextPointGeometryCacheAccessSequence();
     this.loadedNodePointGeometryBatches.set(key, entry);
     this.evictLoadedNodePointGeometryBatchesIfNeeded(key);
   }
@@ -2879,6 +3302,7 @@ export class CopcPointCloudLayer {
     entry: LoadedNodePointGeometryBatchCacheEntry,
   ): void {
     this.loadedNodePointGeometryBatches.delete(key);
+    entry.lastAccessSequence = this.nextPointGeometryCacheAccessSequence();
     this.loadedNodePointGeometryBatches.set(key, entry);
   }
 
@@ -2887,12 +3311,21 @@ export class CopcPointCloudLayer {
     entry: LoadedNodePointGeometryBatchCacheEntry,
   ): void {
     void entry.promise.then(
-      () => {
+      (result) => {
         if (this.loadedNodePointGeometryBatches.get(key) === entry) {
           entry.state = "resolved";
+          this.retainResolvedPointGeometryBatch(
+            "loaded",
+            key,
+            result.geometryBatch,
+          );
         }
       },
-      () => undefined,
+      () => {
+        if (this.loadedNodePointGeometryBatches.get(key) === entry) {
+          this.deleteLoadedNodePointGeometryBatch(key);
+        }
+      },
     );
   }
 
@@ -2903,39 +3336,55 @@ export class CopcPointCloudLayer {
       this.loadedNodePointGeometryBatches.size >
       this.maxCachedPointGeometryBatches
     ) {
-      const oldestKey = this.loadedNodePointGeometryBatches.keys().next().value;
+      const oldestKey = [...this.loadedNodePointGeometryBatches.entries()].find(
+        ([key, entry]) => key !== protectedKey && entry.state === "resolved",
+      )?.[0];
 
       if (!oldestKey) {
         return;
       }
 
-      if (
-        oldestKey === protectedKey &&
-        this.loadedNodePointGeometryBatches.size === 1
-      ) {
-        return;
-      }
-
-      this.loadedNodePointGeometryBatches.delete(oldestKey);
+      this.pointGeometryCacheEvictedBytes +=
+        this.deleteLoadedNodePointGeometryBatch(oldestKey);
       this.loadedBatchCacheEvictionCount += 1;
     }
   }
 
   private setTransformedNodeResultGeometryBatch(
     key: string,
-    batchPromise: Promise<PointGeometryBatch>,
+    task: SharedAbortableTask<PointGeometryBatch>,
   ): void {
-    this.transformedNodeResultGeometryBatches.delete(key);
-    this.transformedNodeResultGeometryBatches.set(key, batchPromise);
+    this.deleteTransformedNodeResultGeometryBatch(key);
+    this.transformedNodeResultGeometryBatches.set(key, task);
+    this.transformedPointGeometryCacheAccessSequences.set(
+      key,
+      this.nextPointGeometryCacheAccessSequence(),
+    );
+    void task.promise.then(
+      (batch) => {
+        if (this.transformedNodeResultGeometryBatches.get(key) === task) {
+          this.retainResolvedPointGeometryBatch("transformed", key, batch);
+        }
+      },
+      () => {
+        if (this.transformedNodeResultGeometryBatches.get(key) === task) {
+          this.deleteTransformedNodeResultGeometryBatch(key);
+        }
+      },
+    );
     this.evictTransformedNodeResultGeometryBatchesIfNeeded(key);
   }
 
   private touchTransformedNodeResultGeometryBatch(
     key: string,
-    batchPromise: Promise<PointGeometryBatch>,
+    task: SharedAbortableTask<PointGeometryBatch>,
   ): void {
     this.transformedNodeResultGeometryBatches.delete(key);
-    this.transformedNodeResultGeometryBatches.set(key, batchPromise);
+    this.transformedNodeResultGeometryBatches.set(key, task);
+    this.transformedPointGeometryCacheAccessSequences.set(
+      key,
+      this.nextPointGeometryCacheAccessSequence(),
+    );
   }
 
   private evictTransformedNodeResultGeometryBatchesIfNeeded(
@@ -2945,23 +3394,237 @@ export class CopcPointCloudLayer {
       this.transformedNodeResultGeometryBatches.size >
       this.maxCachedTransformedPointGeometryBatches
     ) {
-      const oldestKey =
-        this.transformedNodeResultGeometryBatches.keys().next().value;
+      const oldestKey = [
+        ...this.transformedNodeResultGeometryBatches.entries(),
+      ].find(
+        ([key, task]) => key !== protectedKey && task.state === "fulfilled",
+      )?.[0];
 
       if (!oldestKey) {
         return;
       }
 
-      if (
-        oldestKey === protectedKey &&
-        this.transformedNodeResultGeometryBatches.size === 1
-      ) {
+      this.pointGeometryCacheEvictedBytes +=
+        this.deleteTransformedNodeResultGeometryBatch(oldestKey);
+      this.transformedBatchCacheEvictionCount += 1;
+    }
+  }
+
+  private retainResolvedPointGeometryBatch(
+    cacheKind: PointGeometryCacheKind,
+    key: string,
+    batch: PointGeometryBatch,
+  ): void {
+    if (
+      this.maxCachedPointGeometryBytes !== undefined &&
+      estimatePointGeometryBatchByteSize(batch) >
+        this.maxCachedPointGeometryBytes
+    ) {
+      this.oversizedPointGeometryBatchCacheSkipCount += 1;
+      this.deletePointGeometryCacheEntry(cacheKind, key);
+      this.incrementPointGeometryCacheEvictionCount(cacheKind);
+      return;
+    }
+
+    const cacheBatches = this.getPointGeometryCacheBatches(cacheKind);
+    const cachedBatch = cacheBatches.get(key);
+
+    if (cachedBatch !== batch) {
+      if (cachedBatch) {
+        this.releasePointGeometryCacheBatch(cacheBatches, key);
+      }
+
+      cacheBatches.set(key, batch);
+      for (const buffer of getPointGeometryBatchBackingBuffers(batch)) {
+        const allocation = this.pointGeometryBufferAllocations.get(buffer);
+
+        if (allocation) {
+          allocation.referenceCount += 1;
+          continue;
+        }
+
+        const byteSize = buffer.byteLength;
+        this.pointGeometryBufferAllocations.set(buffer, {
+          byteSize,
+          referenceCount: 1,
+        });
+        this.cachedPointGeometryBytes += byteSize;
+      }
+      this.peakCachedPointGeometryBytes = Math.max(
+        this.peakCachedPointGeometryBytes,
+        this.cachedPointGeometryBytes,
+      );
+    }
+
+    this.evictLoadedNodePointGeometryBatchesIfNeeded(
+      cacheKind === "loaded" ? key : "",
+    );
+    this.evictTransformedNodeResultGeometryBatchesIfNeeded(
+      cacheKind === "transformed" ? key : "",
+    );
+    this.evictPointGeometryBatchesByByteSizeIfNeeded();
+  }
+
+  private evictPointGeometryBatchesByByteSizeIfNeeded(): void {
+    if (this.maxCachedPointGeometryBytes === undefined) {
+      return;
+    }
+
+    while (this.cachedPointGeometryBytes > this.maxCachedPointGeometryBytes) {
+      const candidate = this.findOldestRetainedPointGeometryCacheEntry();
+
+      if (!candidate) {
         return;
       }
 
-      this.transformedNodeResultGeometryBatches.delete(oldestKey);
+      const reclaimedByteSize = this.deletePointGeometryCacheEntry(
+        candidate.cacheKind,
+        candidate.key,
+      );
+      this.incrementPointGeometryCacheEvictionCount(candidate.cacheKind);
+      this.pointGeometryCacheByteEvictionCount += 1;
+      this.pointGeometryCacheEvictedBytes += reclaimedByteSize;
+    }
+  }
+
+  private findOldestRetainedPointGeometryCacheEntry():
+    | {
+        readonly cacheKind: PointGeometryCacheKind;
+        readonly key: string;
+        readonly lastAccessSequence: number;
+      }
+    | undefined {
+    const candidates = [
+      ...[...this.loadedPointGeometryCacheBatches.keys()].flatMap((key) => {
+        const entry = this.loadedNodePointGeometryBatches.get(key);
+
+        return entry?.state === "resolved"
+          ? [
+              {
+                cacheKind: "loaded" as const,
+                key,
+                lastAccessSequence: entry.lastAccessSequence,
+              },
+            ]
+          : [];
+      }),
+      ...[...this.transformedPointGeometryCacheBatches.keys()].flatMap(
+        (key) => {
+          const task = this.transformedNodeResultGeometryBatches.get(key);
+          const lastAccessSequence =
+            this.transformedPointGeometryCacheAccessSequences.get(key);
+
+          return task?.state === "fulfilled" && lastAccessSequence !== undefined
+            ? [
+                {
+                  cacheKind: "transformed" as const,
+                  key,
+                  lastAccessSequence,
+                },
+              ]
+            : [];
+        },
+      ),
+    ];
+
+    return candidates.reduce<(typeof candidates)[number] | undefined>(
+      (oldest, candidate) =>
+        !oldest || candidate.lastAccessSequence < oldest.lastAccessSequence
+          ? candidate
+          : oldest,
+      undefined,
+    );
+  }
+
+  private deletePointGeometryCacheEntry(
+    cacheKind: PointGeometryCacheKind,
+    key: string,
+  ): number {
+    return cacheKind === "loaded"
+      ? this.deleteLoadedNodePointGeometryBatch(key)
+      : this.deleteTransformedNodeResultGeometryBatch(key);
+  }
+
+  private deleteLoadedNodePointGeometryBatch(key: string): number {
+    this.loadedNodePointGeometryBatches.delete(key);
+    return this.releasePointGeometryCacheBatch(
+      this.loadedPointGeometryCacheBatches,
+      key,
+    );
+  }
+
+  private deleteTransformedNodeResultGeometryBatch(key: string): number {
+    this.transformedNodeResultGeometryBatches.delete(key);
+    this.transformedPointGeometryCacheAccessSequences.delete(key);
+    return this.releasePointGeometryCacheBatch(
+      this.transformedPointGeometryCacheBatches,
+      key,
+    );
+  }
+
+  private releasePointGeometryCacheBatch(
+    cacheBatches: Map<string, PointGeometryBatch>,
+    key: string,
+  ): number {
+    const batch = cacheBatches.get(key);
+
+    if (!batch) {
+      return 0;
+    }
+
+    cacheBatches.delete(key);
+    let reclaimedByteSize = 0;
+    for (const buffer of getPointGeometryBatchBackingBuffers(batch)) {
+      const allocation = this.pointGeometryBufferAllocations.get(buffer);
+
+      if (!allocation) {
+        continue;
+      }
+
+      allocation.referenceCount -= 1;
+      if (allocation.referenceCount > 0) {
+        continue;
+      }
+
+      this.pointGeometryBufferAllocations.delete(buffer);
+      reclaimedByteSize += allocation.byteSize;
+      this.cachedPointGeometryBytes -= allocation.byteSize;
+    }
+
+    return reclaimedByteSize;
+  }
+
+  private getPointGeometryCacheBatches(
+    cacheKind: PointGeometryCacheKind,
+  ): Map<string, PointGeometryBatch> {
+    return cacheKind === "loaded"
+      ? this.loadedPointGeometryCacheBatches
+      : this.transformedPointGeometryCacheBatches;
+  }
+
+  private incrementPointGeometryCacheEvictionCount(
+    cacheKind: PointGeometryCacheKind,
+  ): void {
+    if (cacheKind === "loaded") {
+      this.loadedBatchCacheEvictionCount += 1;
+    } else {
       this.transformedBatchCacheEvictionCount += 1;
     }
+  }
+
+  private clearPointGeometryCacheEntries(): void {
+    this.loadedNodePointGeometryBatches.clear();
+    this.transformedNodeResultGeometryBatches.clear();
+    this.loadedPointGeometryCacheBatches.clear();
+    this.transformedPointGeometryCacheBatches.clear();
+    this.pointGeometryBufferAllocations.clear();
+    this.transformedPointGeometryCacheAccessSequences.clear();
+    this.cachedPointGeometryBytes = 0;
+  }
+
+  private nextPointGeometryCacheAccessSequence(): number {
+    this.pointGeometryCacheAccessSequence += 1;
+    return this.pointGeometryCacheAccessSequence;
   }
 
   private shouldUseIntegratedPointGeometryLoading(
@@ -3158,12 +3821,10 @@ function maxPointGeometryTiming(
 }
 
 function createCesiumBoundsSphere(
-  node: CopcHierarchyNodeSummary,
+  node: Pick<CopcHierarchyNodeSummary, "bounds">,
   transform: CopcToCesiumTransform,
 ): BoundingSphere {
-  return BoundingSphere.fromPoints(
-    createCesiumBoundsCorners(node, transform),
-  );
+  return BoundingSphere.fromPoints(createCesiumBoundsCorners(node, transform));
 }
 
 type CopcToCesiumTransform = CopcCoordinateTransformSet["toCesium"];
@@ -3174,7 +3835,7 @@ interface SelectionDepthRange {
 }
 
 function isNodeInsideSelectionDepth(
-  node: CopcHierarchyNodeSummary,
+  node: Pick<CopcHierarchyNodeSummary, "depth">,
   range: SelectionDepthRange,
 ): boolean {
   const minDepth = range.minDepth ?? 0;
@@ -3205,7 +3866,7 @@ function splitNodesBySelectionDepth(
 }
 
 function createCesiumBoundsCorners(
-  node: CopcHierarchyNodeSummary,
+  node: Pick<CopcHierarchyNodeSummary, "bounds">,
   transform: CopcToCesiumTransform,
 ): Cartesian3[] {
   const { minX, minY, minZ, maxX, maxY, maxZ } = node.bounds;
@@ -3246,6 +3907,49 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 
   throw createAbortError(signal);
+}
+
+async function yieldToNextProgressiveRenderFrame(
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  throwIfAborted(signal);
+
+  if (typeof globalThis.requestAnimationFrame !== "function") {
+    await Promise.resolve();
+    throwIfAborted(signal);
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let frameId: number | undefined;
+    let fallbackId: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      if (frameId !== undefined) {
+        globalThis.cancelAnimationFrame?.(frameId);
+      }
+      if (fallbackId !== undefined) {
+        globalThis.clearTimeout(fallbackId);
+      }
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+
+    frameId = globalThis.requestAnimationFrame(finish);
+    // Hidden or throttled documents may suspend animation frames. Keep
+    // cancellation and headless callers bounded without turning this yield
+    // into a fixed delay on an active Cesium canvas.
+    fallbackId = globalThis.setTimeout(finish, 50);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+
+  throwIfAborted(signal);
 }
 
 interface ProgressivePendingEntry<T> {
@@ -3295,7 +3999,7 @@ function abortPendingProgressiveEntries(
   controller: AbortController,
   entries: readonly ProgressivePendingEntry<unknown>[],
 ): void {
-  if (entries.length === 0 || controller.signal.aborted) {
+  if (entries.length === 0) {
     return;
   }
 
@@ -3303,7 +4007,9 @@ function abortPendingProgressiveEntries(
     void entry.promise.catch(() => undefined);
   }
 
-  controller.abort();
+  if (!controller.signal.aborted) {
+    controller.abort();
+  }
 }
 
 async function settlePendingProgressiveEntriesInBackground(
@@ -3413,220 +4119,6 @@ function uniqueOptionalNodeSampleResults(
   return [...resultByNodeKey.values()];
 }
 
-function createProgressPointGeometryResults(options: {
-  readonly backgroundGeometryResults: readonly CopcNodePointGeometryBatchResult[];
-  readonly hierarchy: CopcHierarchySummary;
-  readonly nodes: readonly CopcHierarchyNodeSummary[];
-  readonly geometryResults: readonly (
-    CopcNodePointGeometryBatchResult | undefined
-  )[];
-  readonly initialGeometryResults: readonly (
-    CopcNodePointGeometryBatchResult | undefined
-  )[];
-  readonly includeBackground: boolean;
-  readonly maxRenderedPointCount: number | undefined;
-  readonly maxPointCountPerNode: number | undefined;
-}): {
-  readonly nodes: readonly CopcHierarchyNodeSummary[];
-  readonly geometryResults: readonly CopcNodePointGeometryBatchResult[];
-} {
-  const nodeEntries = options.nodes.flatMap((node, index) => {
-    const geometryResult =
-      options.geometryResults[index] ?? options.initialGeometryResults[index];
-
-    return geometryResult ? [{ node, geometryResult }] : [];
-  });
-  const backgroundEntries = options.includeBackground
-    ? options.backgroundGeometryResults.map((geometryResult) => ({
-        node: findRequiredNode(
-          options.hierarchy,
-          geometryResult.pointSamples.nodeKey,
-        ),
-        geometryResult,
-      }))
-    : [];
-  const entries = limitPointGeometryProgressEntries(
-    [
-      ...nodeEntries,
-      ...backgroundEntries,
-    ],
-    options.maxRenderedPointCount,
-    options.maxPointCountPerNode,
-    nodeEntries.length,
-  );
-
-  return {
-    nodes: entries.map((entry) => entry.node),
-    geometryResults: entries.map((entry) => entry.geometryResult),
-  };
-}
-
-function limitPointGeometryProgressEntries(
-  entries: readonly {
-    readonly node: CopcHierarchyNodeSummary;
-    readonly geometryResult: CopcNodePointGeometryBatchResult;
-  }[],
-  maxRenderedPointCount: number | undefined,
-  maxPointCountPerNode: number | undefined,
-  priorityEntryCount?: number,
-): readonly {
-  readonly node: CopcHierarchyNodeSummary;
-  readonly geometryResult: CopcNodePointGeometryBatchResult;
-}[] {
-  const pointCounts = allocateProgressEntryPointCounts(
-    entries.map((entry) =>
-      Math.min(
-        entry.geometryResult.pointSamples.sampledPointCount,
-        entry.geometryResult.geometryBatch.pointCount,
-      ),
-    ),
-    maxRenderedPointCount,
-    maxPointCountPerNode,
-    priorityEntryCount,
-  );
-
-  return entries.flatMap((entry, index) => {
-    const pointCount = pointCounts[index] ?? 0;
-
-    return pointCount > 0
-      ? [{
-          node: entry.node,
-          geometryResult: limitPointGeometryBatchResult(
-            entry.geometryResult,
-            pointCount,
-            false,
-          ),
-        }]
-      : [];
-  });
-}
-
-function limitNodeSampleProgressEntries(
-  entries: readonly {
-    readonly node: CopcHierarchyNodeSummary;
-    readonly nodeResult: CopcNodePointSampleResult | undefined;
-  }[],
-  maxRenderedPointCount: number | undefined,
-  maxPointCountPerNode: number | undefined,
-  priorityEntryCount?: number,
-): readonly {
-  readonly node: CopcHierarchyNodeSummary;
-  readonly nodeResult: CopcNodePointSampleResult;
-}[] {
-  const pointCounts = allocateProgressEntryPointCounts(
-    entries.map((entry) => entry.nodeResult?.sampledPointCount ?? 0),
-    maxRenderedPointCount,
-    maxPointCountPerNode,
-    priorityEntryCount,
-  );
-
-  return entries.flatMap((entry, index) => {
-    const pointCount = pointCounts[index] ?? 0;
-
-    return entry.nodeResult && pointCount > 0
-      ? [{
-          node: entry.node,
-          nodeResult: limitNodePointSampleResult(entry.nodeResult, pointCount),
-        }]
-      : [];
-  });
-}
-
-function allocateProgressEntryPointCounts(
-  entryPointCounts: readonly number[],
-  maxRenderedPointCount: number | undefined,
-  maxPointCountPerNode: number | undefined,
-  priorityEntryCount: number | undefined,
-): readonly number[] {
-  const limits = entryPointCounts.map((pointCount) =>
-    Math.max(
-      0,
-      Math.min(
-        Math.floor(pointCount),
-        maxPointCountPerNode ?? Number.POSITIVE_INFINITY,
-      ),
-    ),
-  );
-
-  if (maxRenderedPointCount === undefined) {
-    return limits;
-  }
-
-  const normalizedPriorityEntryCount =
-    priorityEntryCount !== undefined
-      ? Math.max(0, Math.min(limits.length, priorityEntryCount))
-      : limits.length;
-  const allocations = new Array<number>(limits.length).fill(0);
-  let remainingPointCount = Math.max(0, Math.floor(maxRenderedPointCount));
-
-  remainingPointCount = allocateFairProgressPointCounts(
-    limits,
-    allocations,
-    0,
-    normalizedPriorityEntryCount,
-    remainingPointCount,
-  );
-  allocateFairProgressPointCounts(
-    limits,
-    allocations,
-    normalizedPriorityEntryCount,
-    limits.length,
-    remainingPointCount,
-  );
-
-  return allocations;
-}
-
-function allocateFairProgressPointCounts(
-  limits: readonly number[],
-  allocations: number[],
-  startIndex: number,
-  endIndex: number,
-  pointBudget: number,
-): number {
-  let remainingPointCount = pointBudget;
-  let activeIndexes = limits
-    .map((_limit, index) => index)
-    .slice(startIndex, endIndex)
-    .filter((index) => limits[index] > allocations[index]);
-
-  while (remainingPointCount > 0 && activeIndexes.length > 0) {
-    const share = Math.max(
-      1,
-      Math.floor(remainingPointCount / activeIndexes.length),
-    );
-    const nextActiveIndexes: number[] = [];
-
-    for (const index of activeIndexes) {
-      if (remainingPointCount <= 0) {
-        nextActiveIndexes.push(index);
-        continue;
-      }
-
-      const pointCount = Math.min(
-        share,
-        remainingPointCount,
-        limits[index] - allocations[index],
-      );
-
-      allocations[index] += pointCount;
-      remainingPointCount -= pointCount;
-
-      if (limits[index] > allocations[index]) {
-        nextActiveIndexes.push(index);
-      }
-    }
-
-    if (nextActiveIndexes.length === activeIndexes.length && share <= 0) {
-      break;
-    }
-
-    activeIndexes = nextActiveIndexes;
-  }
-
-  return remainingPointCount;
-}
-
 function isNodeSampleResultFresh(
   nodeResult: CopcNodePointSampleResult | undefined,
   maxPointCount: number | undefined,
@@ -3639,8 +4131,10 @@ function isNodeSampleResultFresh(
     return true;
   }
 
-  return nodeResult.sampledPointCount >=
-    Math.min(nodeResult.nodePointCount, maxPointCount);
+  return (
+    nodeResult.sampledPointCount >=
+    Math.min(nodeResult.nodePointCount, maxPointCount)
+  );
 }
 
 function createMultiNodePointSampleResult(
@@ -3709,45 +4203,6 @@ function createPointGeometryTransformCacheKey(
   ].join(":");
 }
 
-function limitPointGeometryBatchResult(
-  result: CopcNodePointGeometryBatchResult,
-  maxPointCount: number,
-  markAsCacheHit: boolean,
-): CopcNodePointGeometryBatchResult {
-  const pointCount = Math.min(
-    result.pointSamples.nodePointCount,
-    result.pointSamples.sampledPointCount,
-    result.geometryBatch.pointCount,
-    maxPointCount,
-  );
-
-  if (
-    pointCount >= result.pointSamples.sampledPointCount &&
-    pointCount >= result.geometryBatch.pointCount
-  ) {
-    return markAsCacheHit
-      ? markPointGeometryBatchResultCacheHit(result)
-      : result;
-  }
-
-  const pointSamples = limitNodePointSampleResult(
-    result.pointSamples,
-    pointCount,
-  );
-
-  return {
-    pointSamples,
-    geometryBatch: limitPointGeometryBatch(
-      result.geometryBatch,
-      pointCount,
-      createNodePointSampleBatchKey(pointSamples),
-    ),
-    timing: markAsCacheHit
-      ? createPointGeometryBatchCacheHitTiming()
-      : result.timing,
-  };
-}
-
 function readLoadedNodePointGeometryBatchCacheResult(
   entry: LoadedNodePointGeometryBatchCacheEntry,
 ): Promise<CopcNodePointGeometryBatchResult> {
@@ -3756,68 +4211,49 @@ function readLoadedNodePointGeometryBatchCacheResult(
     : entry.promise;
 }
 
-function limitNodePointSampleResult(
-  result: CopcNodePointSampleResult,
-  pointCount: number,
-): CopcNodePointSampleResult {
-  if (pointCount >= result.sampledPointCount) {
-    return result;
+function selectHierarchyPagesCoveringTarget(
+  pages: CopcHierarchySummary["pendingPages"],
+  target: CopcTargetPoint,
+  depthRange: Pick<
+    CopcPointCloudLayerHierarchyExpansionOptions,
+    "minDepth" | "maxDepth"
+  >,
+): CopcHierarchySummary["pendingPages"] {
+  const minDepth = depthRange.minDepth ?? 0;
+  const maxDepth = depthRange.maxDepth ?? Number.POSITIVE_INFINITY;
+  const tolerance =
+    Math.max(1, Math.abs(target.x), Math.abs(target.y)) * Number.EPSILON * 16;
+
+  return pages.filter(
+    (page) =>
+      page.depth >= minDepth &&
+      page.depth <= maxDepth &&
+      distanceToRange(target.x, page.bounds.minX, page.bounds.maxX) <=
+        tolerance &&
+      distanceToRange(target.y, page.bounds.minY, page.bounds.maxY) <=
+        tolerance,
+  );
+}
+
+function distanceToRange(value: number, min: number, max: number): number {
+  if (value < min) {
+    return min - value;
   }
 
-  return {
-    nodeKey: result.nodeKey,
-    nodePointCount: result.nodePointCount,
-    sampledPointCount: pointCount,
-    points: result.points.slice(0, pointCount),
-    pointData: result.pointData
-      ? {
-          x: result.pointData.x.subarray(0, pointCount),
-          y: result.pointData.y.subarray(0, pointCount),
-          z: result.pointData.z.subarray(0, pointCount),
-          red: result.pointData.red?.subarray(0, pointCount),
-          green: result.pointData.green?.subarray(0, pointCount),
-          blue: result.pointData.blue?.subarray(0, pointCount),
-        }
-      : undefined,
-  };
+  return value > max ? value - max : 0;
 }
 
-function limitPointGeometryBatch(
-  batch: PointGeometryBatch,
-  pointCount: number,
-  key: string,
-): PointGeometryBatch {
-  if (pointCount >= batch.pointCount) {
-    return key === batch.key ? batch : { ...batch, key };
+function createHierarchyPageSignature(
+  pages: CopcHierarchySummary["pendingPages"],
+): string | undefined {
+  if (pages.length === 0) {
+    return undefined;
   }
 
-  return {
-    key,
-    pointCount,
-    positions: batch.positions.subarray(0, pointCount * 3),
-    colors: batch.colors.subarray(0, pointCount * 4),
-  };
-}
-
-function markPointGeometryBatchResultCacheHit(
-  result: CopcNodePointGeometryBatchResult,
-): CopcNodePointGeometryBatchResult {
-  return {
-    ...result,
-    timing: createPointGeometryBatchCacheHitTiming(),
-  };
-}
-
-function createPointGeometryBatchCacheHitTiming(): CopcPointGeometryBatchTiming {
-  return {
-    pointDataViewMilliseconds: 0,
-    pointDataViewCacheHit: true,
-    sampleMilliseconds: 0,
-    geometryMilliseconds: 0,
-    workerTotalMilliseconds: 0,
-    requestQueueMilliseconds: 0,
-    requestRoundTripMilliseconds: 0,
-  };
+  return [...pages]
+    .map((page) => `${page.key}:${page.pageOffset}:${page.pageLength}`)
+    .sort()
+    .join("|");
 }
 
 function readProgressiveMaxPointCountPerNode(
@@ -3854,10 +4290,7 @@ function createProgressiveNodeRequestPriorities(
   }
 
   const denominator = Math.max(1, nodes.length - 1);
-  const maxWeight = Math.max(
-    1,
-    ...nodes.map(readProgressiveNodeRequestWeight),
-  );
+  const maxWeight = Math.max(1, ...nodes.map(readProgressiveNodeRequestWeight));
   const priorityRankByNodeKey = new Map(
     orderAutomaticProgressiveNodes(nodes, nodeRequestOrder).map(
       (node, index) => [node.key, index],
@@ -3873,7 +4306,9 @@ function createProgressiveNodeRequestPriorities(
       (1 - Math.min(1, readProgressiveNodeRequestWeight(node) / maxWeight)) *
       0.01;
 
-    return normalizedBasePriority + coverageOrderBoost + lightweightTieBreakBoost;
+    return (
+      normalizedBasePriority + coverageOrderBoost + lightweightTieBreakBoost
+    );
   });
 }
 
@@ -3893,8 +4328,7 @@ function orderProgressivePendingNodeIndexes(
 
   return [...pendingNodeIndexes].sort(
     (leftIndex, rightIndex) =>
-      compare(nodes[leftIndex], nodes[rightIndex]) ||
-      leftIndex - rightIndex,
+      compare(nodes[leftIndex], nodes[rightIndex]) || leftIndex - rightIndex,
   );
 }
 
@@ -3921,6 +4355,98 @@ function readPositiveInteger(
     : Math.max(1, fallback);
 }
 
+function getPointSampleWorkerSlotCount(
+  options: CopcPointCloudLayerOptions,
+): number {
+  const pointSampleLoading =
+    options.pointSampleLoading ??
+    (options.createPointSampleWorker ? "worker" : "main-thread");
+
+  if (pointSampleLoading !== "worker") {
+    return 0;
+  }
+
+  return readPositiveIntegerOption(
+    "maxConcurrentPointSampleWorkerRequests",
+    options.maxConcurrentPointSampleWorkerRequests,
+    DEFAULT_MAX_CONCURRENT_POINT_SAMPLE_WORKER_REQUESTS,
+  );
+}
+
+function getIntegratedPointGeometryWorkerSlotCount(
+  options: CopcPointCloudLayerOptions,
+): number {
+  if (options.pointGeometryLoading !== "integrated-worker") {
+    return 0;
+  }
+
+  return readPositiveIntegerOption(
+    "maxConcurrentPointGeometryWorkerRequests",
+    options.maxConcurrentPointGeometryWorkerRequests,
+    DEFAULT_MAX_CONCURRENT_COPC_POINT_GEOMETRY_WORKER_REQUESTS,
+  );
+}
+
+function allocateDecodedPointDataWorkerBudgets(options: {
+  readonly maxBytesAcrossWorkers: number | undefined;
+  readonly pointSampleWorkerSlotCount: number;
+  readonly integratedPointGeometryWorkerSlotCount: number;
+}): {
+  readonly pointSample: number | undefined;
+  readonly integratedPointGeometry: number | undefined;
+} {
+  const {
+    maxBytesAcrossWorkers,
+    pointSampleWorkerSlotCount,
+    integratedPointGeometryWorkerSlotCount,
+  } = options;
+
+  if (maxBytesAcrossWorkers === undefined) {
+    return {
+      pointSample: undefined,
+      integratedPointGeometry: undefined,
+    };
+  }
+
+  if (pointSampleWorkerSlotCount === 0) {
+    return {
+      pointSample: undefined,
+      integratedPointGeometry:
+        integratedPointGeometryWorkerSlotCount > 0
+          ? maxBytesAcrossWorkers
+          : undefined,
+    };
+  }
+
+  if (integratedPointGeometryWorkerSlotCount === 0) {
+    return {
+      pointSample: maxBytesAcrossWorkers,
+      integratedPointGeometry: undefined,
+    };
+  }
+
+  if (maxBytesAcrossWorkers < 2) {
+    throw new Error(
+      "maxDecodedPointDataViewBytesAcrossWorkers must provide at least one byte for each active decoded point data worker pool.",
+    );
+  }
+
+  const totalWorkerSlotCount =
+    pointSampleWorkerSlotCount + integratedPointGeometryWorkerSlotCount;
+  const proportionalPointSampleBytes = Math.floor(
+    (maxBytesAcrossWorkers * pointSampleWorkerSlotCount) / totalWorkerSlotCount,
+  );
+  const pointSample = Math.max(
+    1,
+    Math.min(maxBytesAcrossWorkers - 1, proportionalPointSampleBytes),
+  );
+
+  return {
+    pointSample,
+    integratedPointGeometry: maxBytesAcrossWorkers - pointSample,
+  };
+}
+
 function readPositiveIntegerOption(
   optionName: string,
   value: number | undefined,
@@ -3928,6 +4454,21 @@ function readPositiveIntegerOption(
 ): number {
   if (value === undefined) {
     return fallback;
+  }
+
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${optionName} must be a positive integer.`);
+  }
+
+  return value;
+}
+
+function readOptionalPositiveIntegerOption(
+  optionName: string,
+  value: number | undefined,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
   }
 
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -3950,6 +4491,26 @@ function orderAutomaticProgressiveNodes(
       ? compareNodesByProgressiveSourcePoints
       : compareNodesByProgressiveWeight,
   );
+}
+
+function createAutomaticRenderNodesWithAncestors(
+  selectedNodes: readonly CopcHierarchyNodeSummary[],
+  hierarchy: CopcHierarchySummary,
+): readonly CopcHierarchyNodeSummary[] {
+  const nodesByKey = new Map(hierarchy.nodes.map((node) => [node.key, node]));
+  const renderNodes = new Map<string, CopcHierarchyNodeSummary>();
+
+  selectedNodes.forEach((selectedNode) => {
+    createCopcNodeAncestorKeys(selectedNode.key).forEach((nodeKey) => {
+      const node = nodesByKey.get(nodeKey);
+
+      if (node) {
+        renderNodes.set(nodeKey, node);
+      }
+    });
+  });
+
+  return [...renderNodes.values()];
 }
 
 function compareNodesByProgressiveWeight(

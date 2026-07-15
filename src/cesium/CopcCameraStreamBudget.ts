@@ -1,6 +1,8 @@
 export interface CopcCameraStreamBudgetSummaryOptions {
   readonly configuredRenderedPointBudget: number;
   readonly effectiveRenderedPointBudget: number;
+  /** Current zoom-band ceiling after applying the configured hard cap. */
+  readonly maxRenderedPointBudget?: number;
   readonly effectiveSourcePointBudget: number;
   readonly maxSourcePointBudget: number;
   readonly effectiveNodePointBudget: number;
@@ -119,11 +121,17 @@ const DEFAULT_RENDERED_BUDGET_NODE_POINT_DATA_BYTES_PER_POINT = 96;
 export function formatCopcCameraStreamBudgetSummary(
   options: CopcCameraStreamBudgetSummaryOptions,
 ): string {
+  const maxRenderedPointBudget =
+    options.maxRenderedPointBudget ?? options.configuredRenderedPointBudget;
   const pointBudgetText = formatAdaptivePointBudget(
     options.effectiveRenderedPointBudget,
-    options.configuredRenderedPointBudget,
+    maxRenderedPointBudget,
     "render pts cap",
   );
+  const configuredPointBudgetText =
+    maxRenderedPointBudget === options.configuredRenderedPointBudget
+      ? ""
+      : ` (${options.configuredRenderedPointBudget.toLocaleString()} configured max)`;
   const sourcePointBudgetText = formatAdaptivePointBudget(
     options.effectiveSourcePointBudget,
     options.maxSourcePointBudget,
@@ -146,7 +154,7 @@ export function formatCopcCameraStreamBudgetSummary(
     "per-node",
     options.formatBytes,
   );
-  const budgetText = `${pointBudgetText}, ${sourcePointBudgetText}, ${nodePointBudgetText}, ${pointDataLengthBudgetText}, ${nodePointDataLengthBudgetText}`;
+  const budgetText = `${pointBudgetText}${configuredPointBudgetText}, ${sourcePointBudgetText}, ${nodePointBudgetText}, ${pointDataLengthBudgetText}, ${nodePointDataLengthBudgetText}`;
 
   return options.lastRenderedPointBudget === undefined
     ? budgetText

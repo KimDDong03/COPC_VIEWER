@@ -34,6 +34,34 @@ export interface CopcCameraStreamLodSettingsOptions {
   readonly baseMaxHierarchyPages?: number;
 }
 
+/**
+ * Limits hierarchy refinement to the deepest complete frontier that the
+ * current request can actually render. A screen-space target can be deeper
+ * than the resource-bounded selected frontier; chasing that unreachable depth
+ * can churn a bounded hierarchy cache without changing the visible frame.
+ */
+export function resolveCopcCameraStreamHierarchyExpansionDepth(
+  configuredMaxDepth: number,
+  selectedDepth: number,
+): number {
+  if (!Number.isSafeInteger(configuredMaxDepth) || configuredMaxDepth < 0) {
+    throw new Error("configuredMaxDepth must be a non-negative integer.");
+  }
+  if (!Number.isSafeInteger(selectedDepth) || selectedDepth < 0) {
+    throw new Error("selectedDepth must be a non-negative integer.");
+  }
+
+  return Math.min(configuredMaxDepth, selectedDepth);
+}
+
+export type CopcCameraStreamZoomRefinementSettings = Pick<
+  CopcCameraStreamLodSettings,
+  | "cameraHeightMeters"
+  | "maxDepth"
+  | "targetNodeScreenPixels"
+  | "targetPointSpacingScreenPixels"
+>;
+
 export interface CopcCameraStreamPrefetchLodSettingsLike {
   readonly maxNodePointCount: number;
   readonly maxRenderedPointCount: number;
@@ -192,7 +220,7 @@ const DEFAULT_CAMERA_STREAM_RUNTIME_SETTINGS: CopcCameraStreamRuntimeSettings = 
   detailWarmupMaxNodeCount: 64,
   detailWarmupMinInitialCoverageRatio: 0.35,
   detailWarmupPointCountPerNode: 2_000,
-  fastRendererProgressBatchNodeCount: 1,
+  fastRendererProgressBatchNodeCount: 2,
   maxReusedBackgroundStreams: 1,
   reusedBackgroundStreamGraceMilliseconds: 350,
   reuseMinExactNodeOverlapRatio: 0.25,
@@ -221,10 +249,10 @@ const CAMERA_STREAM_LOD_LEVELS = [
     targetPointSpacingScreenPixels: 1.5,
     nodeMultiplier: 3,
     pointBudgetMultiplier: 2,
-    nodePointBudgetMultiplier: 0.35,
-    nodePointDataLengthMultiplier: 0.35,
+    nodePointBudgetMultiplier: 1,
+    nodePointDataLengthMultiplier: 1,
     maxHierarchyPages: 5,
-    detailMaxPointCountPerNode: 3_000,
+    detailMaxPointCountPerNode: 6_500,
     detailMinFinalNodeCount: 16,
     detailTargetPointCountPerNode: 1_500,
   },
@@ -235,9 +263,9 @@ const CAMERA_STREAM_LOD_LEVELS = [
     targetNodeScreenPixels: 64,
     targetPointSpacingScreenPixels: 2.25,
     nodeMultiplier: 2,
-    pointBudgetMultiplier: 1.5,
-    nodePointBudgetMultiplier: 0.55,
-    nodePointDataLengthMultiplier: 0.55,
+    pointBudgetMultiplier: 2,
+    nodePointBudgetMultiplier: 1,
+    nodePointDataLengthMultiplier: 1,
     maxHierarchyPages: 4,
     detailMaxPointCountPerNode: 6_500,
     detailMinFinalNodeCount: 12,
@@ -250,11 +278,11 @@ const CAMERA_STREAM_LOD_LEVELS = [
     targetNodeScreenPixels: 80,
     targetPointSpacingScreenPixels: 3.5,
     nodeMultiplier: 1,
-    pointBudgetMultiplier: 1,
-    nodePointBudgetMultiplier: 0.5,
-    nodePointDataLengthMultiplier: 0.5,
+    pointBudgetMultiplier: 2,
+    nodePointBudgetMultiplier: 1,
+    nodePointDataLengthMultiplier: 1,
     maxHierarchyPages: 4,
-    detailMaxPointCountPerNode: 5_000,
+    detailMaxPointCountPerNode: 6_000,
     detailMinFinalNodeCount: 8,
     detailTargetPointCountPerNode: 2_500,
   },
@@ -266,8 +294,8 @@ const CAMERA_STREAM_LOD_LEVELS = [
     targetPointSpacingScreenPixels: 5,
     nodeMultiplier: 1,
     pointBudgetMultiplier: 1,
-    nodePointBudgetMultiplier: 0.65,
-    nodePointDataLengthMultiplier: 0.65,
+    nodePointBudgetMultiplier: 1,
+    nodePointDataLengthMultiplier: 1,
     maxHierarchyPages: 3,
     detailMaxPointCountPerNode: 6_000,
     detailMinFinalNodeCount: 6,
@@ -374,6 +402,27 @@ export function createCopcCameraStreamLodSettings(
     detailMinFinalNodeCount: lodLevel.detailMinFinalNodeCount,
     detailTargetPointCountPerNode: lodLevel.detailTargetPointCountPerNode,
   };
+}
+
+export function isCopcCameraStreamZoomRefinement(
+  previous: CopcCameraStreamZoomRefinementSettings | undefined,
+  next: CopcCameraStreamZoomRefinementSettings,
+): boolean {
+  if (!previous) {
+    return false;
+  }
+
+  const hasStricterLodTarget =
+    next.maxDepth > previous.maxDepth ||
+    next.targetNodeScreenPixels < previous.targetNodeScreenPixels ||
+    next.targetPointSpacingScreenPixels <
+      previous.targetPointSpacingScreenPixels;
+  const isSignificantlyCloser =
+    Number.isFinite(next.cameraHeightMeters) &&
+    (!Number.isFinite(previous.cameraHeightMeters) ||
+      next.cameraHeightMeters < previous.cameraHeightMeters * 0.9);
+
+  return hasStricterLodTarget || isSignificantlyCloser;
 }
 
 export function createCopcCameraStreamPrefetchSettings(
