@@ -922,47 +922,64 @@ function createSmokeFlow(baseUrl) {
     totalPoints: document.querySelector("#copc-hud-total-points")?.textContent,
     renderedSamples: document.querySelector("#copc-hud-rendered-samples")?.textContent,
   }));
-  const pendingSourceRoutePattern = "**/*pending-source-race=1";
-  await page.route(pendingSourceRoutePattern, async (route) => {
-    await page.waitForTimeout(1_500);
-    await route.continue().catch(() => undefined);
-  });
   await page.getByLabel("Sample").selectOption("custom");
   await page
     .getByRole("textbox", { name: "COPC URL" })
-    .fill(millsiteUrl + "?pending-source-race=1");
+    .fill(millsiteUrl);
   await page.getByRole("textbox", { name: "Source CRS" }).fill("EPSG:6341");
   await page
     .getByRole("textbox", { name: "proj4 definition" })
     .fill(millsiteDefinition);
-  await page.getByRole("button", { name: "Inspect" }).click();
-  const pendingSourceWasBusy =
-    (await page.locator("#copc-form").getAttribute("aria-busy")) === "true";
-  await page.getByRole("textbox", { name: "Source CRS" }).fill("");
-  await page.getByRole("button", { name: "Inspect" }).click();
-  await page.waitForTimeout(1_750);
-  await page.unroute(pendingSourceRoutePattern);
-  await check(
-    async () => {
-      const preservedHudAfterInvalidSource = await page.evaluate(() => ({
-        dataset: document.querySelector("#copc-hud-dataset")?.textContent,
-        totalPoints: document.querySelector("#copc-hud-total-points")?.textContent,
-        renderedSamples: document.querySelector("#copc-hud-rendered-samples")?.textContent,
-      }));
+  const pendingSourceWasBusy = await page.evaluate(() => {
+    const form = document.querySelector("#copc-form");
+    const sourceCrs = document.querySelector("#copc-source-crs");
 
-      return (
+    if (!(form instanceof HTMLFormElement)) {
+      throw new Error("COPC form was not found for the source race smoke.");
+    }
+
+    if (!(sourceCrs instanceof HTMLInputElement)) {
+      throw new Error("Source CRS input was not found for the source race smoke.");
+    }
+
+    form.requestSubmit();
+    const wasBusy = form.getAttribute("aria-busy") === "true";
+    sourceCrs.value = "";
+    form.requestSubmit();
+    return wasBusy;
+  });
+  await page.waitForTimeout(250);
+  const preservedHudAfterInvalidSource = await page.evaluate(() => ({
+    dataset: document.querySelector("#copc-hud-dataset")?.textContent,
+    totalPoints: document.querySelector("#copc-hud-total-points")?.textContent,
+    renderedSamples: document.querySelector("#copc-hud-rendered-samples")?.textContent,
+  }));
+  const pendingSourceRaceStage = await hudText("#copc-hud-stage");
+  const pendingSourceRaceStatus =
+    (await page.locator("#copc-status").textContent()) ?? "";
+  const pendingSourceRaceAriaBusy =
+    await page.locator("#copc-form").getAttribute("aria-busy");
+  const pendingSourceRaceCanvasCount = await page.locator("canvas").count();
+  await check(
+    async () =>
         pendingSourceWasBusy &&
         JSON.stringify(preservedHudAfterInvalidSource) ===
           JSON.stringify(preservedHudBeforeInvalidSource) &&
-        (await hudText("#copc-hud-stage")) === "Needs attention" &&
-        ((await page.locator("#copc-status").textContent()) ?? "").includes(
+        pendingSourceRaceStage === "Needs attention" &&
+        pendingSourceRaceStatus.includes(
           "Keeping the last valid view.",
         ) &&
-        (await page.locator("#copc-form").getAttribute("aria-busy")) === null &&
-        (await page.locator("canvas").count()) > 0
-      );
-    },
-    "Invalid source input did not supersede the pending load while preserving the last valid cloud and HUD evidence.",
+        pendingSourceRaceAriaBusy === null &&
+        pendingSourceRaceCanvasCount > 0,
+    \`Invalid source input did not supersede the pending load while preserving the last valid cloud and HUD evidence: \${JSON.stringify({
+      pendingSourceWasBusy,
+      preservedHudBeforeInvalidSource,
+      preservedHudAfterInvalidSource,
+      stage: pendingSourceRaceStage,
+      status: pendingSourceRaceStatus,
+      ariaBusy: pendingSourceRaceAriaBusy,
+      canvasCount: pendingSourceRaceCanvasCount,
+    })}\`,
   );
 
   await page.getByRole("textbox", { name: "COPC URL" }).fill(millsiteUrl);
