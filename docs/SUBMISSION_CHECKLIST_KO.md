@@ -21,6 +21,9 @@
 - [ ] 공개 저장소를 로그아웃 상태에서도 읽을 수 있다.
 - [ ] 깨끗한 clone에서 Node 22와 지정 npm 버전으로 `npm ci`가 통과한다.
 - [ ] 출품 장비에서 `npm run qc:contest-device`가 통과한다.
+- [ ] 깨끗한 Git worktree에서 생성된
+  `output/contest-evidence/contest-evidence-manifest.json`을 보존하고
+  `npm run evidence:contest:check`가 통과한다.
 - [ ] `output/`의 최종 JSON·PNG·패키지 산출물을 별도 제출 폴더에 보존했다.
 - [ ] 과거 샘플·스크린샷이 섞이지 않도록 clean clone의 최종 QC 산출물만
   제출 폴더에 복사했다.
@@ -88,9 +91,13 @@ npm ci
 npm run license:evidence:self-test
 npm audit
 npm run qc:contest-device
+npm run evidence:contest:check
 git diff --check
 git status --short
 ```
 
+`qc:contest-device`는 마지막에 매니페스트 생성과 검사를 모두 실행하므로
+다음 줄의 `evidence:contest:check`는 제출 직전 바이트가 그대로인지 확인하는
+의도적인 재검사다. 이 절차는 변경 사항이 없는 clean worktree에서 실행한다.
 명령 출력, 최종 커밋 SHA, 실제 GPU 이름, 실행 시각을 함께 보존한다. 외부
 서비스 설정과 접수 완료 여부는 자동화된 저장소 QC가 대신 증명하지 못한다.

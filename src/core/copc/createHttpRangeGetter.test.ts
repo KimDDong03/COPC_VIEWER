@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHttpRangeGetter } from "./createHttpRangeGetter";
+import {
+  CopcRangeRequestError,
+  createHttpRangeGetter,
+  type CopcRangeRequestErrorCode,
+} from "./createHttpRangeGetter";
 
 describe("createHttpRangeGetter", () => {
   afterEach(() => {
@@ -97,7 +101,14 @@ describe("createHttpRangeGetter", () => {
       { requestTimeoutMilliseconds: 25 },
     );
     const pending = getter(10, 12);
-    const rejection = expect(pending).rejects.toThrow(
+    const rejection = expectRangeRequestError(
+      pending,
+      {
+        code: "timeout",
+        begin: 10,
+        end: 12,
+        retriable: false,
+      },
       "COPC range request timed out after 25 milliseconds.",
     );
 
@@ -132,7 +143,14 @@ describe("createHttpRangeGetter", () => {
       { requestTimeoutMilliseconds: 25 },
     );
     const pending = getter(10, 12);
-    const rejection = expect(pending).rejects.toThrow(
+    const rejection = expectRangeRequestError(
+      pending,
+      {
+        code: "timeout",
+        begin: 10,
+        end: 12,
+        retriable: false,
+      },
       "COPC range request timed out after 25 milliseconds.",
     );
 
@@ -199,7 +217,14 @@ describe("createHttpRangeGetter", () => {
       },
     );
     const pending = getter(10, 12);
-    const rejection = expect(pending).rejects.toThrow(
+    const rejection = expectRangeRequestError(
+      pending,
+      {
+        code: "timeout",
+        begin: 10,
+        end: 12,
+        retriable: false,
+      },
       "COPC range request timed out after 25 milliseconds.",
     );
 
@@ -259,6 +284,43 @@ describe("createHttpRangeGetter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("reports an exhausted network or CORS failure with its cause", async () => {
+    vi.useFakeTimers();
+    const cause = new TypeError("Failed to fetch");
+    const fetchMock = vi.fn().mockRejectedValue(cause);
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+    const rejection = expectRangeRequestError(
+      getter(20, 22),
+      {
+        code: "network-or-cors",
+        begin: 20,
+        end: 22,
+        retriable: true,
+      },
+      "Failed to fetch",
+    );
+
+    await vi.runAllTimersAsync();
+    const error = await rejection;
+    expect(error.cause).toBe(cause);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry or wrap non-TypeError fetch failures", async () => {
+    const cause = new Error("unexpected fetch adapter failure");
+    const fetchMock = vi.fn().mockRejectedValue(cause);
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+
+    await expect(getter(20, 22)).rejects.toBe(cause);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("retries retriable HTTP range failures", async () => {
     const fetchMock = vi
       .fn()
@@ -278,6 +340,32 @@ describe("createHttpRangeGetter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps retriable HTTP status metadata after retry exhaustion", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 503 }),
+    );
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+    const rejection = expectRangeRequestError(
+      getter(30, 32),
+      {
+        code: "http-status",
+        begin: 30,
+        end: 32,
+        status: 503,
+        retriable: true,
+      },
+      "COPC range request failed with HTTP 503.",
+    );
+
+    await vi.runAllTimersAsync();
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("does not retry non-retriable HTTP range failures", async () => {
     const fetchMock = vi.fn(
       async () => new Response(null, { status: 404 }),
@@ -287,7 +375,15 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/missing.copc.laz");
 
-    await expect(getter(40, 42)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(40, 42),
+      {
+        code: "http-status",
+        begin: 40,
+        end: 42,
+        status: 404,
+        retriable: false,
+      },
       "COPC range request failed with HTTP 404.",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -302,7 +398,15 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
 
-    await expect(getter(10, 12)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(10, 12),
+      {
+        code: "range-not-supported",
+        begin: 10,
+        end: 12,
+        status: 200,
+        retriable: false,
+      },
       "COPC source must support HTTP range requests.",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -320,7 +424,15 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
 
-    await expect(getter(10, 12)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(10, 12),
+      {
+        code: "malformed-content-range",
+        begin: 10,
+        end: 12,
+        status: 206,
+        retriable: false,
+      },
       "COPC range response has malformed Content-Range: bytes invalid.",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -338,7 +450,15 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
 
-    await expect(getter(10, 12)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(10, 12),
+      {
+        code: "mismatched-content-range",
+        begin: 10,
+        end: 12,
+        status: 206,
+        retriable: false,
+      },
       "COPC range response Content-Range mismatch: expected bytes 10-11, received bytes 11-12.",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -356,10 +476,42 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
 
-    await expect(getter(10, 12)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(10, 12),
+      {
+        code: "body-length-mismatch",
+        begin: 10,
+        end: 12,
+        status: 206,
+        retriable: true,
+      },
       "COPC range response body length mismatch: expected 2 bytes, received 1.",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries a transient truncated range response body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), {
+        headers: {
+          "Content-Range": "bytes 10-11/100",
+        },
+        status: 206,
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), {
+        headers: {
+          "Content-Range": "bytes 10-11/100",
+        },
+        status: 206,
+      }));
+    vi.stubGlobal("location", { href: "http://localhost:3000/viewer/" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
+
+    await expect(getter(10, 12)).resolves.toEqual(new Uint8Array([1, 2]));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects oversized range response bodies without accepting extra bytes", async () => {
@@ -372,9 +524,49 @@ describe("createHttpRangeGetter", () => {
 
     const getter = createHttpRangeGetter("/copc-samples/sample.copc.laz");
 
-    await expect(getter(10, 12)).rejects.toThrow(
+    await expectRangeRequestError(
+      getter(10, 12),
+      {
+        code: "body-length-mismatch",
+        begin: 10,
+        end: 12,
+        status: 206,
+        retriable: true,
+      },
       "COPC range response body length mismatch: expected 2 bytes, received 3.",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
+
+interface ExpectedCopcRangeRequestError {
+  readonly code: CopcRangeRequestErrorCode;
+  readonly begin: number;
+  readonly end: number;
+  readonly status?: number;
+  readonly retriable: boolean;
+}
+
+async function expectRangeRequestError(
+  promise: Promise<unknown>,
+  expected: ExpectedCopcRangeRequestError,
+  message: string,
+): Promise<CopcRangeRequestError> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(CopcRangeRequestError);
+
+    const rangeError = error as CopcRangeRequestError;
+    expect(rangeError.name).toBe("CopcRangeRequestError");
+    expect(rangeError.message).toBe(message);
+    expect(rangeError.code).toBe(expected.code);
+    expect(rangeError.begin).toBe(expected.begin);
+    expect(rangeError.end).toBe(expected.end);
+    expect(rangeError.status).toBe(expected.status);
+    expect(rangeError.retriable).toBe(expected.retriable);
+    return rangeError;
+  }
+
+  throw new Error("Expected the COPC range request to reject.");
+}

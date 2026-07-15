@@ -47,8 +47,11 @@ export {
   type CopcRangeGetterOptions,
 } from "./copc/createCopcRangeGetter";
 export {
+  CopcRangeRequestError,
   createHttpRangeGetter,
   type CopcHttpRangeGetterOptions,
+  type CopcRangeRequestErrorCode,
+  type CopcRangeRequestErrorOptions,
 } from "./copc/createHttpRangeGetter";
 export type {
   CopcPointSampleWorkerRequest,

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
 import { probeLiveCopcRangeSource } from "./live-copc-range-check.mjs";
+import { createRunEvidence } from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -30,6 +31,7 @@ const outputPath = path.resolve(
   readStringArg("--output") ?? defaultOutputPath,
 );
 const results = [];
+const runEvidence = await createRunEvidence({ repoRoot });
 
 for (const source of sources) {
   console.log(`Probing live COPC HTTP Range source: ${source.id}`);
@@ -61,6 +63,7 @@ const report = {
         : "failed",
   classification,
   timeoutMilliseconds,
+  runEvidence,
   results,
 };
 

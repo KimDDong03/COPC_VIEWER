@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/ci.yml/badge.svg)](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/ci.yml)
 [![Live COPC Browser Evidence](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/example-smoke.yml/badge.svg)](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/example-smoke.yml)
+[![GitHub Pages](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/pages.yml/badge.svg)](https://github.com/KimDDong03/COPC_VIEWER/actions/workflows/pages.yml)
 
 CesiumJS-native COPC point cloud streaming and visualization library.
+
+**Live demo:** <https://kimddong03.github.io/COPC_VIEWER/>
 
 `copc-cesium` lets a CesiumJS developer load COPC point cloud data directly from a COPC file or URL, inspect its hierarchy, range-read selected point nodes, transform source coordinates, and render sampled points in a Cesium scene without pre-converting the data to 3D Tiles.
 
@@ -47,6 +50,9 @@ ESM execution is not supported. Node.js 22 and npm 11 are the repository's
 development, build, and release-QC toolchain.
 
 ## Run
+
+Open the [public reference viewer](https://kimddong03.github.io/COPC_VIEWER/),
+or run the same example locally as follows.
 
 Use Node.js 22 and preferably npm 11.16.0. The repository `devEngines` contract
 rejects a different Node runtime and warns on an older npm without imposing a
@@ -208,6 +214,8 @@ npm run benchmark:smoothness:cold-reset
 npm run license:evidence:check
 npm run qc
 npm run qc:contest-device
+npm run evidence:contest
+npm run evidence:contest:check
 npm run smoke:example
 npm run smoke:example:file
 npm run smoke:package
@@ -215,6 +223,24 @@ npm run smoke:package
 
 `npm run build:lib` writes the library package contract to `dist/lib`.
 `npm run build:example` writes the runnable demo bundle to `dist/example`.
+The default public base is `/`, so local development, preview, CI browser smoke,
+and package smoke keep their existing URLs. A repository-site build sets an
+explicit pathname through `COPC_VIEWER_PUBLIC_BASE`; for example, PowerShell can
+reproduce the Pages artifact with:
+
+```powershell
+$env:COPC_VIEWER_PUBLIC_BASE = "/COPC_VIEWER/"
+npm run build:example
+npm run verify:pages
+Remove-Item Env:COPC_VIEWER_PUBLIC_BASE
+```
+
+The pinned `GitHub Pages` workflow obtains the repository's actual Pages
+`base_path`, builds with that value, verifies every HTML asset plus Cesium,
+point-worker, and LAZ WASM paths, and only then uploads and deploys
+`dist/example`. The repository owner must select **GitHub Actions** as the Pages
+source before the first deployment; the workflow does not change repository
+settings itself.
 In the latest 2026-07-14 release-candidate build snapshot, Vite split the
 projected-CRS dependency out of the application entry: the uncompressed
 generated JavaScript was 367.93 kB for the app entry and 131.70 kB for the
@@ -261,7 +287,7 @@ machine-specific regression observations from a dirty release-candidate source
 snapshot, not universal performance guarantees.
 `npm run license:evidence` regenerates [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [SPDX 2.3 SBOM](docs/sbom.spdx.json) from the lockfile and installed dependency manifests. `npm run license:evidence:check` is the read-only artifact gate. `npm run license:evidence:self-test` additionally proves that package/notice deletion, unreviewed licenses, unknown or duplicate packages, and broken relationship endpoints are rejected while platform-specific optional packages remain portable; CI and release QC use this stronger form.
 `npm run qc:product` runs the deterministic product gate: tests, license/SBOM evidence, build, and `git diff --check`. `npm run qc:live-copc` separately runs the strict live-range evidence, the latency-sensitive cold-detail camera-stream gate before other GPU workloads, the live Autzen renderer benchmark, contest/warm camera-stream QC, package smoke, remote browser smoke, and local-file browser smoke. `npm run qc` runs both groups sequentially and remains the blocking release command. Its machine-readable result is `output/qc/qc-status.json`; external host/network failure is reported as `external-source-unavailable` with exit code 2 instead of as a product regression. Keep the live checks sequential because the renderer and browser smoke commands rebuild the same `dist/example` output directory.
-`npm run qc:contest-device` runs the full release chain without duplicating the one-session warm check, then performs the stricter three-fresh-session median regression gate. The current approved baseline targets the recorded RTX 3060 WebGL renderer and deliberately rejects incomparable adapters. The live range and unchanged absolute/relative performance assertions remain blocking; the new classification only states whether a verdict was actually possible.
+`npm run qc:contest-device` runs the full release chain without duplicating the one-session warm check, then performs the stricter three-fresh-session median regression gate. It finishes by running `npm run evidence:contest` and `npm run evidence:contest:check`, so the successful JSON reports, exact package tarball and checksum, browser-result contracts, screenshots, and fresh regression sessions are byte-for-byte bound into `output/contest-evidence/contest-evidence-manifest.json`. Run this final gate from a clean Git worktree: manifest generation intentionally rejects dirty source state. `npm run evidence:contest` can rebuild the manifest from an already complete clean-worktree evidence set, while the read-only `npm run evidence:contest:check` rejects missing, stale, changed, or source-mismatched artifacts. The current approved baseline targets the recorded RTX 3060 WebGL renderer and deliberately rejects incomparable adapters. The live range and unchanged absolute/relative performance assertions remain blocking; the new classification only states whether a verdict was actually possible.
 The strict range probe, installed-package consumer proof, and the same remote
 URL and local-file browser rendering smoke run in the separate GitHub Actions
 workflow `Live COPC Browser Evidence` for pushes, pull requests, and manual

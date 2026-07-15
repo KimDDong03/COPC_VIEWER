@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
 import { classifyLiveCopcExecutionFailure } from "./live-copc-range-check.mjs";
+import { createRunEvidence } from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -58,6 +59,7 @@ const confirmReviewedBaseline = process.argv.includes(
   "--confirm-reviewed-baseline",
 );
 const sessionCount = readSessionCount();
+const runEvidence = await createRunEvidence({ repoRoot });
 const profileContractFields = [
   "profile",
   "repeatCount",
@@ -637,6 +639,7 @@ function writeRunStatus(fields) {
           url: liveSourceUrl,
           rangeEvidencePath: liveRangeEvidencePath,
         },
+        runEvidence,
         ...fields,
       },
       null,

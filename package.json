@@ -35,7 +35,7 @@
   "bugs": {
     "url": "https://github.com/KimDDong03/COPC_VIEWER/issues"
   },
-  "homepage": "https://github.com/KimDDong03/COPC_VIEWER#readme",
+  "homepage": "https://kimddong03.github.io/COPC_VIEWER/",
   "type": "module",
   "main": "./dist/lib/index.js",
   "module": "./dist/lib/index.js",
@@ -84,6 +84,8 @@
     "benchmark:smoothness:cold-detail": "node scripts/smoothness-qc.mjs --cold-detail",
     "benchmark:smoothness:zoom-detail": "node scripts/smoothness-qc.mjs --zoom-detail",
     "benchmark:smoothness:warm-zoom-detail": "node scripts/smoothness-qc.mjs --warm-zoom-detail",
+    "evidence:contest": "node scripts/contest-evidence-manifest.mjs",
+    "evidence:contest:check": "node scripts/contest-evidence-manifest.mjs --check",
     "license:evidence": "node scripts/generate-license-evidence.mjs",
     "license:evidence:check": "node scripts/generate-license-evidence.mjs --check",
     "license:evidence:self-test": "node scripts/generate-license-evidence.mjs --self-test",
@@ -91,12 +93,13 @@
     "qc": "node scripts/qc.mjs",
     "qc:product": "node scripts/qc.mjs --product-only",
     "qc:live-copc": "node scripts/qc.mjs --live-only",
-    "qc:contest-device": "node scripts/qc.mjs --omit-warm-zoom-detail && npm run benchmark:smoothness:regression",
+    "qc:contest-device": "node scripts/qc.mjs --omit-warm-zoom-detail && npm run benchmark:smoothness:regression && npm run evidence:contest && npm run evidence:contest:check",
     "smoke:example": "node scripts/smoke-example.mjs",
     "smoke:example:file": "node scripts/smoke-example.mjs --local-file",
     "smoke:example:install-browser": "playwright-cli install-browser chrome-for-testing",
     "smoke:package": "node scripts/smoke-package.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:pages": "node scripts/verify-pages-build.mjs"
   },
   "dependencies": {
     "@types/emscripten": "^1.41.5",

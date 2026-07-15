@@ -29,6 +29,7 @@ npm ci
 npm run license:evidence:self-test
 npm audit
 npm run qc:contest-device
+npm run evidence:contest:check
 npm pack --dry-run
 git diff --check
 git status --short
@@ -43,6 +44,11 @@ and CodeQL runs for that same SHA.
 Also confirm `output/package-smoke/browser-result.json` retains the same
 validated `runEvidence` together with the exact `releaseCandidateArtifact`
 tarball byte length and SHA-256; this is the source-to-candidate identity link.
+The contest-device gate must run from a clean worktree and finish with a passing
+`output/contest-evidence/contest-evidence-manifest.json`. Its final
+`evidence:contest:check` binds the required JSON, screenshots, regression
+sessions, exact package tarball, and checksum to the same source state and
+rejects any artifact changed after manifest generation.
 
 ## 3. Stage a candidate
 

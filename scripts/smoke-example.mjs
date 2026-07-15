@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -10,6 +11,10 @@ import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
 import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 import { isInteractiveRenderReady } from "./interactive-render-status-policy.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
+import {
+  createRunEvidence,
+  validateRunEvidenceSourceState,
+} from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -24,6 +29,7 @@ const smokeRoot = path.join(outputRoot, "example-smoke");
 const localFileSampleRoot = path.join(outputRoot, "local-copc-samples");
 const screenshotDir = path.join(outputRoot, "playwright");
 const smokeFlowPath = path.join(smokeRoot, "smoke-example-flow.mjs");
+const smokeResultPath = path.join(smokeRoot, "smoke-example-result.json");
 const autzenScreenshotPath = path.join(
   screenshotDir,
   "smoke-example-autzen-stream.png",
@@ -50,6 +56,7 @@ const npmCommand = "npm";
 const shouldRunLocalFileSmoke =
   process.argv.includes("--local-file") ||
   process.env.COPC_SMOKE_LOCAL_FILE === "1";
+const runEvidence = await createRunEvidence({ repoRoot });
 
 function assertInside(parent, target) {
   const relative = path.relative(parent, target);
@@ -416,6 +423,47 @@ function createSmokeFlow(baseUrl) {
     return match ? Number(match[1].replaceAll(",", "")) : 0;
   }
 
+  async function hudText(selector) {
+    return (await page.locator(selector).textContent())?.trim() ?? "";
+  }
+
+  async function hudCount(selector) {
+    const text = await hudText(selector);
+    return Number(text.replaceAll(",", ""));
+  }
+
+  async function isFullyInViewport(selector) {
+    const bounds = await page.locator(selector).boundingBox();
+    const viewport = page.viewportSize();
+
+    return Boolean(
+      bounds &&
+        viewport &&
+        bounds.x >= 0 &&
+        bounds.y >= 0 &&
+        bounds.x + bounds.width <= viewport.width &&
+        bounds.y + bounds.height <= viewport.height,
+    );
+  }
+
+  async function waitForTerminalRequestAfter(previousRequestId) {
+    await page.waitForFunction(
+      (previousRequestId) => {
+        const status = window.__copcBasicViewerBenchmark?.getStatus();
+        return (
+          (status?.cameraStreamRequestId ?? -1) > previousRequestId &&
+          status?.cameraStreamVisualQuality?.isTerminalReady === true
+        );
+      },
+      previousRequestId,
+      { timeout: 120_000 },
+    );
+
+    return page.evaluate(
+      () => window.__copcBasicViewerBenchmark?.getStatus(),
+    );
+  }
+
   function normalizedCameraStreamDensity(status) {
     const pointCount = parsePointCount(status?.rendererTiming ?? "");
     const frontierNodeCount =
@@ -509,6 +557,78 @@ function createSmokeFlow(baseUrl) {
     "Default point geometry cache stats were not reported.",
   );
   autzenOverviewStatus = await waitForCameraStreamCompleteStatus();
+  await check(
+    async () => (await hudText("#copc-hud-dataset")) === "Autzen classified",
+    "Compact HUD did not identify the initial dataset.",
+  );
+  await check(
+    async () => (await hudText("#copc-hud-stage")) === "Ready",
+    "Compact HUD did not report the terminal Ready stage.",
+  );
+  await check(
+    async () =>
+      (await hudCount("#copc-hud-total-points")) > 0 &&
+      (await hudCount("#copc-hud-source-points")) > 0 &&
+      (await hudCount("#copc-hud-rendered-samples")) >=
+        minDefaultInteractivePointCount &&
+      (await hudCount("#copc-hud-node-count")) > 0,
+    "Compact HUD did not expose positive total, source, rendered, and node counts.",
+  );
+  await check(
+    async () =>
+      (await hudText("#copc-hud-compressed-bytes")) !== "—" &&
+      (await hudText("#copc-hud-coverage")) === "100%",
+    "Compact HUD did not expose compressed-byte and terminal coverage evidence.",
+  );
+  await check(
+    async () =>
+      (await page.locator("#copc-status").getAttribute("role")) === "status" &&
+      (await page.locator("#copc-status").getAttribute("aria-live")) ===
+        "polite",
+    "COPC status is not exposed as a polite live region.",
+  );
+  await check(
+    async () =>
+      (await isFullyInViewport("#copc-demo-hud")) &&
+      (await isFullyInViewport("#copc-status")),
+    "Compact HUD or live status was outside the initial viewport.",
+  );
+  await check(
+    async () =>
+      !(await page.locator("#copc-advanced-controls").evaluate(
+        (details) => details.open,
+      )),
+    "Advanced controls should be collapsed on the presentation-first view.",
+  );
+  await check(
+    async () => page.locator("#copc-fit-cloud").isEnabled(),
+    "Fit cloud should be enabled after COPC metadata loads.",
+  );
+
+  await page.locator("#copc-panel-toggle").click();
+  await check(
+    async () =>
+      (await page.locator("#copc-panel-toggle").getAttribute("aria-expanded")) ===
+        "false" &&
+      (await page.locator("#copc-panel-body").isHidden()),
+    "Panel collapse did not hide the body or update aria-expanded.",
+  );
+  await page.locator("#copc-panel-toggle").click();
+  await check(
+    async () =>
+      (await page.locator("#copc-panel-toggle").getAttribute("aria-expanded")) ===
+        "true" &&
+      (await page.locator("#copc-panel-body").isVisible()),
+    "Panel expand did not restore the body or update aria-expanded.",
+  );
+
+  const preFitRequestId = autzenOverviewStatus?.cameraStreamRequestId ?? -1;
+  await page.locator("#copc-fit-cloud").click();
+  autzenOverviewStatus = await waitForTerminalRequestAfter(preFitRequestId);
+  await check(
+    async () => (await hudText("#copc-hud-stage")) === "Ready",
+    "Fit cloud did not converge back to a terminal Ready view.",
+  );
   await check(
     async () => page.locator("#copc-source-crs").isDisabled(),
     "Projection controls should be disabled for sample presets.",
@@ -659,6 +779,9 @@ function createSmokeFlow(baseUrl) {
       autzenPrefetchStatus?.cameraStreamPrefetch,
     \`Visible camera-stream prefetch metadata did not match the settled runtime status (visible: \${await metadataValue("Camera stream prefetch") ?? "missing"}; runtime: \${autzenPrefetchStatus?.cameraStreamPrefetch ?? "missing"}).\`,
   );
+  await page.locator("#copc-advanced-controls").evaluate((details) => {
+    details.open = true;
+  });
   await page.getByLabel("Renderer").selectOption("primitive");
   await waitForInteractivePointCount(minDefaultInteractivePointCount);
   primitiveRendererTiming = (await metadataValue("Renderer timing")) ?? "";
@@ -677,6 +800,9 @@ function createSmokeFlow(baseUrl) {
   );
 
   await page.getByLabel("Renderer").selectOption("typed");
+  await page.locator("#copc-advanced-controls").evaluate((details) => {
+    details.open = false;
+  });
   await page.getByLabel("Sample").selectOption("millsite-reservoir");
   await waitForRenderedStatus();
 
@@ -765,16 +891,88 @@ function createSmokeFlow(baseUrl) {
   millsiteTerminalVisualQuality = (
     await waitForCameraStreamCompleteStatus()
   )?.cameraStreamVisualQuality;
+  await check(
+    async () =>
+      (await hudText("#copc-hud-dataset")) ===
+        "Millsite Reservoir (USGS 3DEP)" &&
+      (await hudText("#copc-hud-total-points")) === "374,609,447" &&
+      (await hudText("#copc-hud-stage")) === "Ready",
+    "Millsite compact HUD did not report its exact dataset total and terminal stage.",
+  );
+  await check(
+    async () =>
+      (await hudCount("#copc-hud-source-points")) >=
+        (await hudCount("#copc-hud-rendered-samples")) &&
+      (await hudText("#copc-hud-coverage")) === "100%",
+    "Millsite compact HUD did not distinguish selected source points from rendered samples at full coverage.",
+  );
   await waitForSceneReady();
   await waitForInteractivePointCount(10_000);
   await page.screenshot({
     path: ${JSON.stringify(millsiteScreenshotPath)},
     fullPage: false,
   });
+  await page.locator("#copc-advanced-controls").evaluate((details) => {
+    details.open = true;
+  });
   await page.getByRole("checkbox", { name: "Stream on camera move" }).uncheck();
 
-  await page.getByRole("textbox", { name: "COPC URL" }).fill(millsiteUrl);
+  const preservedHudBeforeInvalidSource = await page.evaluate(() => ({
+    dataset: document.querySelector("#copc-hud-dataset")?.textContent,
+    totalPoints: document.querySelector("#copc-hud-total-points")?.textContent,
+    renderedSamples: document.querySelector("#copc-hud-rendered-samples")?.textContent,
+  }));
+  const pendingSourceRoutePattern = "**/*pending-source-race=1";
+  await page.route(pendingSourceRoutePattern, async (route) => {
+    await page.waitForTimeout(1_500);
+    await route.continue().catch(() => undefined);
+  });
   await page.getByLabel("Sample").selectOption("custom");
+  await page
+    .getByRole("textbox", { name: "COPC URL" })
+    .fill(millsiteUrl + "?pending-source-race=1");
+  await page.getByRole("textbox", { name: "Source CRS" }).fill("EPSG:6341");
+  await page
+    .getByRole("textbox", { name: "proj4 definition" })
+    .fill(millsiteDefinition);
+  await page.getByRole("button", { name: "Inspect" }).click();
+  await page.waitForFunction(
+    () => document.querySelector("#copc-form")?.getAttribute("aria-busy") === "true",
+    undefined,
+    { timeout: 5_000 },
+  );
+  await page.getByRole("textbox", { name: "Source CRS" }).fill("");
+  await page.getByRole("button", { name: "Inspect" }).click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("#copc-status")
+        ?.textContent?.includes("Keeping the last valid view."),
+    undefined,
+    { timeout: 5_000 },
+  );
+  await page.waitForTimeout(1_750);
+  await page.unroute(pendingSourceRoutePattern);
+  await check(
+    async () => {
+      const preservedHudAfterInvalidSource = await page.evaluate(() => ({
+        dataset: document.querySelector("#copc-hud-dataset")?.textContent,
+        totalPoints: document.querySelector("#copc-hud-total-points")?.textContent,
+        renderedSamples: document.querySelector("#copc-hud-rendered-samples")?.textContent,
+      }));
+
+      return (
+        JSON.stringify(preservedHudAfterInvalidSource) ===
+          JSON.stringify(preservedHudBeforeInvalidSource) &&
+        (await hudText("#copc-hud-stage")) === "Needs attention" &&
+        (await page.locator("#copc-form").getAttribute("aria-busy")) === null &&
+        (await page.locator("canvas").count()) > 0
+      );
+    },
+    "Invalid source input did not supersede the pending load while preserving the last valid cloud and HUD evidence.",
+  );
+
+  await page.getByRole("textbox", { name: "COPC URL" }).fill(millsiteUrl);
   await page.getByRole("textbox", { name: "Source CRS" }).fill("EPSG:6341");
   await page
     .getByRole("textbox", { name: "proj4 definition" })
@@ -964,8 +1162,43 @@ try {
   ]);
   runPlaywrightCli(["run-code", "--filename", smokeFlowPath]);
 
+  const completedRunEvidence = await createRunEvidence({ repoRoot });
+  const sourceStateFailures = validateRunEvidenceSourceState(
+    runEvidence,
+    completedRunEvidence,
+    "exampleSmoke.sourceState",
+  );
+
+  if (sourceStateFailures.length > 0) {
+    throw new Error(
+      `Repository source state changed during the example smoke flow:\n${sourceStateFailures.join("\n")}`,
+    );
+  }
+
+  const screenshots = await Promise.all([
+    createScreenshotEvidence("autzen-stream", autzenScreenshotPath),
+    createScreenshotEvidence("millsite-stream", millsiteScreenshotPath),
+    createScreenshotEvidence("final-verification", verificationScreenshotPath),
+  ]);
+  await writeFile(
+    smokeResultPath,
+    `${JSON.stringify(
+      {
+        schema: "copc-viewer.example-smoke-evidence",
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        status: "passed",
+        mode: shouldRunLocalFileSmoke ? "url-and-local-file" : "url",
+        runEvidence,
+        screenshots,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
   console.log(
-    `Example smoke test passed: ${autzenScreenshotPath}, ${millsiteScreenshotPath}, ${verificationScreenshotPath}`,
+    `Example smoke test passed: ${autzenScreenshotPath}, ${millsiteScreenshotPath}, ${verificationScreenshotPath}; evidence: ${smokeResultPath}`,
   );
 } finally {
   try {
@@ -974,6 +1207,17 @@ try {
     // The browser may already be closed if startup failed.
   }
   stopServer(serverProcess);
+}
+
+async function createScreenshotEvidence(id, absolutePath) {
+  const bytes = await readFile(absolutePath);
+
+  return {
+    id,
+    path: path.relative(repoRoot, absolutePath).replaceAll("\\", "/"),
+    byteLength: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 async function ensureLocalFileSmokeSample() {

@@ -34,6 +34,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Auditable sample-data provenance and a Hobu-hosted COPC matching the
   public-domain USGS 3DEP Millsite collection, replacing the former
   license-unspecified large preset.
+- A clean-worktree contest evidence manifest that binds required JSON reports,
+  screenshots, regression sessions, and the exact package tarball/checksum by
+  source provenance, byte length, SHA-256, and linked browser contracts.
 
 - Security policy, structured issue/PR templates, Dependabot, pinned workflow
   actions, CodeQL analysis, release procedure, and competition submission/demo

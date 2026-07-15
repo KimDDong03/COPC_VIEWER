@@ -2217,9 +2217,13 @@ try {
       ],
     };
   }
-  const screenshotByteCount = existsSync(browserScreenshotPath)
-    ? (await readFile(browserScreenshotPath)).byteLength
-    : 0;
+  const screenshotBytes = existsSync(browserScreenshotPath)
+    ? await readFile(browserScreenshotPath)
+    : undefined;
+  const screenshotByteCount = screenshotBytes?.byteLength ?? 0;
+  const screenshotSha256 = screenshotBytes
+    ? createHash("sha256").update(screenshotBytes).digest("hex")
+    : undefined;
 
   if (screenshotByteCount <= 0) {
     browserResult = {
@@ -2269,7 +2273,11 @@ try {
     artifacts: {
       browserResultPath,
       screenshotPath: browserScreenshotPath,
+      screenshotRelativePath: path
+        .relative(repoRoot, browserScreenshotPath)
+        .replaceAll("\\", "/"),
       screenshotByteCount,
+      screenshotSha256,
     },
     browser: browserResult,
   };

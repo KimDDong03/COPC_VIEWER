@@ -87,6 +87,11 @@ import {
   type PointSample,
 } from "copc-cesium";
 import { createHardcodedPointSamples } from "./hardcodedPointSamples";
+import {
+  createBasicViewerDemoHudState,
+  type BasicViewerDemoHudInput,
+  type BasicViewerDemoStage,
+} from "./createBasicViewerDemoHudState";
 import { selectCameraStreamAdaptiveBudgetState } from "./selectCameraStreamAdaptiveBudgetState";
 import {
   createLocalFileCopcSource,
@@ -334,12 +339,19 @@ declare global {
 const elements = getPrototypeElements();
 initializeRendererBenchmarkControls();
 let currentLayer: CopcPointCloudLayer | undefined;
+let pendingInspectionLayer: CopcPointCloudLayer | undefined;
+let inspectionRequestId = 0;
 let currentInspection: CopcInspection | undefined;
 let currentHierarchy: CopcHierarchySummary | undefined;
 let currentCoordinateTransform: CopcCoordinateTransformStatus | undefined;
 let currentSuggestion: CopcHierarchyNodeSuggestion | undefined;
 let currentSource: CopcSourceConfig = DEFAULT_SAMPLE_COPC_SOURCE;
 let currentPointRendererKind: PointRendererKind = DEFAULT_POINT_RENDERER_KIND;
+let demoHudInput: BasicViewerDemoHudInput = {
+  datasetLabel: DEFAULT_SAMPLE_COPC_SOURCE.label,
+  stage: "idle",
+};
+let demoHudCanFitCloud = false;
 let lastCameraStreamDiagnostics: CameraStreamDiagnostics | undefined;
 let lastCameraStreamDetailProgress: CameraStreamDetailProgressState | undefined;
 let lastCameraStreamVisualQuality: CameraStreamVisualQualityState | undefined;
@@ -424,6 +436,20 @@ const viewer = new Viewer(elements.container, {
 // too late during wheel zoom. Debouncing below keeps the extra callbacks cheap.
 viewer.camera.percentageChanged = 0.01;
 
+elements.panelToggleButton.addEventListener("click", () => {
+  const isCollapsed = elements.panel.classList.toggle("is-collapsed");
+  elements.panelToggleButton.setAttribute(
+    "aria-expanded",
+    String(!isCollapsed),
+  );
+  elements.panelToggleButton.textContent = isCollapsed ? "Expand" : "Collapse";
+  elements.panelToggleButton.setAttribute(
+    "aria-label",
+    isCollapsed ? "Expand COPC panel" : "Collapse COPC panel",
+  );
+  viewer.scene.requestRender();
+});
+
 async function createNaturalEarthImageryProvider(): Promise<TileMapServiceImageryProvider> {
   const provider = await TileMapServiceImageryProvider.fromUrl(
     buildModuleUrl("Assets/Textures/NaturalEarthII"),
@@ -470,11 +496,7 @@ function cameraTargetForPoints(
 
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
-  try {
-    void inspectSource(createSourceConfigFromForm());
-  } catch (error) {
-    setInspectionError(error);
-  }
+  inspectCurrentFormSource();
 });
 
 elements.sampleSelect.addEventListener("change", () => {
@@ -490,23 +512,23 @@ elements.sampleSelect.addEventListener("change", () => {
   elements.urlInput.value = sample.url;
   clearCustomProjectionInputs();
   syncCustomProjectionControls();
-  void inspectSource(sample);
+  requestSourceInspection(sample);
 });
 
 elements.rendererSelect.addEventListener("change", () => {
-  void inspectSource(createSourceConfigFromForm());
+  inspectCurrentFormSource();
 });
 
 elements.qualitySelect.addEventListener("change", () => {
   applyRenderQualitySettings(readRenderQuality());
   resetAutoLodAdaptiveBudget();
   resetCameraStreamAdaptiveBudget();
-  void inspectSource(createSourceConfigFromForm());
+  inspectCurrentFormSource();
 });
 
 elements.maxPointCountInput.addEventListener("change", () => {
   resetAutoLodAdaptiveBudget();
-  void inspectSource(createSourceConfigFromForm());
+  inspectCurrentFormSource();
 });
 
 elements.cameraStreamPointBudgetInput.addEventListener("change", () => {
@@ -535,7 +557,7 @@ elements.fileInput.addEventListener("change", () => {
   elements.sampleSelect.value = CUSTOM_SAMPLE_OPTION_VALUE;
   elements.urlInput.value = file.name;
   syncCustomProjectionControls();
-  void inspectSource(createSourceConfigFromForm());
+  inspectCurrentFormSource();
 });
 
 elements.applySuggestionButton.addEventListener("click", () => {
@@ -641,7 +663,7 @@ viewer.camera.moveStart.addEventListener(() => {
 
 installBasicViewerBenchmarkApi();
 populateSampleSelect();
-void inspectSource(DEFAULT_SAMPLE_COPC_SOURCE);
+requestSourceInspection(DEFAULT_SAMPLE_COPC_SOURCE);
 
 function installBasicViewerBenchmarkApi(): void {
   window.__copcBasicViewerBenchmark = {
@@ -887,8 +909,10 @@ async function moveCameraForSmoothness(
     lastCameraStreamRenderSignature = undefined;
     lastCameraStreamRenderDisposition = undefined;
     lastCameraStreamNodeReuse = undefined;
-    elements.statusText.textContent =
-      "Smoothness benchmark camera stream pending...";
+    setViewerStatus(
+      "Smoothness benchmark camera stream pending...",
+      "refining",
+    );
     const foregroundRenderStartedAt = performance.now();
     let cameraStreamFirstResponseMilliseconds: number | undefined;
     let cameraStreamFirstResponseEvidence:
@@ -1060,9 +1084,12 @@ async function clearStreamingCachesForBenchmark(
   lastCameraStreamNodeReuse = undefined;
   invalidateCameraStreamCommittedRender();
   advanceCameraStreamCameraEpoch();
-  elements.statusText.textContent = options.resetLayerCaches
-    ? "Camera stream layer caches reset for benchmark."
-    : "Camera stream state reset for benchmark.";
+  setViewerStatus(
+    options.resetLayerCaches
+      ? "Camera stream layer caches reset for benchmark."
+      : "Camera stream state reset for benchmark.",
+    "refining",
+  );
 
   const resetResult =
     options.resetLayerCaches && currentLayer
@@ -1260,14 +1287,18 @@ function advanceCameraStreamCameraEpoch(
   } = {},
 ): void {
   cameraStreamCameraEpoch += 1;
-  manualRenderAbortController?.abort();
-  manualRenderAbortController = undefined;
-  manualRenderRequestId += 1;
+  cancelManualCameraRender();
   cameraHierarchyFollowupSignatures.clear();
 
   if (!options.preserveKnownHierarchy) {
     lastCameraHierarchyRefinement = undefined;
   }
+}
+
+function cancelManualCameraRender(): void {
+  manualRenderAbortController?.abort();
+  manualRenderAbortController = undefined;
+  manualRenderRequestId += 1;
 }
 
 function readPendingCameraHierarchyPageCount(): number {
@@ -1282,93 +1313,106 @@ async function inspectSource(
   source: CopcSourceConfig,
   options: InspectSourceOptions = {},
 ): Promise<void> {
+  const requestId = (inspectionRequestId += 1);
   const activeSource = normalizeSourceConfig(source);
   const pointRendererKind = readPointRendererKind();
   const maxPointCountPerNode = readMaxPointCountPerNode();
   const previousLayer = currentLayer;
+  let layer: CopcPointCloudLayer | undefined;
+  let didCommitLayer = false;
+
+  pendingInspectionLayer?.destroy();
+  pendingInspectionLayer = undefined;
+  cancelManualCameraRender();
   releaseCameraHierarchyForSmoothness();
   cancelAutomaticAutoLodRender();
   cancelAutomaticCameraStreamRender();
   cancelCameraStreamPrefetch();
-  currentLayer = undefined;
-  previousLayer?.destroy();
-  setInspectionLoading();
-  previewRenderer.clear();
-  const layer = new CopcPointCloudLayer(viewer.scene, {
-    source: readCopcSourceInput(activeSource),
-    maxCachedHierarchyPages: HIERARCHY_PAGE_CACHE_LIMIT,
-    maxCachedHierarchyPageBytes: HIERARCHY_PAGE_CACHE_BYTE_LIMIT,
-    maxCachedSampleSets: POINT_SAMPLE_CACHE_LIMIT,
-    maxCachedPointSampleBytes: POINT_SAMPLE_CACHE_BYTE_LIMIT,
-    maxCachedPointGeometryBatches: POINT_GEOMETRY_BATCH_CACHE_LIMIT,
-    maxCachedTransformedPointGeometryBatches:
-      TRANSFORMED_POINT_GEOMETRY_BATCH_CACHE_LIMIT,
-    maxCachedPointGeometryBytes: POINT_GEOMETRY_CACHE_BYTE_LIMIT,
-    maxConcurrentPointSampleWorkerRequests: POINT_SAMPLE_WORKER_CONCURRENCY,
-    maxPointCountPerNode,
-    pointSampleLoading: "worker",
-    pointGeometryLoading: "integrated-worker",
-    maxConcurrentPointGeometryWorkerRequests: POINT_GEOMETRY_WORKER_CONCURRENCY,
-    activePointGeometryWorkerCancellation: "terminate-uncached",
-    decodedNodeWorkerFallbackDelayMilliseconds:
-      WORKER_POOL_SETTINGS.decodedNodeWorkerFallbackDelayMilliseconds,
-    maxDecodedPointDataViewsPerWorker:
-      DECODED_POINT_DATA_VIEW_CACHE_LIMIT_PER_WORKER,
-    maxDecodedPointDataViewBytesPerWorker:
-      DECODED_POINT_DATA_VIEW_CACHE_BYTE_LIMIT_PER_WORKER,
-    maxDecodedPointDataViewBytesAcrossWorkers:
-      DECODED_POINT_DATA_VIEW_CACHE_BYTE_LIMIT_ACROSS_WORKERS,
-    createPointRenderer: createPointRendererFactory(pointRendererKind),
-    showBounds: false,
-    coordinateTransforms: activeSource.coordinateTransforms,
-  });
-  layer.warmUpPointSampleWorkers({
-    workerCount: POINT_SAMPLE_WORKER_WARMUP_COUNT,
-  });
-  layer.warmUpPointGeometryWorkers({
-    workerCount: POINT_GEOMETRY_WORKER_WARMUP_COUNT,
-  });
-  currentLayer = layer;
-  currentInspection = undefined;
-  currentHierarchy = undefined;
-  currentCoordinateTransform = undefined;
-  currentSuggestion = undefined;
-  lastCameraStreamDiagnostics = undefined;
-  lastCameraStreamDetailProgress = undefined;
-  lastCameraStreamVisualQuality = undefined;
-  lastCameraStreamPrefetchStatus = undefined;
-  lastCameraStreamAppliedRequestId = undefined;
-  lastCameraStreamRenderedPointBudget = undefined;
-  lastCameraStreamEffectiveBudget = undefined;
-  lastCameraStreamSelectedNodeKeys = [];
-  lastCameraStreamRenderSignature = undefined;
-  lastCameraStreamRenderDisposition = undefined;
-  lastCameraStreamNodeReuse = undefined;
-  lastCameraStreamLodSettings = undefined;
-  invalidateCameraStreamCommittedRender();
-  advanceCameraStreamCameraEpoch();
-  cameraStreamNodeSampleCache.clear();
-  currentSource = activeSource;
-  currentPointRendererKind = pointRendererKind;
-  cancelCameraStreamPrefetch();
-  automaticStreamRequests.clearRenderSignature();
-  clearQueuedAutomaticStreamRender();
-  resetAutoLodAdaptiveBudget();
-  resetCameraStreamAdaptiveBudget();
-  elements.urlInput.value = activeSource.url;
-  syncSampleSelectWithSource(activeSource);
-  renderNodeSet.clear();
-  renderSuggestion(undefined);
-  renderHierarchyPageControls();
-  renderRenderSetControls();
+  setInspectionLoading(activeSource.label, previousLayer !== undefined);
+  elements.form.setAttribute("aria-busy", "true");
 
   try {
+    layer = new CopcPointCloudLayer(viewer.scene, {
+      source: readCopcSourceInput(activeSource),
+      maxCachedHierarchyPages: HIERARCHY_PAGE_CACHE_LIMIT,
+      maxCachedHierarchyPageBytes: HIERARCHY_PAGE_CACHE_BYTE_LIMIT,
+      maxCachedSampleSets: POINT_SAMPLE_CACHE_LIMIT,
+      maxCachedPointSampleBytes: POINT_SAMPLE_CACHE_BYTE_LIMIT,
+      maxCachedPointGeometryBatches: POINT_GEOMETRY_BATCH_CACHE_LIMIT,
+      maxCachedTransformedPointGeometryBatches:
+        TRANSFORMED_POINT_GEOMETRY_BATCH_CACHE_LIMIT,
+      maxCachedPointGeometryBytes: POINT_GEOMETRY_CACHE_BYTE_LIMIT,
+      maxConcurrentPointSampleWorkerRequests: POINT_SAMPLE_WORKER_CONCURRENCY,
+      maxPointCountPerNode,
+      pointSampleLoading: "worker",
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests:
+        POINT_GEOMETRY_WORKER_CONCURRENCY,
+      activePointGeometryWorkerCancellation: "terminate-uncached",
+      decodedNodeWorkerFallbackDelayMilliseconds:
+        WORKER_POOL_SETTINGS.decodedNodeWorkerFallbackDelayMilliseconds,
+      maxDecodedPointDataViewsPerWorker:
+        DECODED_POINT_DATA_VIEW_CACHE_LIMIT_PER_WORKER,
+      maxDecodedPointDataViewBytesPerWorker:
+        DECODED_POINT_DATA_VIEW_CACHE_BYTE_LIMIT_PER_WORKER,
+      maxDecodedPointDataViewBytesAcrossWorkers:
+        DECODED_POINT_DATA_VIEW_CACHE_BYTE_LIMIT_ACROSS_WORKERS,
+      createPointRenderer: createPointRendererFactory(pointRendererKind),
+      showBounds: false,
+      coordinateTransforms: activeSource.coordinateTransforms,
+    });
+    pendingInspectionLayer = layer;
+    layer.warmUpPointSampleWorkers({
+      workerCount: POINT_SAMPLE_WORKER_WARMUP_COUNT,
+    });
+    layer.warmUpPointGeometryWorkers({
+      workerCount: POINT_GEOMETRY_WORKER_WARMUP_COUNT,
+    });
     const { inspection, hierarchy, coordinateTransform } = await layer.load();
 
-    if (layer !== currentLayer) {
+    if (requestId !== inspectionRequestId || layer !== pendingInspectionLayer) {
+      layer.destroy();
       return;
     }
 
+    pendingInspectionLayer = undefined;
+    currentLayer = layer;
+    didCommitLayer = true;
+    previousLayer?.destroy();
+    previewRenderer.clear();
+    setInspectionLoading(activeSource.label);
+    currentInspection = undefined;
+    currentHierarchy = undefined;
+    currentCoordinateTransform = undefined;
+    currentSuggestion = undefined;
+    lastCameraStreamDiagnostics = undefined;
+    lastCameraStreamDetailProgress = undefined;
+    lastCameraStreamVisualQuality = undefined;
+    lastCameraStreamPrefetchStatus = undefined;
+    lastCameraStreamAppliedRequestId = undefined;
+    lastCameraStreamRenderedPointBudget = undefined;
+    lastCameraStreamEffectiveBudget = undefined;
+    lastCameraStreamSelectedNodeKeys = [];
+    lastCameraStreamRenderSignature = undefined;
+    lastCameraStreamRenderDisposition = undefined;
+    lastCameraStreamNodeReuse = undefined;
+    lastCameraStreamLodSettings = undefined;
+    invalidateCameraStreamCommittedRender();
+    advanceCameraStreamCameraEpoch();
+    cameraStreamNodeSampleCache.clear();
+    currentSource = activeSource;
+    currentPointRendererKind = pointRendererKind;
+    cancelCameraStreamPrefetch();
+    automaticStreamRequests.clearRenderSignature();
+    clearQueuedAutomaticStreamRender();
+    resetAutoLodAdaptiveBudget();
+    resetCameraStreamAdaptiveBudget();
+    elements.urlInput.value = activeSource.url;
+    syncSampleSelectWithSource(activeSource);
+    renderNodeSet.clear();
+    renderSuggestion(undefined);
+    renderHierarchyPageControls();
+    renderRenderSetControls();
     currentInspection = inspection;
     currentHierarchy = hierarchy;
     currentCoordinateTransform = coordinateTransform;
@@ -1411,19 +1455,75 @@ async function inspectSource(
       await renderSelectedHierarchyNode();
     }
   } catch (error) {
-    if (layer !== currentLayer) {
+    if (requestId !== inspectionRequestId) {
+      layer?.destroy();
       return;
     }
 
-    layer.destroy();
-    currentLayer = undefined;
-    currentCoordinateTransform = undefined;
+    if (!didCommitLayer) {
+      if (pendingInspectionLayer === layer) {
+        pendingInspectionLayer = undefined;
+      }
+      layer?.destroy();
+    }
+
+    setInspectionError(error, {
+      preserveCurrentView:
+        currentLayer !== undefined && currentInspection !== undefined,
+    });
+  } finally {
+    if (requestId === inspectionRequestId) {
+      elements.form.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function inspectCurrentFormSource(): void {
+  try {
+    requestSourceInspection(createSourceConfigFromForm());
+  } catch (error) {
+    supersedePendingSourceInspection();
     setInspectionError(error);
   }
 }
 
-function setInspectionLoading(): void {
-  elements.statusText.textContent = "Reading COPC metadata...";
+function requestSourceInspection(source: CopcSourceConfig): void {
+  void inspectSource(source).catch((error: unknown) => {
+    supersedePendingSourceInspection();
+    setInspectionError(error);
+  });
+}
+
+function supersedePendingSourceInspection(): void {
+  inspectionRequestId += 1;
+  pendingInspectionLayer?.destroy();
+  pendingInspectionLayer = undefined;
+  cancelManualCameraRender();
+  cancelAutomaticAutoLodRender();
+  cancelAutomaticCameraStreamRender();
+  cancelCameraStreamPrefetch();
+  clearQueuedAutomaticStreamRender();
+  elements.form.removeAttribute("aria-busy");
+}
+
+function setInspectionLoading(
+  datasetLabel: string,
+  preserveCurrentView = false,
+): void {
+  if (preserveCurrentView) {
+    setViewerStatus(
+      `Reading ${datasetLabel} metadata; keeping the current view visible...`,
+      "metadata",
+    );
+    return;
+  }
+
+  demoHudCanFitCloud = false;
+  demoHudInput = {
+    datasetLabel,
+    stage: "metadata",
+  };
+  setViewerStatus("Reading COPC metadata...", "metadata");
   elements.metadataList.replaceChildren();
   elements.nodeSelect.disabled = true;
   elements.nodeSelect.replaceChildren(new Option("Loading hierarchy...", ""));
@@ -1445,11 +1545,25 @@ async function waitForPointGeometryWorkerWarmup(
   ]);
 }
 
-function setInspectionError(error: unknown): void {
+function setInspectionError(
+  error: unknown,
+  options: { readonly preserveCurrentView?: boolean } = {},
+): void {
   const message = readUnknownErrorMessage(error);
-  elements.statusText.textContent = message
-    ? `COPC inspection failed: ${message}`
-    : "COPC inspection failed.";
+  const preserveCurrentView =
+    options.preserveCurrentView ??
+    (currentLayer !== undefined && currentInspection !== undefined);
+  setViewerStatus(
+    message
+      ? `COPC operation failed: ${message}${preserveCurrentView ? " Keeping the last valid view." : ""}`
+      : `COPC operation failed.${preserveCurrentView ? " Keeping the last valid view." : ""}`,
+    "error",
+  );
+
+  if (preserveCurrentView) {
+    return;
+  }
+
   elements.metadataList.replaceChildren();
   elements.nodeSelect.disabled = true;
   invalidateCameraStreamCommittedRender();
@@ -1467,7 +1581,14 @@ function renderInspection(
   cameraSelection?: CopcHierarchyNodeCameraSelection,
   renderStats?: CopcPointCloudLayerRenderStats,
 ): void {
-  elements.statusText.textContent = "COPC metadata loaded.";
+  updateDemoHudForInspection(
+    inspection,
+    pointResult,
+    selectedNode,
+    nodeSetResult,
+    cameraSelection,
+  );
+  setViewerStatus("COPC metadata loaded.");
   elements.metadataList.replaceChildren(
     metadataRow("Point count", inspection.pointCount.toLocaleString()),
     metadataRow("Source preset", currentSource.label),
@@ -1610,6 +1731,170 @@ function renderInspection(
   );
 }
 
+function setViewerStatus(
+  message: string,
+  stage?: BasicViewerDemoStage,
+): void {
+  if (stage) {
+    demoHudInput = {
+      ...demoHudInput,
+      stage,
+    };
+  }
+
+  elements.statusText.textContent = message;
+  renderDemoHud();
+}
+
+function updateDemoHud(
+  updates: Partial<BasicViewerDemoHudInput>,
+): void {
+  demoHudInput = {
+    ...demoHudInput,
+    ...updates,
+  };
+  renderDemoHud();
+}
+
+function renderDemoHud(): void {
+  const state = createBasicViewerDemoHudState(demoHudInput);
+  elements.hudDataset.textContent = state.datasetLabel;
+  elements.hudStage.textContent = state.stageLabel;
+  elements.hudStage.dataset.stage = state.stage;
+  elements.hudTotalPointCount.textContent = state.totalPointCount;
+  elements.hudSelectedSourcePointCount.textContent =
+    state.selectedSourcePointCount;
+  elements.hudRenderedSampleCount.textContent = state.renderedSampleCount;
+  elements.hudSelectedNodeCount.textContent = state.selectedNodeCount;
+  elements.hudSelectedDepth.textContent = state.selectedDepth;
+  elements.hudSelectedCompressedByteLength.textContent =
+    state.selectedCompressedByteLength;
+  elements.hudCoverage.textContent = state.coverage;
+  elements.fitCloudButton.disabled = !demoHudCanFitCloud;
+  elements.fitCloudButton.title = demoHudCanFitCloud
+    ? "Fit the camera to the active COPC bounds without changing the source."
+    : "Load a COPC source before fitting the camera.";
+
+  const exactCompressedByteLength =
+    demoHudInput.selectedCompressedByteLength;
+  elements.hudSelectedCompressedByteLength.title =
+    exactCompressedByteLength !== undefined &&
+    Number.isFinite(exactCompressedByteLength) &&
+    exactCompressedByteLength >= 0
+      ? `${exactCompressedByteLength.toLocaleString()} selected compressed bytes`
+      : "Selected compressed byte count is not available yet.";
+}
+
+function updateDemoHudForInspection(
+  inspection: CopcInspection,
+  pointResult: CopcNodePointSampleResult | undefined,
+  selectedNode: CopcHierarchyNodeSummary | undefined,
+  nodeSetResult: CopcMultiNodePointSampleResult | undefined,
+  cameraSelection: CopcHierarchyNodeCameraSelection | undefined,
+): void {
+  demoHudCanFitCloud = currentCoordinateTransform !== undefined;
+  const updates: Partial<BasicViewerDemoHudInput> = {
+    datasetLabel: currentSource.label,
+    totalPointCount: inspection.pointCount,
+  };
+
+  if (pointResult && selectedNode) {
+    Object.assign(updates, {
+      selectedSourcePointCount: pointResult.nodePointCount,
+      renderedSampleCount: pointResult.sampledPointCount,
+      selectedNodeCount: 1,
+      selectedDepth: selectedNode.depth,
+      selectedCompressedByteLength: selectedNode.pointDataLength,
+      // An arbitrary manual node is not a current-view coverage target.
+      coverageRatio: undefined,
+    });
+  } else if (nodeSetResult) {
+    const selectedNodes = cameraSelection
+      ? cameraSelection.nodes
+      : findHierarchyNodes(nodeSetResult.nodeKeys);
+    const selectedCompressedByteLength = selectedNodes.reduce(
+      (total, node) => total + node.pointDataLength,
+      0,
+    );
+    const hasCompleteCompressedByteCount =
+      cameraSelection !== undefined ||
+      selectedNodes.length === nodeSetResult.nodeKeys.length;
+    const selectedNodeCount = cameraSelection
+      ? cameraSelection.nodes.length
+      : nodeSetResult.nodeKeys.length;
+    const selectedDepth = cameraSelection
+      ? cameraSelection.selectedDepth
+      : maxNodeKeyDepth(nodeSetResult.nodeKeys);
+    const coverageRatio = cameraSelection
+      ? selectedNodeCount > 0
+        ? Math.min(1, nodeSetResult.nodeKeys.length / selectedNodeCount)
+        : undefined
+      : undefined;
+
+    Object.assign(updates, {
+      selectedSourcePointCount: cameraSelection
+        ? summarizeCameraStreamSourceNodes(cameraSelection.nodes)
+            .selectedSourcePointCount
+        : nodeSetResult.nodePointCount,
+      renderedSampleCount: nodeSetResult.sampledPointCount,
+      selectedNodeCount,
+      selectedDepth,
+      selectedCompressedByteLength: hasCompleteCompressedByteCount
+        ? selectedCompressedByteLength
+        : undefined,
+      coverageRatio,
+    });
+  }
+
+  updateDemoHud(updates);
+}
+
+function updateDemoHudForCameraStream(options: {
+  readonly diagnostics: CameraStreamDiagnostics;
+  readonly renderedSampleCount: number;
+  readonly detailProgress?: CameraStreamDetailProgressState;
+  readonly visualQuality?: CameraStreamVisualQualityState;
+  readonly stage?: BasicViewerDemoStage;
+}): void {
+  const visualQuality = options.visualQuality;
+  const coverageRatio =
+    options.detailProgress?.renderedFinalNodeCoverageRatio ??
+    (visualQuality && visualQuality.frontierNodeCount > 0
+      ? visualQuality.renderedFrontierNodeCount /
+        visualQuality.frontierNodeCount
+      : visualQuality?.isTerminalReady
+        ? 1
+        : undefined);
+  const stage =
+    options.stage ??
+    (visualQuality?.isTerminalReady === true ? "ready" : "refining");
+
+  updateDemoHud({
+    stage,
+    selectedSourcePointCount:
+      options.diagnostics.selectedSourcePointCount,
+    renderedSampleCount: options.renderedSampleCount,
+    selectedNodeCount: options.diagnostics.selectedNodeCount,
+    selectedDepth: options.diagnostics.selectedDepth,
+    selectedCompressedByteLength:
+      options.diagnostics.selectedPointDataLength,
+    coverageRatio,
+  });
+}
+
+function findHierarchyNodes(
+  nodeKeys: readonly string[],
+): readonly CopcHierarchyNodeSummary[] {
+  if (!currentHierarchy) {
+    return [];
+  }
+
+  const targetNodeKeys = new Set(nodeKeys);
+  return currentHierarchy.nodes.filter((node) =>
+    targetNodeKeys.has(node.key),
+  );
+}
+
 function cameraTargetForPointCloud(
   pointSamples: readonly PointSample[],
 ): Cartesian3 {
@@ -1661,6 +1946,33 @@ function focusCameraOnInspectionBounds(
   viewer.scene.requestRender();
 }
 
+elements.fitCloudButton.addEventListener("click", () => {
+  if (!currentInspection || !currentLayer || !demoHudCanFitCloud) {
+    return;
+  }
+
+  focusCameraOnInspectionBounds(
+    currentInspection,
+    currentSource.coordinateTransforms(currentInspection),
+  );
+
+  if (
+    elements.autoStreamCheckbox.checked &&
+    currentCoordinateTransform?.supportsCameraSelection
+  ) {
+    automaticStreamRequests.clearRenderSignature();
+    advanceCameraStreamCameraEpoch();
+    setViewerStatus(
+      "Camera fitted to the COPC bounds; refining the current view...",
+      "refining",
+    );
+    void renderAutomaticNodeSetForCameraMove(true);
+    return;
+  }
+
+  setViewerStatus("Camera fitted to the active COPC bounds.", "ready");
+});
+
 elements.nodeSelect.addEventListener("change", () => {
   void renderSelectedHierarchyNode();
 });
@@ -1673,7 +1985,7 @@ async function renderSelectedHierarchyNode(): Promise<void> {
   const layer = currentLayer;
   const nodeKey = elements.nodeSelect.value;
   const manualRequest = beginManualCameraRender();
-  elements.statusText.textContent = `Reading COPC node ${nodeKey}...`;
+  setViewerStatus(`Reading COPC node ${nodeKey}...`, "refining");
 
   try {
     const result = await layer.renderNode(nodeKey, {
@@ -1694,7 +2006,10 @@ async function renderSelectedHierarchyNode(): Promise<void> {
       undefined,
       result.renderStats,
     );
-    elements.statusText.textContent = `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`;
+    setViewerStatus(
+      `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} real COPC points from node ${nodeKey}.`,
+      "ready",
+    );
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
@@ -1716,14 +2031,17 @@ async function loadNextHierarchyPage(): Promise<void> {
   const nextPage = currentHierarchy.pendingPages[0];
 
   if (!nextPage) {
-    elements.statusText.textContent = "No pending COPC hierarchy pages remain.";
+    setViewerStatus("No pending COPC hierarchy pages remain.");
     renderHierarchyPageControls();
     return;
   }
 
   const manualRequest = beginManualCameraRender();
   const previousNodeKey = elements.nodeSelect.value;
-  elements.statusText.textContent = `Reading COPC hierarchy page ${nextPage.key}...`;
+  setViewerStatus(
+    `Reading COPC hierarchy page ${nextPage.key}...`,
+    "refining",
+  );
 
   try {
     const hierarchy = await layer.loadNextHierarchyPage();
@@ -1737,7 +2055,10 @@ async function loadNextHierarchyPage(): Promise<void> {
     renderHierarchyPageControls();
     updateSuggestedNode();
     renderInspection(inspection);
-    elements.statusText.textContent = `Loaded hierarchy page ${nextPage.key}. ${hierarchy.nodes.length.toLocaleString()} nodes are available.`;
+    setViewerStatus(
+      `Loaded hierarchy page ${nextPage.key}. ${hierarchy.nodes.length.toLocaleString()} nodes are available.`,
+      "ready",
+    );
   } catch (error) {
     if (!isCurrentManualRender(layer, manualRequest)) {
       return;
@@ -1757,8 +2078,10 @@ async function renderAutomaticNodeSet(): Promise<void> {
   }
 
   if (!currentCoordinateTransform?.supportsCameraSelection) {
-    elements.statusText.textContent =
-      "Auto LOD unavailable: coordinateTransforms.toCopc is required.";
+    setViewerStatus(
+      "Auto LOD unavailable: coordinateTransforms.toCopc is required.",
+      "error",
+    );
     return;
   }
 
@@ -1795,8 +2118,10 @@ async function renderAutomaticNodeSet(): Promise<void> {
   let loadedPageKeys: readonly string[] = [];
   let didApplyHierarchyExpansion = false;
   let didRenderDetailProgress = false;
-  elements.statusText.textContent =
-    "Auto LOD loading a quick COPC preview for the current view...";
+  setViewerStatus(
+    "Auto LOD loading a quick COPC preview for the current view...",
+    "preview",
+  );
 
   try {
     const applyAutoLodProgress = (
@@ -1817,6 +2142,9 @@ async function renderAutomaticNodeSet(): Promise<void> {
       result.nodes.forEach((node) => renderNodeSet.add(node.key));
       renderRenderSetControls();
       cameraStreamNodeSampleCache.remember(result.pointSamples.nodeResults);
+      const hudStage: BasicViewerDemoStage =
+        phase === "preview" ? "preview" : isFinal ? "ready" : "refining";
+      updateDemoHud({ stage: hudStage });
       renderInspection(
         result.inspection,
         undefined,
@@ -1825,12 +2153,14 @@ async function renderAutomaticNodeSet(): Promise<void> {
         result.cameraSelection,
         result.renderStats,
       );
-      elements.statusText.textContent =
+      setViewerStatus(
         phase === "preview"
           ? `Auto LOD preview rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} low-cost COPC nodes before detail loading.`
           : isFinal
             ? `Auto LOD rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`
-            : `Auto LOD partial render ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} of ${result.cameraSelection.nodes.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`;
+            : `Auto LOD partial render ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} of ${result.cameraSelection.nodes.length.toLocaleString()} COPC nodes${formatLoadedHierarchyPages(loadedPageKeys)}.`,
+        hudStage,
+      );
       updateSuggestedNode();
       lastAutoLodRenderedPointBudget = result.pointSamples.sampledPointCount;
 
@@ -2024,6 +2354,7 @@ async function renderAutomaticNodeSetForCameraMove(
     return;
   }
 
+  updateDemoHud({ stage: "refining" });
   manualRenderRequestId += 1;
   const layer = currentLayer;
   cancelCameraStreamPrefetch({ preserveStatus: hierarchyFollowup });
@@ -2261,10 +2592,12 @@ async function renderAutomaticNodeSetForCameraMove(
       onFirstAppliedRender?.(requestId, renderDisposition);
     };
 
-    elements.statusText.textContent =
+    setViewerStatus(
       initialNodeResults.length + backgroundNodeResults.length > 0
         ? `Streaming ${finalNodeKeys.length.toLocaleString()} COPC nodes for ${cameraLodSettings.label} camera position, reusing ${(initialNodeResults.length + backgroundNodeResults.length).toLocaleString()} loaded nodes...`
-        : `Streaming a quick coverage preview before ${finalNodeKeys.length.toLocaleString()} detail nodes for ${cameraLodSettings.label} camera position...`;
+        : `Streaming a quick coverage preview before ${finalNodeKeys.length.toLocaleString()} detail nodes for ${cameraLodSettings.label} camera position...`,
+      "refining",
+    );
 
     const renderNodesStartedAt = performance.now();
     const committedRender = lastCameraStreamCommittedRender;
@@ -2762,7 +3095,19 @@ function settleCameraStreamEmptySelection(options: {
   if (currentInspection) {
     renderInspection(currentInspection);
   }
-  elements.statusText.textContent = `Camera stream settled with no COPC nodes visible for the current view (${options.cameraLodSettings.label}).`;
+  updateDemoHud({
+    stage: "ready",
+    selectedSourcePointCount: 0,
+    renderedSampleCount: 0,
+    selectedNodeCount: 0,
+    selectedDepth: 0,
+    selectedCompressedByteLength: 0,
+    coverageRatio: undefined,
+  });
+  setViewerStatus(
+    `Camera stream settled with no COPC nodes visible for the current view (${options.cameraLodSettings.label}).`,
+    "ready",
+  );
   updateSuggestedNode();
 }
 
@@ -2781,13 +3126,20 @@ function settleCameraHierarchyFollowupFailure(
     reason,
   };
   refreshCameraStreamPrefetchMetadata();
-  elements.statusText.textContent = `Camera stream hierarchy refinement failed; keeping the last rendered view: ${reason}`;
+  setViewerStatus(
+    `Camera stream hierarchy refinement failed; keeping the last rendered view: ${reason}`,
+    "error",
+  );
 }
 
 function queueAutomaticStreamRenderForCameraMove(
   forceRender: boolean,
   hierarchyFollowup = false,
 ): void {
+  if (pendingInspectionLayer) {
+    return;
+  }
+
   cancelCameraStreamPrefetch({ preserveStatus: hierarchyFollowup });
   automaticStreamRequests.queueRender(
     CAMERA_STREAM_RUNTIME_SETTINGS.moveDebounceMilliseconds,
@@ -2979,6 +3331,7 @@ async function renderCameraStreamPreview(options: {
         maxPointCountPerNode: options.maxPointCountPerNode,
         renderedPointBudget: result.pointSamples.sampledPointCount,
         visualQuality,
+        hudStage: "preview",
         statusText: `Camera stream previewed ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} coverage nodes while loading detail for the current view (${options.cameraLodSettings.label})${formatLoadedHierarchyPages(options.loadedPageKeys)}.`,
       });
       options.onAppliedProgress?.();
@@ -3040,6 +3393,7 @@ function applyCameraStreamRenderResult(options: {
   readonly maxPointCountPerNode: number;
   readonly renderedPointBudget: number;
   readonly renderDisposition?: CameraStreamRenderDisposition;
+  readonly hudStage?: BasicViewerDemoStage;
   readonly statusText: string;
 }): void {
   lastCameraStreamRenderedPointBudget = options.renderedPointBudget;
@@ -3069,6 +3423,13 @@ function applyCameraStreamRenderResult(options: {
   }
 
   if (options.renderDisposition === "retained-exact-render") {
+    updateDemoHudForCameraStream({
+      diagnostics: options.diagnostics,
+      renderedSampleCount: options.result.pointSamples.sampledPointCount,
+      detailProgress: options.detailProgress,
+      visualQuality: options.visualQuality,
+      stage: options.hudStage,
+    });
     updateMetadataRows(
       new Map([
         ["Camera stream budget", formatCameraStreamBudget()],
@@ -3092,7 +3453,7 @@ function applyCameraStreamRenderResult(options: {
         ["Auto LOD", formatCameraSelection(options.cameraSelection)],
       ]),
     );
-    elements.statusText.textContent = options.statusText;
+    setViewerStatus(options.statusText);
     return;
   }
 
@@ -3104,7 +3465,16 @@ function applyCameraStreamRenderResult(options: {
     options.cameraSelection,
     options.result.renderStats,
   );
-  elements.statusText.textContent = options.statusText;
+  // renderInspection also supports manual render sets. Apply the richer camera
+  // stream diagnostics last so its frontier/detail coverage remains canonical.
+  updateDemoHudForCameraStream({
+    diagnostics: options.diagnostics,
+    renderedSampleCount: options.result.pointSamples.sampledPointCount,
+    detailProgress: options.detailProgress,
+    visualQuality: options.visualQuality,
+    stage: options.hudStage,
+  });
+  setViewerStatus(options.statusText);
   updateSuggestedNode();
 }
 
@@ -3611,7 +3981,10 @@ async function renderNodeKeySet(nodeKeys: readonly string[]): Promise<void> {
 
   const layer = currentLayer;
   const manualRequest = beginManualCameraRender();
-  elements.statusText.textContent = `Reading ${nodeKeys.length.toLocaleString()} COPC nodes...`;
+  setViewerStatus(
+    `Reading ${nodeKeys.length.toLocaleString()} COPC nodes...`,
+    "refining",
+  );
 
   try {
     const result = await layer.renderNodes(nodeKeys, {
@@ -3636,7 +4009,10 @@ async function renderNodeKeySet(nodeKeys: readonly string[]): Promise<void> {
       undefined,
       result.renderStats,
     );
-    elements.statusText.textContent = `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`;
+    setViewerStatus(
+      `Rendered ${result.pointSamples.sampledPointCount.toLocaleString()} points from ${result.pointSamples.nodeKeys.length.toLocaleString()} COPC nodes.`,
+      "ready",
+    );
     updateSuggestedNode();
     renderRenderSetControls();
   } catch (error) {
@@ -4256,6 +4632,8 @@ function populateNodeSelect(
 }
 
 function getPrototypeElements(): {
+  readonly panel: HTMLElement;
+  readonly panelToggleButton: HTMLButtonElement;
   readonly container: HTMLDivElement;
   readonly form: HTMLFormElement;
   readonly sampleSelect: HTMLSelectElement;
@@ -4279,9 +4657,23 @@ function getPrototypeElements(): {
   readonly autoStreamCheckbox: HTMLInputElement;
   readonly renderSetButton: HTMLButtonElement;
   readonly clearSetButton: HTMLButtonElement;
+  readonly fitCloudButton: HTMLButtonElement;
+  readonly hudDataset: HTMLHeadingElement;
+  readonly hudStage: HTMLSpanElement;
+  readonly hudTotalPointCount: HTMLElement;
+  readonly hudSelectedSourcePointCount: HTMLElement;
+  readonly hudRenderedSampleCount: HTMLElement;
+  readonly hudSelectedNodeCount: HTMLElement;
+  readonly hudSelectedDepth: HTMLElement;
+  readonly hudSelectedCompressedByteLength: HTMLElement;
+  readonly hudCoverage: HTMLElement;
   readonly statusText: HTMLParagraphElement;
   readonly metadataList: HTMLDListElement;
 } {
+  const panel = document.querySelector<HTMLElement>("#copc-panel");
+  const panelToggleButton = document.querySelector<HTMLButtonElement>(
+    "#copc-panel-toggle",
+  );
   const container = document.querySelector<HTMLDivElement>("#cesium-container");
   const form = document.querySelector<HTMLFormElement>("#copc-form");
   const sampleSelect = document.querySelector<HTMLSelectElement>(
@@ -4335,12 +4727,37 @@ function getPrototypeElements(): {
   );
   const clearSetButton =
     document.querySelector<HTMLButtonElement>("#copc-clear-set");
+  const fitCloudButton =
+    document.querySelector<HTMLButtonElement>("#copc-fit-cloud");
+  const hudDataset =
+    document.querySelector<HTMLHeadingElement>("#copc-hud-dataset");
+  const hudStage =
+    document.querySelector<HTMLSpanElement>("#copc-hud-stage");
+  const hudTotalPointCount =
+    document.querySelector<HTMLElement>("#copc-hud-total-points");
+  const hudSelectedSourcePointCount = document.querySelector<HTMLElement>(
+    "#copc-hud-source-points",
+  );
+  const hudRenderedSampleCount = document.querySelector<HTMLElement>(
+    "#copc-hud-rendered-samples",
+  );
+  const hudSelectedNodeCount =
+    document.querySelector<HTMLElement>("#copc-hud-node-count");
+  const hudSelectedDepth =
+    document.querySelector<HTMLElement>("#copc-hud-depth");
+  const hudSelectedCompressedByteLength = document.querySelector<HTMLElement>(
+    "#copc-hud-compressed-bytes",
+  );
+  const hudCoverage =
+    document.querySelector<HTMLElement>("#copc-hud-coverage");
   const statusText =
     document.querySelector<HTMLParagraphElement>("#copc-status");
   const metadataList =
     document.querySelector<HTMLDListElement>("#copc-metadata");
 
   if (
+    !panel ||
+    !panelToggleButton ||
     !container ||
     !form ||
     !sampleSelect ||
@@ -4364,6 +4781,16 @@ function getPrototypeElements(): {
     !autoStreamCheckbox ||
     !renderSetButton ||
     !clearSetButton ||
+    !fitCloudButton ||
+    !hudDataset ||
+    !hudStage ||
+    !hudTotalPointCount ||
+    !hudSelectedSourcePointCount ||
+    !hudRenderedSampleCount ||
+    !hudSelectedNodeCount ||
+    !hudSelectedDepth ||
+    !hudSelectedCompressedByteLength ||
+    !hudCoverage ||
     !statusText ||
     !metadataList
   ) {
@@ -4371,6 +4798,8 @@ function getPrototypeElements(): {
   }
 
   return {
+    panel,
+    panelToggleButton,
     container,
     form,
     sampleSelect,
@@ -4394,6 +4823,16 @@ function getPrototypeElements(): {
     autoStreamCheckbox,
     renderSetButton,
     clearSetButton,
+    fitCloudButton,
+    hudDataset,
+    hudStage,
+    hudTotalPointCount,
+    hudSelectedSourcePointCount,
+    hudRenderedSampleCount,
+    hudSelectedNodeCount,
+    hudSelectedDepth,
+    hudSelectedCompressedByteLength,
+    hudCoverage,
     statusText,
     metadataList,
   };

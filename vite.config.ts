@@ -1,11 +1,15 @@
 import { defineConfig, type ProxyOptions } from "vite";
 import cesium from "vite-plugin-cesium";
+import { configureCesiumForPublicBase } from "./config/cesium-public-base.mjs";
 import { HOBU_LIDAR_SAMPLE_ROOT } from "./config/live-copc-sources.mjs";
+import { readCopcViewerPublicBase } from "./config/public-base.mjs";
 
 const hobuLidarSampleRoot = new URL(HOBU_LIDAR_SAMPLE_ROOT);
+const publicBase = readCopcViewerPublicBase();
 
 export default defineConfig({
-  plugins: [cesium()],
+  base: publicBase,
+  plugins: [...configureCesiumForPublicBase(cesium(), publicBase)],
   build: {
     rollupOptions: {
       output: {

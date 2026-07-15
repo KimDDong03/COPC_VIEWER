@@ -9,123 +9,219 @@
   <body>
     <div id="app">
       <div id="cesium-container"></div>
-      <section id="copc-panel" aria-label="COPC metadata">
+      <section
+        id="copc-panel"
+        aria-label="COPC point cloud controls and live evidence"
+      >
         <header class="copc-panel-header">
-          <p class="copc-panel-kicker">CesiumJS point cloud streaming</p>
-          <h1>copc-cesium</h1>
+          <div class="copc-panel-title-row">
+            <div>
+              <p class="copc-panel-kicker">CesiumJS point cloud streaming</p>
+              <h1>copc-cesium</h1>
+            </div>
+            <button
+              id="copc-panel-toggle"
+              class="copc-panel-toggle"
+              type="button"
+              aria-expanded="true"
+              aria-controls="copc-panel-body"
+            >
+              Collapse
+            </button>
+          </div>
           <p>Open COPC data directly—no 3D Tiles conversion.</p>
         </header>
-        <form id="copc-form">
-          <label for="copc-sample-select">Sample</label>
-          <select id="copc-sample-select"></select>
-          <label for="copc-renderer-select">Renderer</label>
-          <select id="copc-renderer-select">
-            <option value="typed" selected>Primitive typed arrays</option>
-            <option value="primitive">Point primitives</option>
-            <option value="buffer">GPU buffer primitive</option>
-          </select>
-          <label for="copc-quality-select">Quality</label>
-          <select id="copc-quality-select">
-            <option value="preview">Fast preview</option>
-            <option value="balanced" selected>Balanced detail</option>
-            <option value="detail">High detail</option>
-            <option value="ultra">Ultra density</option>
-          </select>
-          <label for="copc-max-point-count">Max points / node</label>
-          <input
-            id="copc-max-point-count"
-            name="copc-max-point-count"
-            type="number"
-            min="1"
-            step="1"
-            value="180000"
-          />
-          <label for="copc-camera-stream-point-budget">Camera stream points</label>
-          <input
-            id="copc-camera-stream-point-budget"
-            name="copc-camera-stream-point-budget"
-            type="number"
-            min="1"
-            step="1"
-            value="360000"
-          />
-          <label class="copc-url-label" for="copc-url">COPC URL</label>
-          <div class="copc-controls">
-            <input
-              id="copc-url"
-              name="copc-url"
-              type="text"
-            />
-            <button type="submit">Inspect</button>
-          </div>
-          <label class="copc-file-label" for="copc-file">Local COPC file</label>
-          <input
-            id="copc-file"
-            name="copc-file"
-            type="file"
-            accept=".copc,.laz,.las,.copc.laz"
-          />
-          <div class="copc-projection-controls">
-            <label for="copc-source-crs">Source CRS</label>
-            <input
-              id="copc-source-crs"
-              name="copc-source-crs"
-              type="text"
-              autocomplete="off"
-              placeholder="EPSG:6341"
-            />
-            <label for="copc-source-definition">proj4 definition</label>
-            <textarea
-              id="copc-source-definition"
-              name="copc-source-definition"
-              rows="3"
-              spellcheck="false"
-              placeholder="+proj=utm +zone=12 +ellps=GRS80 +units=m +no_defs +type=crs"
-            ></textarea>
-          </div>
-        </form>
-        <label class="copc-node-label" for="copc-node-select">Hierarchy node</label>
-        <select id="copc-node-select" disabled>
-          <option value="">Load a COPC source first</option>
-        </select>
-        <div class="copc-hierarchy-pages">
-          <p id="copc-hierarchy-pages">Hierarchy pages: not loaded.</p>
-          <button id="copc-load-more-hierarchy" type="button" disabled>
-            Load next page
-          </button>
+        <div id="copc-panel-body">
+          <section id="copc-demo-hud" aria-label="Live COPC evidence">
+            <div class="copc-demo-hud-heading">
+              <div>
+                <p>Live dataset</p>
+                <h2 id="copc-hud-dataset">Autzen classified</h2>
+              </div>
+              <span id="copc-hud-stage" data-stage="idle">Idle</span>
+            </div>
+            <div class="copc-demo-hud-metrics">
+              <div>
+                <span>Dataset total</span>
+                <strong id="copc-hud-total-points">—</strong>
+              </div>
+              <div>
+                <span>Selected source</span>
+                <strong id="copc-hud-source-points">—</strong>
+              </div>
+              <div>
+                <span>Rendered samples</span>
+                <strong id="copc-hud-rendered-samples">—</strong>
+              </div>
+              <div>
+                <span>Selected nodes</span>
+                <strong id="copc-hud-node-count">—</strong>
+              </div>
+              <div>
+                <span>LOD depth</span>
+                <strong id="copc-hud-depth">—</strong>
+              </div>
+              <div>
+                <span>Selected compressed</span>
+                <strong id="copc-hud-compressed-bytes">—</strong>
+              </div>
+              <div>
+                <span>Current-view coverage</span>
+                <strong id="copc-hud-coverage">—</strong>
+              </div>
+            </div>
+            <div class="copc-demo-hud-actions">
+              <span>Source unchanged · camera LOD + render samples</span>
+              <button id="copc-fit-cloud" type="button" disabled>
+                Fit cloud
+              </button>
+            </div>
+            <p
+              id="copc-status"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              Ready to inspect COPC metadata.
+            </p>
+          </section>
+          <form id="copc-form">
+            <div class="copc-primary-controls">
+              <div>
+                <label for="copc-sample-select">Sample</label>
+                <select id="copc-sample-select"></select>
+              </div>
+              <div>
+                <label for="copc-quality-select">Quality</label>
+                <select id="copc-quality-select">
+                  <option value="preview">Fast preview</option>
+                  <option value="balanced" selected>Balanced detail</option>
+                  <option value="detail">High detail</option>
+                  <option value="ultra">Ultra density</option>
+                </select>
+              </div>
+            </div>
+            <details id="copc-advanced-controls">
+              <summary>
+                <span>Advanced controls</span>
+                <small>Renderer, source, hierarchy, diagnostics</small>
+              </summary>
+              <div class="copc-advanced-controls-body">
+                <label for="copc-renderer-select">Renderer</label>
+                <select id="copc-renderer-select">
+                  <option value="typed" selected>Primitive typed arrays</option>
+                  <option value="primitive">Point primitives</option>
+                  <option value="buffer">GPU buffer primitive</option>
+                </select>
+                <label for="copc-max-point-count">Max points / node</label>
+                <input
+                  id="copc-max-point-count"
+                  name="copc-max-point-count"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value="180000"
+                />
+                <label for="copc-camera-stream-point-budget"
+                  >Camera stream points</label
+                >
+                <input
+                  id="copc-camera-stream-point-budget"
+                  name="copc-camera-stream-point-budget"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value="360000"
+                />
+                <label class="copc-url-label" for="copc-url">COPC URL</label>
+                <div class="copc-controls">
+                  <input id="copc-url" name="copc-url" type="text" />
+                  <button type="submit">Inspect</button>
+                </div>
+                <label class="copc-file-label" for="copc-file"
+                  >Local COPC file</label
+                >
+                <input
+                  id="copc-file"
+                  name="copc-file"
+                  type="file"
+                  accept=".copc,.laz,.las,.copc.laz"
+                />
+                <div class="copc-projection-controls">
+                  <label for="copc-source-crs">Source CRS</label>
+                  <input
+                    id="copc-source-crs"
+                    name="copc-source-crs"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="EPSG:6341"
+                  />
+                  <label for="copc-source-definition">proj4 definition</label>
+                  <textarea
+                    id="copc-source-definition"
+                    name="copc-source-definition"
+                    rows="3"
+                    spellcheck="false"
+                    placeholder="+proj=utm +zone=12 +ellps=GRS80 +units=m +no_defs +type=crs"
+                  ></textarea>
+                </div>
+                <label class="copc-node-label" for="copc-node-select"
+                  >Hierarchy node</label
+                >
+                <select id="copc-node-select" disabled>
+                  <option value="">Load a COPC source first</option>
+                </select>
+                <div class="copc-hierarchy-pages">
+                  <p id="copc-hierarchy-pages">
+                    Hierarchy pages: not loaded.
+                  </p>
+                  <button
+                    id="copc-load-more-hierarchy"
+                    type="button"
+                    disabled
+                  >
+                    Load next page
+                  </button>
+                </div>
+                <div class="copc-suggestion">
+                  <p id="copc-suggestion">Suggested node: not available.</p>
+                  <button id="copc-apply-suggestion" type="button" disabled>
+                    Apply
+                  </button>
+                </div>
+                <div class="copc-render-set">
+                  <p id="copc-render-set">Render set: empty.</p>
+                  <label class="copc-toggle" for="copc-auto-stream">
+                    <input id="copc-auto-stream" type="checkbox" disabled />
+                    Stream on camera move
+                  </label>
+                  <div class="copc-render-set-controls">
+                    <button id="copc-add-selected" type="button" disabled>
+                      Add selected
+                    </button>
+                    <button id="copc-add-suggestion" type="button" disabled>
+                      Add suggested
+                    </button>
+                    <button id="copc-auto-lod" type="button" disabled>
+                      Auto LOD
+                    </button>
+                    <button
+                      id="copc-render-set-button"
+                      type="button"
+                      disabled
+                    >
+                      Render set
+                    </button>
+                    <button id="copc-clear-set" type="button" disabled>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <dl id="copc-metadata"></dl>
+              </div>
+            </details>
+          </form>
         </div>
-        <div class="copc-suggestion">
-          <p id="copc-suggestion">Suggested node: not available.</p>
-          <button id="copc-apply-suggestion" type="button" disabled>
-            Apply
-          </button>
-        </div>
-        <div class="copc-render-set">
-          <p id="copc-render-set">Render set: empty.</p>
-          <label class="copc-toggle" for="copc-auto-stream">
-            <input id="copc-auto-stream" type="checkbox" disabled />
-            Stream on camera move
-          </label>
-          <div class="copc-render-set-controls">
-            <button id="copc-add-selected" type="button" disabled>
-              Add selected
-            </button>
-            <button id="copc-add-suggestion" type="button" disabled>
-              Add suggested
-            </button>
-            <button id="copc-auto-lod" type="button" disabled>
-              Auto LOD
-            </button>
-            <button id="copc-render-set-button" type="button" disabled>
-              Render set
-            </button>
-            <button id="copc-clear-set" type="button" disabled>
-              Clear
-            </button>
-          </div>
-        </div>
-        <p id="copc-status">Ready to inspect COPC metadata.</p>
-        <dl id="copc-metadata"></dl>
       </section>
     </div>
     <script type="module" src="/src/main.ts"></script>

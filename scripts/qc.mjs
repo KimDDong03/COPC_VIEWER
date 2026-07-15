@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyLiveCopcExecutionFailure } from "./live-copc-range-check.mjs";
+import { createRunEvidence } from "./run-evidence.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -85,6 +86,7 @@ if (listOnly) {
 
 async function runQc() {
   const startedAt = new Date().toISOString();
+  const runEvidence = await createRunEvidence({ repoRoot });
   const outcomes = [];
 
   for (const group of groups) {
@@ -117,6 +119,7 @@ async function runQc() {
         failedGroup: group.id,
         failedStep: label,
         exitCode: classification === "external-source-unavailable" ? 2 : 1,
+        runEvidence,
         outcomes,
       });
       console.error(
@@ -147,6 +150,7 @@ async function runQc() {
     status: "passed",
     classification,
     exitCode: 0,
+    runEvidence,
     outcomes,
   });
   console.log(

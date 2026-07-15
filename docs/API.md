@@ -61,6 +61,7 @@ own source layer:
 
 ```ts
 import {
+  CopcRangeRequestError,
   createCachedRangeGetter,
   createCopcRangeGetter,
   createHttpRangeGetter,
@@ -101,6 +102,51 @@ const getter = createCopcRangeGetter("https://example.com/data.copc.laz", {
   signal: controller.signal,
 });
 ```
+
+Recognized HTTP request and response failures reject with
+`CopcRangeRequestError`. Its `code` is stable for programmatic handling;
+`begin` and `end` preserve the requested half-open range `[begin, end)`,
+`status` is present for HTTP-status and response-contract failures, and `cause`
+preserves the underlying browser error when one is available. Browser
+network/CORS and timeout failures can leave `status` unavailable even if a
+body stream had started. `retriable` describes
+whether the built-in policy considers the failure category eligible for retry.
+The getter performs those retries before returning a final error, so a final
+error can still have `retriable: true` after all attempts are exhausted.
+
+| `code` | Meaning | Built-in retry policy |
+| --- | --- | --- |
+| `network-or-cors` | Fetch could not distinguish a network failure from a CORS rejection. The original `TypeError` is available as `cause`. | Retried |
+| `http-status` | The server returned a non-success HTTP status. `status` contains that value. | Retried for `429` and `5xx` |
+| `range-not-supported` | A successful response was not `206 Partial Content`. | Not retried |
+| `timeout` | The per-attempt request deadline expired. | Not retried |
+| `malformed-content-range` | An exposed `Content-Range` header was not valid. | Not retried |
+| `mismatched-content-range` | An exposed `Content-Range` did not match the requested bytes. | Not retried |
+| `body-length-mismatch` | The response body was shorter or longer than the requested range. Exact-length validation remains mandatory on every attempt. | Retried |
+
+```ts
+try {
+  await getter(0, 64);
+} catch (error) {
+  if (error instanceof CopcRangeRequestError) {
+    console.error({
+      code: error.code,
+      range: [error.begin, error.end],
+      status: error.status,
+      retriable: error.retriable,
+      cause: error.cause,
+    });
+  }
+
+  throw error;
+}
+```
+
+Caller cancellation keeps an Error-valued caller abort reason instead of
+wrapping it; other abort reasons retain the existing `AbortError` fallback.
+URL, option, and byte-range validation errors also remain ordinary errors.
+`Blob`/`File` getter errors are unchanged and do not use this HTTP-only error
+contract.
 
 ## Minimal Cesium Usage
 

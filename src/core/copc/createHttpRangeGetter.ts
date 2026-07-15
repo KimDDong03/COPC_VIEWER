@@ -20,10 +20,46 @@ export interface CopcHttpRangeGetterOptions
   readonly signal?: AbortSignal;
 }
 
-class RetriableCopcRangeRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RetriableCopcRangeRequestError";
+export type CopcRangeRequestErrorCode =
+  | "network-or-cors"
+  | "http-status"
+  | "range-not-supported"
+  | "timeout"
+  | "malformed-content-range"
+  | "mismatched-content-range"
+  | "body-length-mismatch";
+
+export interface CopcRangeRequestErrorOptions {
+  readonly code: CopcRangeRequestErrorCode;
+  /** Requested half-open byte range start. */
+  readonly begin: number;
+  /** Requested half-open byte range end. */
+  readonly end: number;
+  /** HTTP status when a response was received. */
+  readonly status?: number;
+  /** Whether this failure category is eligible for the built-in retry policy. */
+  readonly retriable: boolean;
+  readonly cause?: unknown;
+}
+
+export class CopcRangeRequestError extends Error {
+  readonly code: CopcRangeRequestErrorCode;
+  readonly begin: number;
+  readonly end: number;
+  readonly status?: number;
+  readonly retriable: boolean;
+
+  constructor(message: string, options: CopcRangeRequestErrorOptions) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "CopcRangeRequestError";
+    this.code = options.code;
+    this.begin = options.begin;
+    this.end = options.end;
+    this.status = options.status;
+    this.retriable = options.retriable;
   }
 }
 
@@ -105,9 +141,15 @@ async function fetchRange(
   requestTimeoutMilliseconds: number,
   callerSignal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
+  const timeoutError = createRangeRequestTimeoutError(
+    begin,
+    end,
+    requestTimeoutMilliseconds,
+  );
   const abortContext = createRequestAbortContext(
     callerSignal,
     requestTimeoutMilliseconds,
+    timeoutError,
   );
 
   try {
@@ -123,29 +165,43 @@ async function fetchRange(
     throwIfRequestAborted(abortContext, callerSignal);
 
     if (!response.ok) {
-      if (isRetriableHttpStatus(response.status)) {
-        throw new RetriableCopcRangeRequestError(
-          `COPC range request failed with HTTP ${response.status}.`,
-        );
-      }
-
-      throw new Error(`COPC range request failed with HTTP ${response.status}.`);
+      throw new CopcRangeRequestError(
+        `COPC range request failed with HTTP ${response.status}.`,
+        {
+          code: "http-status",
+          begin,
+          end,
+          status: response.status,
+          retriable: isRetriableHttpStatus(response.status),
+        },
+      );
     }
 
     if (response.status !== 206) {
-      throw new Error("COPC source must support HTTP range requests.");
+      throw new CopcRangeRequestError(
+        "COPC source must support HTTP range requests.",
+        {
+          code: "range-not-supported",
+          begin,
+          end,
+          status: response.status,
+          retriable: false,
+        },
+      );
     }
 
     const contentRange = response.headers.get("Content-Range");
 
     if (contentRange !== null) {
-      validateContentRange(contentRange, begin, end);
+      validateContentRange(contentRange, begin, end, response.status);
     }
 
     const expectedByteLength = end - begin;
     const bytes = await readExactRangeResponseBody(
       response,
       expectedByteLength,
+      begin,
+      end,
     );
 
     throwIfRequestAborted(abortContext, callerSignal);
@@ -156,7 +212,15 @@ async function fetchRange(
     }
 
     if (abortContext.abortSource === "timeout") {
-      throw new CopcRangeRequestTimeoutError(requestTimeoutMilliseconds);
+      throw timeoutError;
+    }
+
+    if (error instanceof CopcRangeRequestError) {
+      throw error;
+    }
+
+    if (error instanceof TypeError) {
+      throw createNetworkOrCorsError(begin, end, error);
     }
 
     throw error;
@@ -165,13 +229,39 @@ async function fetchRange(
   }
 }
 
-class CopcRangeRequestTimeoutError extends Error {
-  constructor(timeoutMilliseconds: number) {
-    super(
-      `COPC range request timed out after ${timeoutMilliseconds} milliseconds.`,
-    );
-    this.name = "CopcRangeRequestTimeoutError";
-  }
+function createRangeRequestTimeoutError(
+  begin: number,
+  end: number,
+  timeoutMilliseconds: number,
+): CopcRangeRequestError {
+  return new CopcRangeRequestError(
+    `COPC range request timed out after ${timeoutMilliseconds} milliseconds.`,
+    {
+      code: "timeout",
+      begin,
+      end,
+      retriable: false,
+    },
+  );
+}
+
+function createNetworkOrCorsError(
+  begin: number,
+  end: number,
+  cause: unknown,
+): CopcRangeRequestError {
+  const message =
+    cause instanceof Error && cause.message.length > 0
+      ? cause.message
+      : "COPC range request failed because of a network or CORS error.";
+
+  return new CopcRangeRequestError(message, {
+    code: "network-or-cors",
+    begin,
+    end,
+    retriable: true,
+    cause,
+  });
 }
 
 interface RequestAbortContext {
@@ -183,6 +273,7 @@ interface RequestAbortContext {
 function createRequestAbortContext(
   callerSignal: AbortSignal | undefined,
   timeoutMilliseconds: number,
+  timeoutError: CopcRangeRequestError,
 ): RequestAbortContext {
   const controller = new AbortController();
   let abortSource: "caller" | "timeout" | undefined;
@@ -202,7 +293,7 @@ function createRequestAbortContext(
     }
 
     abortSource = "timeout";
-    controller.abort(new CopcRangeRequestTimeoutError(timeoutMilliseconds));
+    controller.abort(timeoutError);
   };
 
   if (callerSignal?.aborted) {
@@ -243,9 +334,17 @@ function throwIfRequestAborted(
 async function readExactRangeResponseBody(
   response: Response,
   expectedByteLength: number,
+  begin: number,
+  end: number,
 ): Promise<Uint8Array> {
   if (!response.body) {
-    throw createBodyLengthMismatchError(expectedByteLength, 0);
+    throw createBodyLengthMismatchError(
+      expectedByteLength,
+      0,
+      begin,
+      end,
+      response.status,
+    );
   }
 
   const bytes = new Uint8Array(expectedByteLength);
@@ -268,6 +367,9 @@ async function readExactRangeResponseBody(
         throw createBodyLengthMismatchError(
           expectedByteLength,
           nextByteLength,
+          begin,
+          end,
+          response.status,
         );
       }
 
@@ -286,6 +388,9 @@ async function readExactRangeResponseBody(
     throw createBodyLengthMismatchError(
       expectedByteLength,
       receivedByteLength,
+      begin,
+      end,
+      response.status,
     );
   }
 
@@ -295,9 +400,22 @@ async function readExactRangeResponseBody(
 function createBodyLengthMismatchError(
   expectedByteLength: number,
   receivedByteLength: number,
-): Error {
-  return new Error(
+  begin: number,
+  end: number,
+  status: number,
+): CopcRangeRequestError {
+  return new CopcRangeRequestError(
     `COPC range response body length mismatch: expected ${expectedByteLength} bytes, received ${receivedByteLength}.`,
+    {
+      code: "body-length-mismatch",
+      begin,
+      end,
+      status,
+      // A proxy or upstream connection can terminate a valid 206 stream
+      // early. Retrying remains bounded by MAX_RANGE_REQUEST_ATTEMPTS and the
+      // exact-length check still prevents accepting truncated or extra bytes.
+      retriable: true,
+    },
   );
 }
 
@@ -305,12 +423,20 @@ function validateContentRange(
   contentRange: string,
   begin: number,
   end: number,
+  status: number,
 ): void {
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange);
 
   if (!match) {
-    throw new Error(
+    throw new CopcRangeRequestError(
       `COPC range response has malformed Content-Range: ${contentRange}.`,
+      {
+        code: "malformed-content-range",
+        begin,
+        end,
+        status,
+        retriable: false,
+      },
     );
   }
 
@@ -321,16 +447,30 @@ function validateContentRange(
     !Number.isSafeInteger(responseBegin) ||
     !Number.isSafeInteger(responseEnd)
   ) {
-    throw new Error(
+    throw new CopcRangeRequestError(
       `COPC range response has malformed Content-Range: ${contentRange}.`,
+      {
+        code: "malformed-content-range",
+        begin,
+        end,
+        status,
+        retriable: false,
+      },
     );
   }
 
   const expectedEnd = end - 1;
 
   if (responseBegin !== begin || responseEnd !== expectedEnd) {
-    throw new Error(
+    throw new CopcRangeRequestError(
       `COPC range response Content-Range mismatch: expected bytes ${begin}-${expectedEnd}, received bytes ${responseBegin}-${responseEnd}.`,
+      {
+        code: "mismatched-content-range",
+        begin,
+        end,
+        status,
+        retriable: false,
+      },
     );
   }
 
@@ -340,8 +480,15 @@ function validateContentRange(
     completeLength !== "*" &&
     BigInt(completeLength) <= BigInt(responseEnd)
   ) {
-    throw new Error(
+    throw new CopcRangeRequestError(
       `COPC range response has malformed Content-Range: ${contentRange}.`,
+      {
+        code: "malformed-content-range",
+        begin,
+        end,
+        status,
+        retriable: false,
+      },
     );
   }
 }
@@ -361,10 +508,7 @@ function createHttpUrl(url: string): URL {
 }
 
 function isRetriableRangeRequestError(error: unknown): boolean {
-  return (
-    error instanceof TypeError ||
-    error instanceof RetriableCopcRangeRequestError
-  );
+  return error instanceof CopcRangeRequestError && error.retriable;
 }
 
 function isRetriableHttpStatus(status: number): boolean {
