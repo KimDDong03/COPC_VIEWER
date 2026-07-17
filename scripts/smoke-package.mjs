@@ -37,7 +37,9 @@ const playwrightConfigPath = path.join(
 );
 const isWindows = process.platform === "win32";
 const npmCommand = "npm";
-const MAX_PACKAGE_TARBALL_BYTES = 600 * 1024;
+// Keep total package growth bounded while allowing the required evidence docs
+// and range-request runtime added since the original 600 KiB baseline.
+const MAX_PACKAGE_TARBALL_BYTES = 650 * 1024;
 const MAX_PACKED_WORKER_ASSET_BYTES = 600 * 1024;
 
 const runEvidence = await createRunEvidence({ repoRoot });
