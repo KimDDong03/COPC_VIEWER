@@ -1,20 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Copc as CopcData } from "copc";
 import type {
+  CesiumCopcPointGeometryWorkerInboundMessage,
   CesiumCopcPointGeometryWorkerLoadRequest,
-  CesiumCopcPointGeometryWorkerRequest,
-  CesiumCopcPointGeometryWorkerResponse,
+  CesiumCopcPointGeometryWorkerOutboundMessage,
 } from "./CesiumCopcPointGeometryWorkerProtocol";
 
 const mocks = vi.hoisted(() => ({
   createHttpRangeGetter: vi.fn(() => async () => new Uint8Array()),
-  createCopc: vi.fn(async () => ({
+  createCopc: vi.fn(async (_getter?: unknown) => ({
     header: {
       pointDataRecordLength: 16,
     },
   })),
   getSharedLazPerf: vi.fn(async () => undefined),
   loadCopcNodePointDataView: vi.fn(async (options: {
+    readonly getter?: (begin: number, end: number) => Promise<Uint8Array>;
     readonly node: { readonly pointCount: number };
   }) => ({
     pointCount: options.node.pointCount,
@@ -127,6 +128,155 @@ describe("CesiumCopcPointGeometryWorker decoded point data cache", () => {
       "warmup:success",
       "loadNodePointGeometry:success",
     ]);
+  });
+
+  it("opens a brokered COPC source through main-thread range responses", async () => {
+    const worker = await importWorker();
+    mocks.createCopc.mockImplementationOnce(
+      async (nextGetter?: unknown) => {
+        const getter = nextGetter as (
+          begin: number,
+          end: number,
+        ) => Promise<Uint8Array>;
+        await getter(0, 16);
+        return {
+          header: {
+            pointDataRecordLength: 16,
+          },
+        };
+      },
+    );
+
+    worker.dispatch({
+      id: 1,
+      type: "warmup",
+      url: "https://example.com/sample.copc.laz",
+      brokeredRangeRequests: true,
+    });
+    await worker.waitForMessageCount(1);
+
+    expect(worker.messages[0]).toMatchObject({
+      type: "range:request",
+      sourceKey: "url:https://example.com/sample.copc.laz",
+      begin: 0,
+      end: 16,
+    });
+    expect(mocks.createHttpRangeGetter).not.toHaveBeenCalled();
+
+    worker.dispatch({
+      type: "range:success",
+      rangeRequestId:
+        worker.messages[0].type === "range:request"
+          ? worker.messages[0].rangeRequestId
+          : -1,
+      buffer: new ArrayBuffer(16),
+    });
+    await worker.waitForMessageCount(2);
+
+    expect(worker.messages[1]).toMatchObject({
+      type: "warmup:success",
+    });
+  });
+
+  it("restores brokered range errors into worker request errors", async () => {
+    const worker = await importWorker();
+    mocks.createCopc.mockImplementationOnce(
+      async (nextGetter?: unknown) => {
+        const getter = nextGetter as (
+          begin: number,
+          end: number,
+        ) => Promise<Uint8Array>;
+        await getter(0, 16);
+        return {
+          header: {
+            pointDataRecordLength: 16,
+          },
+        };
+      },
+    );
+
+    worker.dispatch({
+      id: 1,
+      type: "warmup",
+      url: "https://example.com/sample.copc.laz",
+      brokeredRangeRequests: true,
+    });
+    await worker.waitForMessageCount(1);
+    worker.dispatch({
+      type: "range:error",
+      rangeRequestId:
+        worker.messages[0].type === "range:request"
+          ? worker.messages[0].rangeRequestId
+          : -1,
+      error: {
+        name: "RangeError",
+        message: "broker range failed",
+        stack: "RangeError: broker range failed",
+      },
+    });
+    await worker.waitForMessageCount(2);
+
+    expect(worker.messages[1]).toMatchObject({
+      type: "warmup:error",
+      error: {
+        name: "RangeError",
+        message: "broker range failed",
+        stack: "RangeError: broker range failed",
+      },
+    });
+  });
+
+  it("passes preferred broker fetch ranges for contained node point reads", async () => {
+    const worker = await importWorker();
+    mocks.loadCopcNodePointDataView.mockImplementationOnce(
+      async (options: {
+        readonly getter?: (
+          begin: number,
+          end: number,
+        ) => Promise<Uint8Array>;
+        readonly node: { readonly pointCount: number };
+      }) => {
+        if (!options.getter) {
+          throw new Error("Expected a brokered getter.");
+        }
+
+        await options.getter(120, 150);
+        return createDecodedPointDataView(options.node.pointCount);
+      },
+    );
+
+    worker.dispatch({
+      ...createLoadRequest(1, "1-0-0-0", 100),
+      brokeredRangeRequests: true,
+      pointDataRange: {
+        begin: 100,
+        end: 200,
+      },
+    });
+    await worker.waitForMessageCount(1);
+
+    expect(worker.messages[0]).toMatchObject({
+      type: "range:request",
+      sourceKey: "url:https://example.com/sample.copc.laz",
+      begin: 120,
+      end: 150,
+      fetchBegin: 100,
+      fetchEnd: 200,
+    });
+
+    worker.dispatch({
+      type: "range:success",
+      rangeRequestId:
+        worker.messages[0].type === "range:request"
+          ? worker.messages[0].rangeRequestId
+          : -1,
+      buffer: new ArrayBuffer(30),
+    });
+    await worker.waitForMessageCount(2);
+
+    expect(worker.messages[1]).toMatchObject({
+      type: "loadNodePointGeometry:success",
+    });
   });
 
   it("uses supplied COPC metadata during source-aware warmup", async () => {
@@ -468,15 +618,17 @@ function createDecodedPointDataView(pointCount: number) {
 }
 
 async function importWorker(): Promise<{
-  readonly messages: CesiumCopcPointGeometryWorkerResponse[];
+  readonly messages: CesiumCopcPointGeometryWorkerOutboundMessage[];
   readonly transferLists: readonly Transferable[][];
-  dispatch(request: CesiumCopcPointGeometryWorkerRequest): void;
+  dispatch(request: CesiumCopcPointGeometryWorkerInboundMessage): void;
   waitForMessageCount(count: number): Promise<void>;
 }> {
   let listener:
-    | ((event: { readonly data: CesiumCopcPointGeometryWorkerRequest }) => void)
+    | ((
+        event: { readonly data: CesiumCopcPointGeometryWorkerInboundMessage },
+      ) => void)
     | undefined;
-  const messages: CesiumCopcPointGeometryWorkerResponse[] = [];
+  const messages: CesiumCopcPointGeometryWorkerOutboundMessage[] = [];
   const transferLists: Transferable[][] = [];
 
   vi.resetModules();
@@ -485,7 +637,7 @@ async function importWorker(): Promise<{
     (
       type: string,
       nextListener: (
-        event: { readonly data: CesiumCopcPointGeometryWorkerRequest },
+        event: { readonly data: CesiumCopcPointGeometryWorkerInboundMessage },
       ) => void,
     ) => {
       if (type === "message") {
@@ -496,7 +648,7 @@ async function importWorker(): Promise<{
   vi.stubGlobal(
     "postMessage",
     (
-      message: CesiumCopcPointGeometryWorkerResponse,
+      message: CesiumCopcPointGeometryWorkerOutboundMessage,
       transfer: readonly Transferable[] = [],
     ) => {
       messages.push(message);
@@ -556,7 +708,7 @@ function createLoadRequest(
 function createPrefetchRequest(
   id: number,
   nodeKey: string,
-): CesiumCopcPointGeometryWorkerRequest {
+): CesiumCopcPointGeometryWorkerInboundMessage {
   return {
     id,
     type: "prefetchNodePointData",

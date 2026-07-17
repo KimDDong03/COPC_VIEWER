@@ -3,12 +3,98 @@ import type { Copc as CopcData } from "copc";
 import { CesiumCopcPointGeometryWorkerPool } from "./CesiumCopcPointGeometryWorkerPool";
 import type { CopcDecodedPointDataCacheSnapshot } from "../core/copc/CopcDecodedPointDataCache";
 import type {
-  CesiumCopcPointGeometryWorkerRequest,
-  CesiumCopcPointGeometryWorkerResponse,
+  CesiumCopcPointGeometryWorkerInboundMessage,
+  CesiumCopcPointGeometryWorkerOutboundMessage,
   CopcNodePointGeometryBatchResult,
 } from "./CesiumCopcPointGeometryWorkerProtocol";
 
 describe("CesiumCopcPointGeometryWorkerPool", () => {
+  it("brokers a planned outer range and returns only the worker's exact bytes", async () => {
+    let worker: RecordingWorker | undefined;
+    const bytes = new Uint8Array([10, 11, 12, 13, 14, 15]);
+    const source = {
+      key: "blob:broker-test",
+      input: new Blob([bytes]),
+    };
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      pointGeometryLoading: "integrated-worker",
+      maxConcurrentPointGeometryWorkerRequests: 1,
+      createCopcPointGeometryWorker: () => {
+        worker = new RecordingWorker();
+        return worker as unknown as Worker;
+      },
+    });
+    const result = pool.loadNodePointGeometryBatch({
+      source,
+      nodeKey: "0-0-0-0",
+      node: {
+        pointCount: 10,
+        pointDataOffset: 2,
+        pointDataLength: 2,
+      },
+      pointDataRange: { begin: 0, end: 6 },
+      maxPointCount: 5,
+      transform: {
+        kind: "geographic",
+        heightScaleToMeters: 1,
+      },
+    });
+
+    if (!worker || !result) {
+      throw new Error("Expected worker-backed geometry loading.");
+    }
+
+    await waitForScheduledQueueDrain();
+    expect(worker.messages[0]).toMatchObject({
+      type: "loadNodePointGeometry",
+      brokeredRangeRequests: true,
+      pointDataRange: { begin: 0, end: 6 },
+    });
+
+    worker.dispatchMessage({
+      type: "range:request",
+      rangeRequestId: 41,
+      sourceKey: source.key,
+      begin: 2,
+      end: 4,
+      fetchBegin: 0,
+      fetchEnd: 6,
+    });
+    await expect.poll(() => worker?.messages.length).toBe(2);
+
+    const rangeResponse = worker.messages[1];
+    expect(rangeResponse).toMatchObject({
+      type: "range:success",
+      rangeRequestId: 41,
+    });
+    if (rangeResponse?.type !== "range:success") {
+      throw new Error("Expected brokered range success response.");
+    }
+    expect([...new Uint8Array(rangeResponse.buffer)]).toEqual([12, 13]);
+
+    worker.dispatchMessage({
+      id: 1,
+      type: "loadNodePointGeometry:success",
+      result: createWorkerResult("0-0-0-0"),
+    });
+    await expect(result).resolves.toMatchObject({
+      pointSamples: { nodeKey: "0-0-0-0" },
+    });
+  });
+
+  it("plans contiguous point-data ranges without crossing the configured cap", () => {
+    const pool = new CesiumCopcPointGeometryWorkerPool({
+      maxCoalescedPointDataRangeBytes: 15,
+    });
+    const plan = pool.planPointDataRanges([
+      { key: "a", pointDataOffset: 0, pointDataLength: 10 },
+      { key: "b", pointDataOffset: 10, pointDataLength: 10 },
+    ]);
+
+    expect(plan.get("a")).toEqual({ begin: 0, end: 10 });
+    expect(plan.get("b")).toEqual({ begin: 10, end: 20 });
+  });
+
   it("soft-cancels active requests without terminating the worker cache", async () => {
     let worker: RecordingWorker | undefined;
     const pool = new CesiumCopcPointGeometryWorkerPool({
@@ -169,6 +255,7 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
       id: 1,
       type: "loadNodePointGeometry",
       nodeKey: "0-0-0-0",
+      brokeredRangeRequests: false,
     }]);
 
     abortController.abort();
@@ -2878,13 +2965,13 @@ describe("CesiumCopcPointGeometryWorkerPool", () => {
 });
 
 class RecordingWorker {
-  readonly messages: CesiumCopcPointGeometryWorkerRequest[] = [];
+  readonly messages: CesiumCopcPointGeometryWorkerInboundMessage[] = [];
   terminated = false;
   private readonly listeners = new Map<
     string,
     Array<
       (event: {
-        readonly data?: CesiumCopcPointGeometryWorkerResponse;
+        readonly data?: CesiumCopcPointGeometryWorkerOutboundMessage;
         readonly error?: unknown;
       }) => void
     >
@@ -2893,14 +2980,14 @@ class RecordingWorker {
   addEventListener(
     type: string,
     listener: (event: {
-      readonly data?: CesiumCopcPointGeometryWorkerResponse;
+      readonly data?: CesiumCopcPointGeometryWorkerOutboundMessage;
       readonly error?: unknown;
     }) => void,
   ): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
 
-  postMessage(message: CesiumCopcPointGeometryWorkerRequest): void {
+  postMessage(message: CesiumCopcPointGeometryWorkerInboundMessage): void {
     this.messages.push(message);
   }
 
@@ -2908,7 +2995,7 @@ class RecordingWorker {
     this.terminated = true;
   }
 
-  dispatchMessage(response: CesiumCopcPointGeometryWorkerResponse): void {
+  dispatchMessage(response: CesiumCopcPointGeometryWorkerOutboundMessage): void {
     this.listeners.get("message")?.forEach((listener) => {
       listener({ data: response });
     });

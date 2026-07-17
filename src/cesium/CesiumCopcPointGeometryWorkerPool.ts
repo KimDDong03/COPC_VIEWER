@@ -4,9 +4,13 @@ import type {
 } from "./CesiumPointGeometryWorkerPool";
 import { createCesiumCopcPointGeometryWorker } from "./createCesiumCopcPointGeometryWorker";
 import type {
+  CesiumCopcPointGeometryWorkerHalfOpenRange,
+  CesiumCopcPointGeometryWorkerInboundMessage,
   CesiumCopcPointGeometryWorkerLoadRequest,
+  CesiumCopcPointGeometryWorkerOutboundMessage,
   CesiumCopcPointGeometryWorkerPrefetchRequest,
-  CesiumCopcPointGeometryWorkerResponse,
+  CesiumCopcPointGeometryWorkerRangeRequestMessage,
+  CesiumCopcPointGeometryWorkerSerializedError,
   CesiumCopcPointGeometryWorkerWarmupErrorResponse,
   CesiumCopcPointGeometryWorkerWarmupSuccessResponse,
   CesiumCopcPointGeometryWorkerWorkRequest,
@@ -25,6 +29,11 @@ import {
 } from "../core/copc/CopcDecodedPointDataCache";
 import type { CesiumPointGeometryTransform } from "./pointGeometryBatch";
 import type { ResolvedCopcPointColorStyle } from "./copcPointColorizer";
+import {
+  planCopcPointDataRanges,
+  type CopcPointDataPlannedRange,
+} from "../core/copc/planCopcPointDataRanges";
+import { CopcWorkerRangeRequestBroker } from "./CopcWorkerRangeRequestBroker";
 
 export interface CesiumCopcPointGeometryWorkerPoolOptions {
   readonly pointGeometryLoading?: CesiumPointGeometryLoadingMode;
@@ -34,6 +43,16 @@ export interface CesiumCopcPointGeometryWorkerPoolOptions {
   readonly maxDecodedPointDataViewsPerWorker?: number;
   readonly maxDecodedPointDataViewBytesPerWorker?: number;
   readonly maxDecodedPointDataViewBytesAcrossWorkers?: number;
+  /**
+   * Route worker byte reads through one shared main-thread range cache.
+   * Terminating cancellation modes use direct worker reads so termination also
+   * stops their network work.
+   */
+  readonly brokeredRangeRequests?: boolean;
+  /** Maximum lazy contiguous point-data span fetched for one worker request. */
+  readonly maxCoalescedPointDataRangeBytes?: number;
+  /** Maximum byte gap allowed inside a planned point-data span. Defaults to zero. */
+  readonly maxCoalescedPointDataRangeGapBytes?: number;
   readonly createCopcPointGeometryWorker?: () => Worker;
 }
 
@@ -98,6 +117,8 @@ type PointGeometryWorkerRequestConsumer =
 
 const DEFAULT_DECODED_NODE_WORKER_FALLBACK_DELAY_MILLISECONDS =
   Number.POSITIVE_INFINITY;
+const DEFAULT_MAX_COALESCED_POINT_DATA_RANGE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_COALESCED_POINT_DATA_RANGE_GAP_BYTES = 0;
 
 export class CesiumCopcPointGeometryWorkerPool {
   private readonly pointGeometryLoading: CesiumPointGeometryLoadingMode;
@@ -107,7 +128,11 @@ export class CesiumCopcPointGeometryWorkerPool {
   private readonly maxDecodedPointDataViewsPerWorker: number | undefined;
   private readonly maxDecodedPointDataViewBytesPerWorker: number | undefined;
   private readonly maxDecodedPointDataViewBytesAcrossWorkers: number | undefined;
+  private readonly brokeredRangeRequests: boolean;
+  private readonly maxCoalescedPointDataRangeBytes: number;
+  private readonly maxCoalescedPointDataRangeGapBytes: number;
   private readonly createCopcPointGeometryWorker: () => Worker;
+  private readonly rangeRequestBroker = new CopcWorkerRangeRequestBroker();
   private readonly workers: Worker[] = [];
   private readonly activeWorkers = new Set<Worker>();
   private readonly requests = new Map<number, PointGeometryWorkerRequestEntry>();
@@ -189,9 +214,40 @@ export class CesiumCopcPointGeometryWorkerPool {
         options.decodedNodeWorkerFallbackDelayMilliseconds,
         DEFAULT_DECODED_NODE_WORKER_FALLBACK_DELAY_MILLISECONDS,
       );
+    this.brokeredRangeRequests =
+      (options.brokeredRangeRequests ?? true) &&
+      this.activeRequestCancellation === "soft";
+    this.maxCoalescedPointDataRangeBytes =
+      readOptionalPositiveInteger(
+        "maxCoalescedPointDataRangeBytes",
+        options.maxCoalescedPointDataRangeBytes,
+      ) ?? DEFAULT_MAX_COALESCED_POINT_DATA_RANGE_BYTES;
+    this.maxCoalescedPointDataRangeGapBytes =
+      readOptionalNonNegativeSafeInteger(
+        "maxCoalescedPointDataRangeGapBytes",
+        options.maxCoalescedPointDataRangeGapBytes,
+        DEFAULT_MAX_COALESCED_POINT_DATA_RANGE_GAP_BYTES,
+      );
     this.createCopcPointGeometryWorker =
       options.createCopcPointGeometryWorker ??
       createCesiumCopcPointGeometryWorker;
+  }
+
+  planPointDataRanges(
+    nodes: readonly {
+      readonly key: string;
+      readonly pointDataOffset: number;
+      readonly pointDataLength: number;
+    }[],
+  ): ReadonlyMap<string, CopcPointDataPlannedRange> {
+    return planCopcPointDataRanges(nodes.map((node) => ({
+      nodeKey: node.key,
+      pointDataOffset: node.pointDataOffset,
+      pointDataLength: node.pointDataLength,
+    })), {
+      maxGapBytes: this.maxCoalescedPointDataRangeGapBytes,
+      maxSpanBytes: this.maxCoalescedPointDataRangeBytes,
+    });
   }
 
   loadNodePointGeometryBatch(options: {
@@ -203,6 +259,7 @@ export class CesiumCopcPointGeometryWorkerPool {
     readonly maxPointCount: number;
     readonly transform: CesiumPointGeometryTransform;
     readonly pointColorStyle?: ResolvedCopcPointColorStyle;
+    readonly pointDataRange?: CesiumCopcPointGeometryWorkerHalfOpenRange;
     readonly priority?: number;
     readonly signal?: AbortSignal;
   }): Promise<CopcNodePointGeometryBatchResult> | undefined {
@@ -212,6 +269,7 @@ export class CesiumCopcPointGeometryWorkerPool {
 
     throwIfAborted(options.signal);
     const source = readPointGeometryRequestSource(options);
+    this.registerBrokerSource(source);
     const priority = readOptionalFiniteNumber(
       "priority",
       options.priority,
@@ -282,6 +340,8 @@ export class CesiumCopcPointGeometryWorkerPool {
         maxPointCount: options.maxPointCount,
         transform: options.transform,
         pointColorStyle: options.pointColorStyle,
+        brokeredRangeRequests: this.brokeredRangeRequests,
+        pointDataRange: options.pointDataRange,
         maxDecodedPointDataViews: this.maxDecodedPointDataViewsPerWorker,
         maxDecodedPointDataViewBytes:
           this.maxDecodedPointDataViewBytesPerWorker,
@@ -310,6 +370,7 @@ export class CesiumCopcPointGeometryWorkerPool {
     readonly url?: string;
     readonly nodeKey: string;
     readonly node: Hierarchy.Node;
+    readonly pointDataRange?: CesiumCopcPointGeometryWorkerHalfOpenRange;
     readonly priority?: number;
     readonly signal?: AbortSignal;
   }): Promise<CopcNodePointDataPrefetchResult> | undefined {
@@ -319,6 +380,7 @@ export class CesiumCopcPointGeometryWorkerPool {
 
     throwIfAborted(options.signal);
     const source = readPointGeometryRequestSource(options);
+    this.registerBrokerSource(source);
     const priority = readOptionalFiniteNumber(
       "priority",
       options.priority,
@@ -388,6 +450,8 @@ export class CesiumCopcPointGeometryWorkerPool {
         source,
         nodeKey: options.nodeKey,
         node: options.node,
+        brokeredRangeRequests: this.brokeredRangeRequests,
+        pointDataRange: options.pointDataRange,
         maxDecodedPointDataViews: this.maxDecodedPointDataViewsPerWorker,
         maxDecodedPointDataViewBytes:
           this.maxDecodedPointDataViewBytesPerWorker,
@@ -473,6 +537,11 @@ export class CesiumCopcPointGeometryWorkerPool {
       throw new Error("workerCount must be a positive integer.");
     }
 
+    const source = readOptionalPointGeometryRequestSource(options);
+    if (source) {
+      this.registerBrokerSource(source);
+    }
+
     while (
       !this.workerUnavailable &&
       this.workers.length < workerCount
@@ -536,6 +605,7 @@ export class CesiumCopcPointGeometryWorkerPool {
     this.terminateAllWorkers(
       new Error("Cesium COPC point geometry worker was terminated."),
     );
+    this.rangeRequestBroker.clear();
   }
 
   private canUseWorker(): boolean {
@@ -630,7 +700,8 @@ export class CesiumCopcPointGeometryWorkerPool {
       const worker = this.createCopcPointGeometryWorker();
       worker.addEventListener("message", (event) => {
         this.handleWorkerMessage(
-          event as MessageEvent<CesiumCopcPointGeometryWorkerResponse>,
+          worker,
+          event as MessageEvent<CesiumCopcPointGeometryWorkerOutboundMessage>,
         );
       });
       worker.addEventListener("error", (event) => {
@@ -678,6 +749,7 @@ export class CesiumCopcPointGeometryWorkerPool {
       copc: options.copc,
       source: options.source,
       url: options.url,
+      brokeredRangeRequests: this.brokeredRangeRequests,
     });
 
     return promise;
@@ -691,9 +763,16 @@ export class CesiumCopcPointGeometryWorkerPool {
   }
 
   private handleWorkerMessage(
-    event: MessageEvent<CesiumCopcPointGeometryWorkerResponse>,
+    messageWorker: Worker,
+    event: MessageEvent<CesiumCopcPointGeometryWorkerOutboundMessage>,
   ): void {
     const response = event.data;
+
+    if (response.type === "range:request") {
+      void this.handleWorkerRangeRequest(messageWorker, response);
+      return;
+    }
+
     const completedAtMilliseconds = nowMilliseconds();
 
     if (
@@ -795,6 +874,48 @@ export class CesiumCopcPointGeometryWorkerPool {
       request,
       createErrorFromWorkerResponse(response.error),
     );
+  }
+
+  private async handleWorkerRangeRequest(
+    worker: Worker,
+    request: CesiumCopcPointGeometryWorkerRangeRequestMessage,
+  ): Promise<void> {
+    try {
+      const bytes = await this.rangeRequestBroker.getRange(request);
+
+      if (!this.canPostRangeResponse(worker)) {
+        return;
+      }
+
+      const buffer = createTransferableArrayBuffer(bytes);
+      const response: CesiumCopcPointGeometryWorkerInboundMessage = {
+        type: "range:success",
+        rangeRequestId: request.rangeRequestId,
+        buffer,
+      };
+      worker.postMessage(response, [buffer]);
+    } catch (error) {
+      if (!this.canPostRangeResponse(worker)) {
+        return;
+      }
+
+      const response: CesiumCopcPointGeometryWorkerInboundMessage = {
+        type: "range:error",
+        rangeRequestId: request.rangeRequestId,
+        error: serializeErrorForWorker(error),
+      };
+      worker.postMessage(response);
+    }
+  }
+
+  private canPostRangeResponse(worker: Worker): boolean {
+    return !this.destroyed && this.workers.includes(worker);
+  }
+
+  private registerBrokerSource(source: CopcSourceDescriptor): void {
+    if (this.brokeredRangeRequests) {
+      this.rangeRequestBroker.registerSource(source);
+    }
   }
 
   private resolveWarmupResponse(
@@ -1516,6 +1637,21 @@ function readPointGeometryRequestSource(options: {
   throw new Error("COPC point geometry worker requests require a source or url.");
 }
 
+function readOptionalPointGeometryRequestSource(options: {
+  readonly source?: CopcSourceDescriptor;
+  readonly url?: string;
+}): CopcSourceDescriptor | undefined {
+  if (options.source) {
+    return options.source;
+  }
+
+  if (options.url) {
+    return createCopcSourceDescriptor(options.url);
+  }
+
+  return undefined;
+}
+
 function createCoalescedGeometryRequestKey(options: {
   readonly source?: CopcSourceDescriptor;
   readonly url?: string;
@@ -1746,6 +1882,20 @@ function readOptionalNonNegativeNumber(
   return value;
 }
 
+function readOptionalNonNegativeSafeInteger(
+  name: string,
+  value: number | undefined,
+  fallback: number,
+): number {
+  const resolved = value ?? fallback;
+
+  if (!Number.isSafeInteger(resolved) || resolved < 0) {
+    throw new Error(`${name} must be a non-negative safe integer.`);
+  }
+
+  return resolved;
+}
+
 function readOptionalFiniteNumber(
   name: string,
   value: number | undefined,
@@ -1782,6 +1932,34 @@ function createErrorFromWorkerResponse(error: {
   restoredError.name = error.name ?? "Error";
   restoredError.stack = error.stack;
   return restoredError;
+}
+
+function serializeErrorForWorker(
+  error: unknown,
+): CesiumCopcPointGeometryWorkerSerializedError {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return {
+    message: String(error),
+  };
+}
+
+function createTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (
+    bytes.buffer instanceof ArrayBuffer &&
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === bytes.buffer.byteLength
+  ) {
+    return bytes.buffer;
+  }
+
+  return bytes.slice().buffer;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

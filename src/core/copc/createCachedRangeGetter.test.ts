@@ -38,6 +38,45 @@ describe("createCachedRangeGetter", () => {
     expect(readCount).toBe(1);
   });
 
+  it("serves cached subranges from larger cached ranges", async () => {
+    let readCount = 0;
+    const getter = createCachedRangeGetter(async () => {
+      readCount += 1;
+      return new Uint8Array([10, 11, 12, 13]);
+    });
+
+    await expect(getter(100, 104)).resolves.toEqual(
+      new Uint8Array([10, 11, 12, 13]),
+    );
+
+    const subrange = await getter(101, 103);
+    subrange[0] = 99;
+
+    await expect(getter(101, 103)).resolves.toEqual(new Uint8Array([11, 12]));
+    expect(readCount).toBe(1);
+  });
+
+  it("coalesces in-flight subrange reads from larger ranges", async () => {
+    let readCount = 0;
+    let resolveRead: ((bytes: Uint8Array) => void) | undefined;
+    const getter = createCachedRangeGetter(async () => {
+      readCount += 1;
+      return await new Promise<Uint8Array>((resolve) => {
+        resolveRead = resolve;
+      });
+    });
+
+    const fullRange = getter(200, 204);
+    const subrange = getter(201, 203);
+
+    expect(readCount).toBe(1);
+    resolveRead?.(new Uint8Array([20, 21, 22, 23]));
+
+    await expect(fullRange).resolves.toEqual(new Uint8Array([20, 21, 22, 23]));
+    await expect(subrange).resolves.toEqual(new Uint8Array([21, 22]));
+    expect(readCount).toBe(1);
+  });
+
   it("evicts least-recent exact ranges by byte budget", async () => {
     let readCount = 0;
     const getter = createCachedRangeGetter(

@@ -12,9 +12,19 @@ export type CesiumCopcPointGeometryWorkerRequest =
   | CesiumCopcPointGeometryWorkerPrefetchRequest
   | CesiumCopcPointGeometryWorkerCancelRequest;
 
+export type CesiumCopcPointGeometryWorkerInboundMessage =
+  | CesiumCopcPointGeometryWorkerRequest
+  | CesiumCopcPointGeometryWorkerRangeSuccessMessage
+  | CesiumCopcPointGeometryWorkerRangeErrorMessage;
+
 export type CesiumCopcPointGeometryWorkerWorkRequest =
   | CesiumCopcPointGeometryWorkerLoadRequest
   | CesiumCopcPointGeometryWorkerPrefetchRequest;
+
+export interface CesiumCopcPointGeometryWorkerHalfOpenRange {
+  readonly begin: number;
+  readonly end: number;
+}
 
 export interface CesiumCopcPointGeometryWorkerWarmupRequest {
   readonly id: number;
@@ -22,6 +32,7 @@ export interface CesiumCopcPointGeometryWorkerWarmupRequest {
   readonly copc?: CopcData;
   readonly source?: CopcSourceDescriptor;
   readonly url?: string;
+  readonly brokeredRangeRequests?: boolean;
 }
 
 export interface CesiumCopcPointGeometryWorkerLoadRequest {
@@ -37,6 +48,8 @@ export interface CesiumCopcPointGeometryWorkerLoadRequest {
   readonly pointColorStyle?: ResolvedCopcPointColorStyle;
   readonly maxDecodedPointDataViews?: number;
   readonly maxDecodedPointDataViewBytes?: number;
+  readonly brokeredRangeRequests?: boolean;
+  readonly pointDataRange?: CesiumCopcPointGeometryWorkerHalfOpenRange;
 }
 
 export interface CesiumCopcPointGeometryWorkerPrefetchRequest {
@@ -49,6 +62,8 @@ export interface CesiumCopcPointGeometryWorkerPrefetchRequest {
   readonly node: Hierarchy.Node;
   readonly maxDecodedPointDataViews?: number;
   readonly maxDecodedPointDataViewBytes?: number;
+  readonly brokeredRangeRequests?: boolean;
+  readonly pointDataRange?: CesiumCopcPointGeometryWorkerHalfOpenRange;
 }
 
 export interface CesiumCopcPointGeometryWorkerCancelRequest {
@@ -94,6 +109,38 @@ export type CesiumCopcPointGeometryWorkerResponse =
   | CesiumCopcPointGeometryWorkerPrefetchCanceledResponse
   | CesiumCopcPointGeometryWorkerErrorResponse;
 
+export type CesiumCopcPointGeometryWorkerOutboundMessage =
+  | CesiumCopcPointGeometryWorkerResponse
+  | CesiumCopcPointGeometryWorkerRangeRequestMessage;
+
+export interface CesiumCopcPointGeometryWorkerSerializedError {
+  readonly name?: string;
+  readonly message: string;
+  readonly stack?: string;
+}
+
+export interface CesiumCopcPointGeometryWorkerRangeRequestMessage {
+  readonly type: "range:request";
+  readonly rangeRequestId: number;
+  readonly sourceKey: string;
+  readonly begin: number;
+  readonly end: number;
+  readonly fetchBegin?: number;
+  readonly fetchEnd?: number;
+}
+
+export interface CesiumCopcPointGeometryWorkerRangeSuccessMessage {
+  readonly type: "range:success";
+  readonly rangeRequestId: number;
+  readonly buffer: ArrayBuffer;
+}
+
+export interface CesiumCopcPointGeometryWorkerRangeErrorMessage {
+  readonly type: "range:error";
+  readonly rangeRequestId: number;
+  readonly error: CesiumCopcPointGeometryWorkerSerializedError;
+}
+
 export interface CesiumCopcPointGeometryWorkerWarmupSuccessResponse {
   readonly id: number;
   readonly type: "warmup:success";
@@ -102,11 +149,7 @@ export interface CesiumCopcPointGeometryWorkerWarmupSuccessResponse {
 export interface CesiumCopcPointGeometryWorkerWarmupErrorResponse {
   readonly id: number;
   readonly type: "warmup:error";
-  readonly error: {
-    readonly name?: string;
-    readonly message: string;
-    readonly stack?: string;
-  };
+  readonly error: CesiumCopcPointGeometryWorkerSerializedError;
 }
 
 export interface CesiumCopcPointGeometryWorkerSuccessResponse {
@@ -139,9 +182,5 @@ export interface CesiumCopcPointGeometryWorkerErrorResponse {
   readonly id: number;
   readonly type: "loadNodePointGeometry:error" | "prefetchNodePointData:error";
   readonly cache?: CopcDecodedPointDataCacheSnapshot;
-  readonly error: {
-    readonly name?: string;
-    readonly message: string;
-    readonly stack?: string;
-  };
+  readonly error: CesiumCopcPointGeometryWorkerSerializedError;
 }

@@ -22,10 +22,13 @@ import type {
 } from "../core/copc/CopcDecodedPointDataCache";
 import type { PointGeometryBatch } from "./CopcPointCloudRenderer";
 import type {
+  CesiumCopcPointGeometryWorkerHalfOpenRange,
+  CesiumCopcPointGeometryWorkerInboundMessage,
   CesiumCopcPointGeometryWorkerLoadRequest,
+  CesiumCopcPointGeometryWorkerOutboundMessage,
   CesiumCopcPointGeometryWorkerPrefetchRequest,
   CesiumCopcPointGeometryWorkerRequest,
-  CesiumCopcPointGeometryWorkerResponse,
+  CesiumCopcPointGeometryWorkerSerializedError,
 } from "./CesiumCopcPointGeometryWorkerProtocol";
 import {
   createNodePointSampleBatchKey,
@@ -34,7 +37,9 @@ import {
 
 interface WorkerCopcSource {
   readonly sourceKey: string;
+  readonly cacheKey: string;
   readonly getter: Getter;
+  readonly brokered: boolean;
   copc: Promise<CopcData>;
 }
 
@@ -63,7 +68,15 @@ const DEFAULT_MAX_DECODED_NODE_VIEW_COUNT = 48;
 const DEFAULT_MAX_DECODED_NODE_VIEW_BYTES = 192 * 1024 * 1024;
 const copcSources = new Map<string, WorkerCopcSource>();
 const decodedNodeViews = new Map<string, WorkerDecodedNodeViewEntry>();
+const pendingRangeRequests = new Map<
+  number,
+  {
+    resolve(value: Uint8Array): void;
+    reject(error: unknown): void;
+  }
+>();
 const canceledRequestIds = new Set<number>();
+let nextRangeRequestId = 1;
 let decodedNodeViewBytes = 0;
 let peakDecodedNodeViewBytes = 0;
 let decodedNodeViewCacheHitCount = 0;
@@ -74,17 +87,24 @@ const workerScope = globalThis as unknown as {
   addEventListener(
     type: "message",
     listener: (event: {
-      readonly data: CesiumCopcPointGeometryWorkerRequest;
+      readonly data: CesiumCopcPointGeometryWorkerInboundMessage;
     }) => void,
   ): void;
   postMessage(
-    message: CesiumCopcPointGeometryWorkerResponse,
+    message: CesiumCopcPointGeometryWorkerOutboundMessage,
     transfer?: readonly Transferable[],
   ): void;
 };
 
 workerScope.addEventListener("message", (event) => {
-  void handleRequest(event.data);
+  const message = event.data;
+
+  if (message.type === "range:success" || message.type === "range:error") {
+    handleRangeResponse(message);
+    return;
+  }
+
+  void handleRequest(message);
 });
 
 async function handleRequest(
@@ -98,7 +118,11 @@ async function handleRequest(
 
       const sourceDescriptor = readWorkerWarmupSource(request);
       if (sourceDescriptor) {
-        await getWorkerCopcSource(sourceDescriptor, request.copc).copc;
+        await getWorkerCopcSource(
+          sourceDescriptor,
+          request.copc,
+          request.brokeredRangeRequests === true,
+        ).copc;
       }
 
       workerScope.postMessage({
@@ -129,6 +153,7 @@ async function handleRequest(
     const source = getWorkerCopcSource(
       readWorkerRequestSource(request),
       request.copc,
+      request.brokeredRangeRequests === true,
     );
     const pointDataViewStartedAt = nowMilliseconds();
     const pointDataView = await loadWorkerPointDataView(
@@ -244,6 +269,7 @@ async function handlePrefetchNodePointDataRequest(
   const source = getWorkerCopcSource(
     readWorkerRequestSource(request),
     request.copc,
+    request.brokeredRangeRequests === true,
   );
   const pointDataViewStartedAt = nowMilliseconds();
   const pointDataView = await loadWorkerPointDataView(
@@ -338,22 +364,103 @@ function addTransferableBuffer(
 function getWorkerCopcSource(
   descriptor: CopcSourceDescriptor,
   copc?: CopcData,
+  brokered = false,
 ): WorkerCopcSource {
-  let source = copcSources.get(descriptor.key);
+  const cacheKey = createWorkerCopcSourceCacheKey(descriptor.key, brokered);
+  let source = copcSources.get(cacheKey);
 
   if (!source) {
-    const getter = createCopcRangeGetter(descriptor.input);
+    const getter = brokered
+      ? createBrokeredRangeGetter(descriptor.key)
+      : createCopcRangeGetter(descriptor.input);
     source = {
       sourceKey: descriptor.key,
+      cacheKey,
       getter,
+      brokered,
       copc: copc ? Promise.resolve(copc) : createWorkerCopcPromise(getter),
     };
-    copcSources.set(descriptor.key, source);
+    copcSources.set(cacheKey, source);
   } else if (copc) {
     source.copc = Promise.resolve(copc);
   }
 
   return source;
+}
+
+function createWorkerCopcSourceCacheKey(
+  sourceKey: string,
+  brokered: boolean,
+): string {
+  return `${brokered ? "brokered" : "direct"}:${sourceKey}`;
+}
+
+function createBrokeredRangeGetter(
+  sourceKey: string,
+  preferredRange?: () => CesiumCopcPointGeometryWorkerHalfOpenRange | undefined,
+): Getter {
+  return (begin: number, end: number): Promise<Uint8Array> => {
+    const rangeRequestId = nextRangeRequestId++;
+    const range = preferredRange?.();
+    const preferredFetch =
+      range && range.begin <= begin && end <= range.end
+        ? {
+            fetchBegin: range.begin,
+            fetchEnd: range.end,
+          }
+        : {};
+
+    const promise = new Promise<Uint8Array>((resolve, reject) => {
+      pendingRangeRequests.set(rangeRequestId, { resolve, reject });
+    });
+
+    workerScope.postMessage({
+      type: "range:request",
+      rangeRequestId,
+      sourceKey,
+      begin,
+      end,
+      ...preferredFetch,
+    });
+
+    return promise;
+  };
+}
+
+function handleRangeResponse(
+  message: Exclude<
+    CesiumCopcPointGeometryWorkerInboundMessage,
+    CesiumCopcPointGeometryWorkerRequest
+  >,
+): void {
+  const pending = pendingRangeRequests.get(message.rangeRequestId);
+  pendingRangeRequests.delete(message.rangeRequestId);
+
+  if (!pending) {
+    return;
+  }
+
+  if (message.type === "range:success") {
+    pending.resolve(new Uint8Array(message.buffer));
+  } else {
+    pending.reject(deserializeError(message.error));
+  }
+}
+
+function deserializeError(
+  serialized: CesiumCopcPointGeometryWorkerSerializedError,
+): Error {
+  const error = new Error(serialized.message);
+
+  if (serialized.name) {
+    error.name = serialized.name;
+  }
+
+  if (serialized.stack) {
+    error.stack = serialized.stack;
+  }
+
+  return error;
 }
 
 function createWorkerCopcPromise(getter: Getter): Promise<CopcData> {
@@ -400,7 +507,7 @@ async function loadWorkerPointDataView(
     | CesiumCopcPointGeometryWorkerPrefetchRequest,
   onCacheSnapshot: (snapshot: CopcDecodedPointDataCacheSnapshot) => void,
 ): Promise<WorkerPointDataViewResult> {
-  const cacheKey = createDecodedNodeViewKey(source.sourceKey, request.nodeKey);
+  const cacheKey = createDecodedNodeViewKey(source.cacheKey, request.nodeKey);
   const limits = readDecodedNodeViewCacheLimits(request);
   const evictedNodeKeys: CopcDecodedPointDataCacheNodeKey[] = [];
   let requestedEntry: WorkerDecodedNodeViewEntry | undefined;
@@ -439,7 +546,7 @@ async function loadWorkerPointDataView(
       (copc.header.pointDataRecordLength +
         SPATIAL_POINT_ORDER_BYTES_PER_POINT);
     const view = loadCopcNodePointDataView({
-      getter: source.getter,
+      getter: createPointDataGetter(source, request),
       copc,
       node: request.node,
     }).catch((error: unknown) => {
@@ -658,11 +765,22 @@ function createDecodedNodeViewKey(
   return `${sourceKey.length}:${sourceKey}${nodeKey}`;
 }
 
-function serializeError(error: unknown): {
-  readonly name?: string;
-  readonly message: string;
-  readonly stack?: string;
-} {
+function createPointDataGetter(
+  source: WorkerCopcSource,
+  request:
+    | CesiumCopcPointGeometryWorkerLoadRequest
+    | CesiumCopcPointGeometryWorkerPrefetchRequest,
+): Getter {
+  if (!source.brokered) {
+    return source.getter;
+  }
+
+  return createBrokeredRangeGetter(source.sourceKey, () => request.pointDataRange);
+}
+
+function serializeError(
+  error: unknown,
+): CesiumCopcPointGeometryWorkerSerializedError {
   if (error instanceof Error) {
     return {
       name: error.name,

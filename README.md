@@ -295,22 +295,24 @@ request trace, images, backgrounds, and masks are written to
 `output/eptium-comparison`.
 The latest two-repeat RTX 3060 checkpoint passed the strict equal-count gate. At
 1,047,575 points the local renderer recorded 86.678% coverage, 0.2238% bounded
-gaps, 0.009536 edge/foreground, 17.15 ms p95, and 15.556 s product first-ready,
-versus Eptium's 86.151%, 0.2992%, 0.010569, 17.15 ms, and 16.495 s. Parsed
-metadata is carried by warmup and every geometry load/prefetch request, soft
-cancellation lets superseded uncached geometry finish into the worker cache,
-and strict decoded-worker affinity prevents an idle worker from repeating a
-cached node's range read and LAZ decode. Together with the final-only typed
-terminal commit, the current path reduced the local equal-count request count
-from 85 in the original pre-change capture to 60 and exact duplicate requests
-from 22 to zero. Four predictive prefetch requests were still abandoned when
-the harness left the product page for its geometry-mask reload. Eptium used 55
-ranges with no abandoned work and an 8.02% smaller unique-byte union, while the
-local request amplification was exactly 1.0 versus Eptium's 1.0011. The local
-p95 matched Eptium and its median maximum frame was 1.20 ms slower
-(19.35 versus 18.15 ms). This remains controlled Autzen evidence, not a
-universal cross-device, cross-dataset, or total-network-efficiency superiority
-claim.
+gaps, 0.009536 edge/foreground, 17.10 ms p95, and 11.065 s product first-ready,
+versus Eptium's 86.151%, 0.2992%, 0.010569, 17.05 ms, and 16.843 s. Integrated
+geometry workers now proxy byte reads through a shared main-thread broker while
+keeping LAZ decode parallel. The layer lazily plans exact-contiguous point-data
+spans up to 2 MiB, excludes already cached or decoded nodes from later plans,
+and serves contained requests from one bounded in-flight/completed range cache.
+Together with metadata reuse, soft cancellation, strict decoded-worker
+affinity, and the final-only typed terminal commit, this reduced the local
+equal-count product ledger from 85 original requests to 35 and 32 in the two
+opposite-order runs (33.5 median), versus Eptium's repeatable 55. Both local
+runs completed 31 ranges, issued no exact duplicates, had zero overlapping
+requested bytes, and held amplification at exactly 1.0; Eptium duplicated
+17,792 bytes at 1.0011 amplification. Local product-ready time was 37.51%
+lower, and median request count was 39.09% lower. The local median p95 was
+0.05 ms higher and maximum frame was 1.75 ms higher; its completed response
+bytes were also 5.62% higher, consistent with the additional measured
+coverage. This remains controlled Autzen evidence, not a universal
+cross-device, cross-dataset, or total-network-efficiency superiority claim.
 `npm run benchmark:smoothness` builds the example, starts a temporary preview server, enables camera streaming, moves the Cesium camera, records browser frame intervals through both camera movement and the exact terminal-refinement boundary, first visible application response timing, stream-stage timing, selected LOD depth, and structured decoded-worker cache telemetry, then writes the result to `output/smoothness-benchmark/smoothness.json`. A first response is accepted only after an actual scene commit (`app-render-commit`) or after the application proves that the unchanged exact frame is still resident (`app-render-retained`); beginning a load or resolving a cache lookup is not response evidence. Versioned current artifacts must contain terminal-frame and aggregate cache-envelope evidence; only explicitly unversioned legacy artifacts retain compatibility. The defaults are Autzen, Millsite Reservoir, and Custom Millsite URL samples; 2,500 / 5,000 / 10,000 / 20,000 camera-stream point budgets; 2 repeats per budget; 24 camera steps; 3 seconds per run; and sample-specific minimum selected-depth checks. On PowerShell, override them with `$env:COPC_SMOOTHNESS_SAMPLES="autzen-classified,millsite-reservoir"; $env:COPC_SMOOTHNESS_POINT_BUDGETS="5000,10000"; $env:COPC_SMOOTHNESS_REPEATS="5"; $env:COPC_SMOOTHNESS_MIN_SELECTED_DEPTH="2"; npm run benchmark:smoothness`.
 Browser smoke and benchmark commands request Chromium's high-performance GPU and
 record the actual WebGL vendor/renderer/version in their result. Systems without

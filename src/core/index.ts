@@ -91,6 +91,12 @@ export {
   type PlanMixedDepthHierarchyTraversalOptions,
 } from "./copc/planMixedDepthHierarchyTraversal";
 export {
+  planCopcPointDataRanges,
+  type CopcPointDataPlannedRange,
+  type CopcPointDataRangeEntry,
+  type PlanCopcPointDataRangesOptions,
+} from "./copc/planCopcPointDataRanges";
+export {
   suggestHierarchyNode,
   type CopcHierarchyNodeSuggestion,
   type CopcTargetPoint,

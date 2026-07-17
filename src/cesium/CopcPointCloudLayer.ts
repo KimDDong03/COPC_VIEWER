@@ -85,6 +85,7 @@ import {
   type CesiumCopcPointGeometryWorkerCancellationMode,
 } from "./CesiumCopcPointGeometryWorkerPool";
 import type {
+  CesiumCopcPointGeometryWorkerHalfOpenRange,
   CopcNodePointGeometryBatchResult,
   CopcPointGeometryBatchTiming,
 } from "./CesiumCopcPointGeometryWorkerProtocol";
@@ -125,6 +126,9 @@ export interface CopcPointCloudLayerOptions {
   readonly maxConcurrentPointGeometryWorkerRequests?: number;
   readonly activePointGeometryWorkerCancellation?: CesiumCopcPointGeometryWorkerCancellationMode;
   readonly decodedNodeWorkerFallbackDelayMilliseconds?: number;
+  readonly brokeredRangeRequests?: boolean;
+  readonly maxCoalescedPointDataRangeBytes?: number;
+  readonly maxCoalescedPointDataRangeGapBytes?: number;
   readonly pointSampleLoading?: CopcPointSampleLoadingMode;
   readonly pointGeometryLoading?: CesiumPointGeometryLoadingMode;
   readonly createPointSampleWorker?: () => Worker;
@@ -585,6 +589,11 @@ export class CopcPointCloudLayer {
         options.maxDecodedPointDataViewBytesPerWorker,
       maxDecodedPointDataViewBytesAcrossWorkers:
         decodedPointDataWorkerBudgets.integratedPointGeometry,
+      brokeredRangeRequests: options.brokeredRangeRequests,
+      maxCoalescedPointDataRangeBytes:
+        options.maxCoalescedPointDataRangeBytes,
+      maxCoalescedPointDataRangeGapBytes:
+        options.maxCoalescedPointDataRangeGapBytes,
       createCopcPointGeometryWorker: options.createCopcPointGeometryWorker,
     });
     this.boundsRenderer = new CesiumBoundsRenderer(scene);
@@ -864,6 +873,17 @@ export class CopcPointCloudLayer {
     const nodes = normalizedNodeKeys.map((nodeKey) =>
       findRequiredNode(hierarchy, nodeKey),
     );
+    const source = this.source.getDescriptor();
+    const pointDataRangeByNodeKey =
+      this.copcPointGeometryWorkerPool.planPointDataRanges(
+        nodes.filter(
+          (node) =>
+            !this.copcPointGeometryWorkerPool.hasDecodedNodePointData({
+              source,
+              nodeKey: node.key,
+            }),
+        ),
+      );
     const requestPriorities = createProgressiveNodeRequestPriorities(
       nodes,
       options.requestPriority,
@@ -872,7 +892,6 @@ export class CopcPointCloudLayer {
       options.maxConcurrentRequests,
       normalizedNodeKeys.length,
     );
-    const source = this.source.getDescriptor();
     const copc = this.source.getLoadedCopcMetadata();
     let prefetchedNodeCount = 0;
     let skippedNodeCount = 0;
@@ -907,6 +926,7 @@ export class CopcPointCloudLayer {
           source,
           nodeKey: node.key,
           node: createSourceHierarchyNode(node),
+          pointDataRange: pointDataRangeByNodeKey.get(node.key),
           priority: requestPriorities[index],
           signal: options.signal,
         });
@@ -987,6 +1007,18 @@ export class CopcPointCloudLayer {
     const transformKey = createPointGeometryTransformCacheKey(
       this.pointGeometryTransform,
     );
+    const resolveMaxPointCount = (
+      node: CopcHierarchyNodeSummary,
+    ): number =>
+      readPositiveInteger(
+        options.maxPointCountPerNode,
+        this.defaultMaxPointCountPerNode ?? node.pointCount,
+      );
+    const pointDataRangeByNodeKey =
+      this.planPointDataRangesForGeometryNodes(
+        nodes,
+        resolveMaxPointCount,
+      );
     let prefetchedNodeCount = 0;
     let skippedNodeCount = 0;
     let nextNodeIndex = 0;
@@ -1003,10 +1035,7 @@ export class CopcPointCloudLayer {
         const index = nextNodeIndex;
         nextNodeIndex += 1;
         const node = nodes[index];
-        const maxPointCount = readPositiveInteger(
-          options.maxPointCountPerNode,
-          this.defaultMaxPointCountPerNode ?? node.pointCount,
-        );
+        const maxPointCount = resolveMaxPointCount(node);
 
         if (
           this.findReusableLoadedNodePointGeometryBatch(
@@ -1025,6 +1054,7 @@ export class CopcPointCloudLayer {
           maxPointCount,
           options.signal,
           requestPriorities[index],
+          pointDataRangeByNodeKey.get(node.key),
         );
         prefetchedNodeCount += 1;
         reportProgress();
@@ -1206,6 +1236,11 @@ export class CopcPointCloudLayer {
     );
 
     if (this.shouldUseIntegratedPointGeometryLoading(false)) {
+      const pointDataRangeByNodeKey =
+        this.planPointDataRangesForGeometryNodes(
+          nodes,
+          maxPointCountPerNode,
+        );
       const geometryResults = await Promise.all(
         nodes.map((node) =>
           this.loadNodePointGeometryBatch(
@@ -1213,6 +1248,7 @@ export class CopcPointCloudLayer {
             maxPointCountPerNode,
             options.signal,
             options.requestPriority,
+            pointDataRangeByNodeKey.get(node.key),
           ),
         ),
       );
@@ -1283,6 +1319,11 @@ export class CopcPointCloudLayer {
       options.maxPointCountPerNode ?? this.defaultMaxPointCountPerNode,
       options.maxRenderedPointCount,
     );
+    const pointDataRangeByNodeKey =
+      this.planPointDataRangesForGeometryNodes(
+        nodes,
+        maxPointCountPerNode,
+      );
     const progressBatchNodeCount = readPositiveInteger(
       options.progressBatchNodeCount,
       normalizedNodeKeys.length,
@@ -1317,6 +1358,7 @@ export class CopcPointCloudLayer {
             maxPointCountPerNode,
             options.signal,
             requestPriorities[index],
+            pointDataRangeByNodeKey.get(nodes[index].key),
           ),
         });
       }
@@ -2361,9 +2403,17 @@ export class CopcPointCloudLayer {
       maxPointCountPerNode,
       maxRenderedPointCount,
     );
+    const pointDataRangeByNodeKey =
+      this.planPointDataRangesForGeometryNodes(nodes, maxPointCount);
     const geometryResults = await Promise.all(
       nodes.map((node) =>
-        this.loadNodePointGeometryBatch(node, maxPointCount, signal, priority),
+        this.loadNodePointGeometryBatch(
+          node,
+          maxPointCount,
+          signal,
+          priority,
+          pointDataRangeByNodeKey.get(node.key),
+        ),
       ),
     );
 
@@ -2569,6 +2619,11 @@ export class CopcPointCloudLayer {
         options.maxActiveProgressiveNodeRequests,
         pendingNodeIndexes.length,
       );
+      const pointDataRangeByNodeKey =
+        this.planPointDataRangesForGeometryNodes(
+          pendingNodeIndexes.map((index) => nodes[index]),
+          maxPointCountPerNode,
+        );
       let nextPendingNodeIndex = 0;
       const enqueueNextProgressiveNodeRequests = (): void => {
         while (
@@ -2584,6 +2639,7 @@ export class CopcPointCloudLayer {
               maxPointCountPerNode,
               progressiveAbort.signal,
               requestPriorities[index],
+              pointDataRangeByNodeKey.get(nodes[index].key),
             ),
           });
         }
@@ -3062,11 +3118,64 @@ export class CopcPointCloudLayer {
     };
   }
 
+  private planPointDataRangesForGeometryNodes(
+    nodes: readonly CopcHierarchyNodeSummary[],
+    maxPointCount:
+      | number
+      | undefined
+      | ((node: CopcHierarchyNodeSummary) => number),
+  ): ReadonlyMap<
+    string,
+    CesiumCopcPointGeometryWorkerHalfOpenRange
+  > {
+    const transformKey = createPointGeometryTransformCacheKey(
+      this.pointGeometryTransform,
+    );
+    const source = this.source.getDescriptor();
+    const nodesRequiringPointData = nodes.filter((node) => {
+      const resolvedMaxPointCount =
+        typeof maxPointCount === "function"
+          ? maxPointCount(node)
+          : maxPointCount ??
+            this.defaultMaxPointCountPerNode ??
+            node.pointCount;
+      const cacheKey = createNodePointGeometryBatchCacheKey(
+        node.key,
+        resolvedMaxPointCount,
+        this.pointGeometryTransform,
+      );
+
+      if (this.loadedNodePointGeometryBatches.has(cacheKey)) {
+        return false;
+      }
+
+      if (
+        this.findReusableLoadedNodePointGeometryBatch(
+          node,
+          resolvedMaxPointCount,
+          transformKey,
+        )
+      ) {
+        return false;
+      }
+
+      return !this.copcPointGeometryWorkerPool.hasDecodedNodePointData({
+        source,
+        nodeKey: node.key,
+      });
+    });
+
+    return this.copcPointGeometryWorkerPool.planPointDataRanges(
+      nodesRequiringPointData,
+    );
+  }
+
   private loadNodePointGeometryBatch(
     node: CopcHierarchyNodeSummary,
     maxPointCount: number | undefined,
     signal: AbortSignal | undefined,
     priority?: number,
+    pointDataRange?: CesiumCopcPointGeometryWorkerHalfOpenRange,
   ): Promise<CopcNodePointGeometryBatchResult> {
     const normalizedMaxPointCount =
       maxPointCount ?? this.defaultMaxPointCountPerNode ?? node.pointCount;
@@ -3125,6 +3234,7 @@ export class CopcPointCloudLayer {
       normalizedMaxPointCount,
       signal,
       priority,
+      pointDataRange,
     ).catch((error: unknown) => {
       const existing = this.loadedNodePointGeometryBatches.get(cacheKey);
 
@@ -3154,6 +3264,7 @@ export class CopcPointCloudLayer {
     maxPointCount: number,
     signal: AbortSignal | undefined,
     priority: number | undefined,
+    pointDataRange: CesiumCopcPointGeometryWorkerHalfOpenRange | undefined,
   ): Promise<CopcNodePointGeometryBatchResult> {
     if (!this.pointGeometryTransform) {
       throw new Error("A serializable point geometry transform is required.");
@@ -3168,6 +3279,7 @@ export class CopcPointCloudLayer {
         maxPointCount,
         transform: this.pointGeometryTransform,
         pointColorStyle: this.requirePointColorStyle(),
+        pointDataRange,
         priority,
         signal,
       });

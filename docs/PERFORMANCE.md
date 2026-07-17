@@ -935,10 +935,10 @@ rather than forcing a cold browser cache.
 
 | Configuration | Rendered points | Coverage | Bounded gaps | Edge / foreground | Fair p95 | Fair max | Product first ready | Product ranges |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Eptium stock | 1,047,575 | 86.151% | 0.2991% | 0.010569 | 17.15 ms | 18.15 ms | 16,495.0 ms | 55 |
-| Local shipped balanced | 720,000 | 86.559% | 0.2450% | 0.010168 | 17.10 ms | 19.65 ms | 15,971.0 ms | 60 |
-| Local high detail | 1,440,000 | 86.717% | 0.2230% | 0.009259 | 17.00 ms | 19.30 ms | 14,081.0 ms | 60 |
-| Local equal count | 1,047,575 | 86.678% | 0.2238% | 0.009536 | 17.15 ms | 19.35 ms | 15,555.5 ms | 60 |
+| Eptium stock | 1,047,575 | 86.151% | 0.2992% | 0.010569 | 17.05 ms | 17.25 ms | 16,843.0 ms | 55 |
+| Local shipped balanced | 720,000 | 86.559% | 0.2450% | 0.010168 | 17.00 ms | 20.00 ms | 11,073.5 ms | 33.5 |
+| Local high detail | 1,440,000 | 86.717% | 0.2230% | 0.009259 | 16.90 ms | 18.35 ms | 10,472.5 ms | 35 |
+| Local equal count | 1,047,575 | 86.678% | 0.2238% | 0.009536 | 17.10 ms | 19.00 ms | 11,064.5 ms | 33.5 |
 
 The shipped-default and high-detail rows are descriptive, non-equivalent
 comparisons: the former renders 31.27% fewer points than Eptium at this pose,
@@ -950,56 +950,58 @@ gates at their respective point counts.
 
 The strict equal-count comparison is `passed`. With exactly 1,047,575 points,
 local coverage is 0.5266 percentage points higher, bounded gaps are 25.18%
-lower, edge perimeter per foreground pixel is 9.79% lower, and fair p95 is
-equal at 17.15 ms. Product first-ready time is 939.5 ms, or 5.70%, lower than
-Eptium; local product-ready time is also 1,797.0 ms, or 10.36%, lower because
-the local terminal is already stable when first reported. Both equal-count point-count
-pairs are exact, all visual and p95 gates pass, Eptium foreground retention is
-99.9497%, and unsupported expansion plus large-void intrusion are both zero.
-This establishes a visual-quality and product-ready advantage at this one
-controlled Autzen checkpoint, with matching p95 frame timing.
+lower, and edge perimeter per foreground pixel is 9.78% lower. Fair p95 is
+17.10 ms locally versus 17.05 ms for Eptium. Product first-ready time is
+5,778.5 ms, or 34.31%, lower than Eptium; local product-ready time is also
+6,641.0 ms, or 37.51%, lower because the local terminal is already stable when
+first reported. Both equal-count point-count pairs are exact and all visual and
+p95 gates pass. This establishes a visual-quality, request-count, and
+product-ready advantage at this one controlled Autzen checkpoint.
 
 This checkpoint also records product-only COPC request traffic. Eptium issued
 55 ranges, requested 16,160,948 bytes, duplicated 17,792 exact-range bytes,
-abandoned no requests, and had a 1.0011 request-amplification ratio. The local
-equal-count run issued 60 ranges, requested a 17,437,756-byte unique union,
-duplicated no exact ranges, abandoned four transition-time predictive prefetch
-requests, and had an exact 1.0 amplification ratio. The four abandoned ranges
-total 368,651 bytes and received no body before the harness moved to the
-geometry-mask reload, leaving 17,069,105 responded requested bytes. The local
-viewer therefore wins this checkpoint's visible quality, readiness, exact
-duplicate, and amplification measures, but still issues five more ranges and
-its unique requested-byte union is 1,294,600 bytes or 8.02% above Eptium's
-16,143,156 bytes.
+abandoned no requests, and had a 1.0011 request-amplification ratio. The two
+local equal-count product runs issued 35 and 32 ranges (33.5 median), completed
+31 in both runs, duplicated no exact ranges, and recorded zero overlapping
+requested bytes with an exact 1.0 amplification ratio. Transition-time
+predictive prefetch accounted for four abandoned requests in the first order
+and one in the second; they received no body. Local responded requested bytes
+were therefore a repeatable 17,069,105, 5.62% above Eptium, while the median
+unique requested-byte union was 17,297,429 bytes, 7.15% above Eptium's
+16,143,156 bytes. The extra byte volume remains a real tradeoff associated with
+the higher measured coverage, but the local request count is 39.09% lower.
 
-The structural optimization behind this checkpoint reuses parsed main-thread
-COPC metadata when point-sample workers start, when integrated geometry workers
-perform source-aware warmup, and on every geometry load or prefetch request. A
-later parsed value also replaces a failed worker-local bootstrap promise, so a
-pre-metadata warmup cannot poison that worker. An older one-repeat capture
-repeated the 64 KiB LAS/COPC header and COPC VLR roughly ten times across
-worker-local sources; the current captures request each once, including for
-workers created lazily after warmup.
+The structural optimization behind this checkpoint adds a pool-owned
+main-thread range broker. Integrated geometry workers use a proxy COPC Getter,
+so one validated URL or Blob getter and its bounded raw-byte cache are shared
+across workers while LAZ decode remains parallel. Each render or prefetch wave
+sorts required node offsets and lazily groups exact-contiguous point data into
+spans capped at 2 MiB with zero configured gap. Completed and in-flight larger
+ranges can serve contained requests without another source read. Later plans
+exclude nodes whose geometry or decoded point view is already reusable, which
+removed the 1,393,625 bytes of partial overlap seen in the first broker
+prototype. Terminating cancellation modes retain direct worker reads so worker
+termination still stops their network work; the shared broker is used with the
+default soft-cancellation path.
 
 The example also keeps superseded uncached geometry work on soft cancellation
 so a nearly completed large-node fetch can populate its worker cache instead of
 terminating the worker and immediately repeating the same range. Relative to
-the original pre-change capture, strict equal-count traffic fell from 85 to 60
-ranges and from 22 exact duplicates to zero. Strict decoded-worker affinity is
-the final step in that reduction: density upgrades now wait for the worker that
-owns the decoded node instead of crossing the former 120 ms fallback boundary
-and repeating the range read and LAZ decode elsewhere. The remaining network
-gap is unique work: three extra completed nodes support the higher measured
-coverage, while four predictive prefetches are cut off only when the comparison
-harness leaves the product page. Coalescing adjacent ranges and cancelling
-transition-time prefetch earlier are the next optimization targets, without
-silently trading away the measured visual advantage.
+the original pre-change capture, strict equal-count traffic fell from 85
+requests and 22 exact duplicates to a 33.5-request median and zero exact
+duplicates or overlap. Metadata reuse and strict decoded-worker affinity remain
+part of that reduction: density upgrades wait for the worker that owns the
+decoded node instead of repeating its range read and LAZ decode elsewhere. The
+remaining network gap is byte volume rather than request count. Transition-time
+predictive prefetch cancellation and validation on more cameras, datasets, and
+devices are the next targets, without trading away the measured visual
+advantage.
 
 It does not establish total-network or universal superiority. The local median
-per-repeat maximum is 19.35 ms versus Eptium's 18.15 ms in this run, and this
-tail metric remains sensitive to individual browser/GPU stalls. Local request
-amplification is lower, but request count and the unique byte union remain
-higher. Both FPS results are effectively capped at 60, and other camera poses,
+per-repeat maximum is 19.00 ms versus Eptium's 17.25 ms, and local p95 is
+0.05 ms higher in this run. Local request count and amplification are lower,
+but completed response bytes and the unique byte union remain higher. Both FPS
+results are effectively capped at 60, and other camera poses,
 COPC distributions, GPUs, drivers, browsers, and Eptium releases still require
 their own measurement.
 Different LODs may select different source point IDs, so Eptium mask support and
@@ -1012,10 +1014,10 @@ The machine-readable result and hashed paired images are in
 `output/eptium-comparison/eptium-comparison-result.json`. It records the live
 Eptium main-bundle URL and ETag because the remote application can change after
 this checkpoint. Its SHA-256 is
-`a8ac8d1e72c8a7dfc53b9e6142110704fd8e406ac5609283ba9df860a363f1e2`.
+`4fb767e78a2207193469d3796a79e94c6b3f99266a8aafa8573340e21e835dd9`.
 The separately hashed raw request ledger is
 `output/eptium-comparison/eptium-comparison-network-trace.json` with SHA-256
-`9f91a00b788fbdff075da0a96be8428632232e2cda95d082bdf479aaa2646116`.
+`eb871d0ad738d038910bbed95cc5ef54464e553c634205579292dbc93bc80326`.
 
 For an unchanged exact terminal plan, even that stable-batch resubmission is
 unnecessary. The viewer retains the committed result only when the complete
@@ -1142,12 +1144,12 @@ but requests visually important, source-point-heavy nodes before tiny tail nodes
 inside the same coverage group.
 
 At the lower COPC source boundary, URL and Blob range getters now coalesce and
-cache exact byte ranges with a bounded in-memory LRU policy. This does not
-replace node-level decoded-view caches, and point/hierarchy bytes are still not
-shared across separate browser workers. Parsed COPC metadata is now explicitly
-seeded across that boundary; all remaining exact-range reuse is local to one
-source or worker. A future source-wide request broker is still needed to
-coalesce overlapping point-data work across worker globals.
+cache exact and contained byte ranges with a bounded in-memory LRU policy. This
+does not replace node-level decoded-view caches. Integrated geometry workers
+share that lower boundary through the pool-owned broker; the separate
+point-sample worker path still retains its own source-local getter. Parsed COPC
+metadata is explicitly seeded across both worker paths so metadata bootstrap is
+not repeated per worker.
 
 The camera-stream render plan can skip the coarse coverage preview when the
 current final detail set is already small. The basic viewer uses this for views

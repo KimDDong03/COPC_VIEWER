@@ -6,6 +6,8 @@ export interface CopcRangeGetterCacheOptions {
 }
 
 interface RangeCacheEntry {
+  readonly begin: number;
+  readonly end: number;
   readonly promise: Promise<Uint8Array>;
   byteLength: number;
 }
@@ -35,15 +37,21 @@ export function createCachedRangeGetter(
 
   return async (begin: number, end: number): Promise<Uint8Array> => {
     const key = createRangeCacheKey(begin, end);
-    const cached = cache.get(key);
+    const cached = findContainingRangeCacheEntry(cache, begin, end, key);
 
     if (cached) {
-      cache.delete(key);
-      cache.set(key, cached);
-      return copyBytes(await cached.promise);
+      cache.delete(cached.key);
+      cache.set(cached.key, cached.entry);
+      return copyBytesFromRange(
+        await cached.entry.promise,
+        begin - cached.entry.begin,
+        end - begin,
+      );
     }
 
     const entry: RangeCacheEntry = {
+      begin,
+      end,
       byteLength: 0,
       promise: getter(begin, end).then((bytes) => {
         const cachedBytes = copyBytes(bytes);
@@ -79,6 +87,29 @@ export function createCachedRangeGetter(
     cache.set(key, entry);
     return copyBytes(await entry.promise);
   };
+}
+
+function findContainingRangeCacheEntry(
+  cache: Map<string, RangeCacheEntry>,
+  begin: number,
+  end: number,
+  exactKey: string,
+): { key: string; entry: RangeCacheEntry } | undefined {
+  const exact = cache.get(exactKey);
+
+  if (exact) {
+    return { key: exactKey, entry: exact };
+  }
+
+  let containing: { key: string; entry: RangeCacheEntry } | undefined;
+
+  for (const [key, entry] of cache) {
+    if (entry.begin <= begin && end <= entry.end) {
+      containing = { key, entry };
+    }
+  }
+
+  return containing;
 }
 
 function trimRangeCache(
@@ -121,6 +152,14 @@ function createRangeCacheKey(begin: number, end: number): string {
 
 function copyBytes(bytes: Uint8Array): Uint8Array {
   return bytes.slice();
+}
+
+function copyBytesFromRange(
+  bytes: Uint8Array,
+  beginOffset: number,
+  byteLength: number,
+): Uint8Array {
+  return bytes.slice(beginOffset, beginOffset + byteLength);
 }
 
 function normalizePositiveIntegerOption(

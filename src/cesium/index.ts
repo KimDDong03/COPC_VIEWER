@@ -263,6 +263,7 @@ export type {
   CesiumPointGeometryTransformKind,
 } from "./pointGeometryBatch";
 export type {
+  CesiumCopcPointGeometryWorkerHalfOpenRange,
   CopcNodePointGeometryBatchResult,
   CopcNodePointDataPrefetchResult,
   CopcPointDataPrefetchTiming,
