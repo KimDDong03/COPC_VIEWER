@@ -15,6 +15,12 @@ Parameters:
   AllowedCorsOrigins:
     Type: CommaDelimitedList
     Description: Explicit browser origins allowed to read COPC objects through CloudFront. CORS is not viewer authentication.
+  AllowedObjectPrefix:
+    Type: String
+    Default: copc/public/
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*/$"
+    ConstraintDescription: Use a non-empty S3 key prefix ending in /.
+    Description: Only objects below this S3 key prefix are readable through CloudFront OAC.
 
 Conditions:
   HasCustomBucketName: !Not [!Equals [!Ref BucketName, ""]]
@@ -211,7 +217,7 @@ Resources:
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub "${CopcBucket.Arn}/*"
+            Resource: !Sub "${CopcBucket.Arn}/${AllowedObjectPrefix}*"
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CopcDistribution}"
@@ -226,3 +232,6 @@ Outputs:
   DistributionDomainName:
     Description: CloudFront distribution domain name.
     Value: !GetAtt CopcDistribution.DomainName
+  AllowedObjectPrefix:
+    Description: Only this S3 key prefix is authorized for CloudFront reads.
+    Value: !Ref AllowedObjectPrefix

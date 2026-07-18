@@ -24,6 +24,9 @@ describe("CloudFront COPC range deployment template", () => {
     expect(template).toContain("Principal:");
     expect(template).toContain("Service: cloudfront.amazonaws.com");
     expect(template).toContain("Action: s3:GetObject");
+    expect(template).toContain("AllowedObjectPrefix:");
+    expect(template).toContain('Resource: !Sub "${CopcBucket.Arn}/${AllowedObjectPrefix}*"');
+    expect(template).not.toContain('Resource: !Sub "${CopcBucket.Arn}/*"');
     expect(template).toContain("AWS:SourceArn:");
     expect(template).toContain("distribution/${CopcDistribution}");
   });
@@ -94,6 +97,7 @@ describe("CloudFront COPC range deployment template", () => {
     expect(template).toContain("BucketName:");
     expect(template).toContain("DistributionId:");
     expect(template).toContain("DistributionDomainName:");
+    expect(template).toContain("Only this S3 key prefix is authorized for CloudFront reads.");
     expect(readme).toMatch(/Use content-addressed or otherwise versioned object keys/);
     expect(readme).toMatch(/Do not overwrite the bytes at a previously served key/);
     expect(readme).toMatch(/CloudFront does not enforce this project's 64 KiB range-planning boundary/);

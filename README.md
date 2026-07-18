@@ -340,7 +340,7 @@ not deployed-CDN evidence. Output is
 
 The repository-only [AWS edge reference](https://github.com/KimDDong03/COPC_VIEWER/tree/main/deploy/aws)
 serves immutable paths from private S3 through public CloudFront OAC. Run
-`npm run qc:deployed-edge -- --url https://copc.example.com/copc/sha256/<digest>.copc.laz --origin https://viewer.example.com`.
+`npm run qc:deployed-edge -- https://copc.example.com/copc/public/sha256/<digest>.copc.laz https://viewer.example.com copc.example.com`.
 It gates preflight, exact repeated `206` bytes and validators, CORS exposure,
 and a repeat hit; missing inputs are non-pass. This is not browser proof, and
 deployment assets are outside the npm tarball.

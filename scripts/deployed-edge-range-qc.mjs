@@ -43,6 +43,7 @@ export async function runDeployedEdgeRangeQc(options = {}) {
   let repeats = null;
   let cloudFrontMode = "generic-cdn";
   let origin = null;
+  let expectedHost = null;
   let preflight = null;
 
   try {
@@ -73,6 +74,7 @@ export async function runDeployedEdgeRangeQc(options = {}) {
       range,
       repeats,
       origin,
+      expectedHost,
       cloudFrontMode,
       runEvidence,
       preflight,
@@ -100,6 +102,24 @@ export async function runDeployedEdgeRangeQc(options = {}) {
     failures.push(error.message);
   }
 
+  try {
+    expectedHost = validateExpectedHost(
+      options.expectedHost ?? process.env.COPC_DEPLOYED_EDGE_EXPECTED_HOST,
+      { required: cloudFrontMode === "cloudfront" },
+    );
+    if (
+      parsedUrl !== undefined &&
+      expectedHost !== null &&
+      parsedUrl.hostname.toLowerCase() !== expectedHost
+    ) {
+      failures.push(
+        `Deployed edge URL hostname (${parsedUrl.hostname}) does not match expected host (${expectedHost}).`,
+      );
+    }
+  } catch (error) {
+    failures.push(error.message);
+  }
+
   if (typeof fetchImplementation !== "function") {
     failures.push("A fetch implementation is required.");
   }
@@ -117,17 +137,23 @@ export async function runDeployedEdgeRangeQc(options = {}) {
   }
 
   if (failures.length === 0 && range !== null && repeats !== null) {
+    let ifRangeValidator = null;
     for (let repeat = 1; repeat <= repeats; repeat += 1) {
       const startedAt = performance.now();
       try {
-        responses.push(await fetchAndValidateRepeat({
+        const entry = await fetchAndValidateRepeat({
           fetchImplementation,
           url: parsedUrl.toString(),
           origin,
           range,
           repeat,
+          ifRangeValidator,
           startedAt,
-        }));
+        });
+        responses.push(entry);
+        if (ifRangeValidator === null && isStrongEtag(entry.response?.etag)) {
+          ifRangeValidator = entry.response.etag;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failures.push(`repeat ${repeat}: ${message}`);
@@ -137,6 +163,7 @@ export async function runDeployedEdgeRangeQc(options = {}) {
           durationMilliseconds: performance.now() - startedAt,
           error: message,
         });
+        break;
       }
     }
   }
@@ -147,7 +174,16 @@ export async function runDeployedEdgeRangeQc(options = {}) {
   if (options.cloudFrontMode === undefined) {
     cloudFrontMode = detectCloudFrontMode(responses);
   }
-  if (cloudFrontMode === "cloudfront") {
+  if (
+    cloudFrontMode === "cloudfront" &&
+    expectedHost === null &&
+    options.cloudFrontMode === undefined
+  ) {
+    failures.push(
+      "CloudFront mode requires --expected-host or COPC_DEPLOYED_EDGE_EXPECTED_HOST.",
+    );
+  }
+  if (cloudFrontMode === "cloudfront" && responses.length > 0) {
     failures.push(...validateCloudFrontHit(responses));
   }
 
@@ -155,6 +191,7 @@ export async function runDeployedEdgeRangeQc(options = {}) {
     generatedAt,
     url: parsedUrl?.toString() ?? url,
     origin,
+    expectedHost,
     range,
     repeats,
     cloudFrontMode,
@@ -169,9 +206,34 @@ export async function runDeployedEdgeRangeQc(options = {}) {
 }
 
 export function parseCliArgs(argv = process.argv.slice(2), environment = process.env) {
+  const positionalArguments = readPositionalArgs(argv);
+  if (positionalArguments.length > 3) {
+    throw new Error(
+      "At most three positional arguments are allowed: deployed URL, viewer origin, and expected host.",
+    );
+  }
+  const urlArgument = readStringArg(argv, "--url");
+  const originArgument = readStringArg(argv, "--origin");
+  const expectedHostArgument = readStringArg(argv, "--expected-host");
+  if (
+    positionalArguments.length > 0 &&
+    (
+      urlArgument !== undefined ||
+      originArgument !== undefined ||
+      expectedHostArgument !== undefined
+    )
+  ) {
+    throw new Error(
+      "Do not mix positional deployment arguments with --url, --origin, or --expected-host.",
+    );
+  }
+
   return {
-    url: readStringArg(argv, "--url") ?? environment.COPC_DEPLOYED_EDGE_URL,
-    origin: readStringArg(argv, "--origin") ?? environment.COPC_DEPLOYED_EDGE_ORIGIN,
+    url: urlArgument ?? positionalArguments[0] ?? environment.COPC_DEPLOYED_EDGE_URL,
+    origin: originArgument ?? positionalArguments[1] ?? environment.COPC_DEPLOYED_EDGE_ORIGIN,
+    expectedHost: expectedHostArgument ??
+      positionalArguments[2] ??
+      environment.COPC_DEPLOYED_EDGE_EXPECTED_HOST,
     outputPath: readStringArg(argv, "--output") ?? DEFAULT_OUTPUT_PATH,
     repeats: readOptionalIntegerArg(argv, "--repeats"),
     rangeStart: readOptionalIntegerArg(argv, "--range-start"),
@@ -193,6 +255,9 @@ function validateUrl(url) {
   }
   if (parsedUrl.username !== "" || parsedUrl.password !== "") {
     throw new DeployedEdgeRangeQcError("Deployed edge URL must not include credentials.");
+  }
+  if (parsedUrl.port !== "") {
+    throw new DeployedEdgeRangeQcError("Deployed edge URL must use the default HTTPS port.");
   }
   if (parsedUrl.hash !== "") {
     throw new DeployedEdgeRangeQcError("Deployed edge URL must not include a fragment.");
@@ -239,6 +304,33 @@ function validateOrigin(origin) {
   return parsedOrigin.origin;
 }
 
+function validateExpectedHost(expectedHost, { required }) {
+  if (expectedHost === undefined || expectedHost === "") {
+    if (required) {
+      throw new DeployedEdgeRangeQcError(
+        "CloudFront mode requires --expected-host or COPC_DEPLOYED_EDGE_EXPECTED_HOST.",
+      );
+    }
+    return null;
+  }
+  if (!/^[A-Za-z0-9.-]+$/.test(expectedHost)) {
+    throw new DeployedEdgeRangeQcError(
+      "Expected host must be a hostname without a scheme, path, port, or wildcard.",
+    );
+  }
+
+  let parsedHost;
+  try {
+    parsedHost = new URL(`https://${expectedHost}`);
+  } catch {
+    throw new DeployedEdgeRangeQcError("Expected host is invalid.");
+  }
+  if (parsedHost.hostname.toLowerCase() !== expectedHost.toLowerCase()) {
+    throw new DeployedEdgeRangeQcError("Expected host must use its canonical ASCII hostname.");
+  }
+  return parsedHost.hostname.toLowerCase();
+}
+
 function normalizeRange({ start, endInclusive }) {
   if (
     !Number.isSafeInteger(start) ||
@@ -269,27 +361,90 @@ function normalizeRepeats(repeats) {
   return repeats;
 }
 
+async function readResponseBodyCapped(response, maximumBytes) {
+  if (response.body === null) {
+    return { bytes: new Uint8Array(), capped: false };
+  }
+  if (typeof response.body.getReader !== "function") {
+    throw new DeployedEdgeRangeQcError(
+      "A streaming response body is required for bounded deployed-edge QC reads.",
+    );
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let byteLength = 0;
+  let capped = false;
+  try {
+    while (byteLength < maximumBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) {
+        throw new DeployedEdgeRangeQcError("Response body chunks must be Uint8Array values.");
+      }
+
+      const remaining = maximumBytes - byteLength;
+      if (value.byteLength >= remaining) {
+        chunks.push(value.subarray(0, remaining));
+        byteLength += remaining;
+        capped = true;
+        await reader.cancel("deployed-edge QC response body cap reached");
+        break;
+      }
+      chunks.push(value);
+      byteLength += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { bytes, capped };
+}
+
 async function fetchAndValidateRepeat({
   fetchImplementation,
   url,
   origin,
+  expectedHost,
   range,
   repeat,
+  ifRangeValidator,
   startedAt,
 }) {
+  const requestHeaders = {
+    Range: range.header,
+    Origin: origin,
+  };
+  if (ifRangeValidator !== null) {
+    requestHeaders["If-Range"] = ifRangeValidator;
+  }
+
   const response = await fetchImplementation(url, {
     method: "GET",
     redirect: "error",
     credentials: "omit",
-    headers: {
-      Range: range.header,
-      Origin: origin,
-    },
+    headers: requestHeaders,
   });
-  const body = new Uint8Array(await response.arrayBuffer());
   const headers = normalizeHeaders(response.headers);
-  const failures = validateSingleResponse({ response, headers, body, range, origin });
-  const sha256 = createHash("sha256").update(body).digest("hex");
+  const bodyRead = await readResponseBodyCapped(response, range.byteLength + 1);
+  const failures = validateSingleResponse({
+    response,
+    headers,
+    body: bodyRead.bytes,
+    bodyReadCapped: bodyRead.capped,
+    range,
+    origin,
+    expectedHost,
+  });
+  const sha256 = bodyRead.capped || bodyRead.bytes.byteLength !== range.byteLength
+    ? null
+    : createHash("sha256").update(bodyRead.bytes).digest("hex");
 
   return {
     repeat,
@@ -298,6 +453,7 @@ async function fetchAndValidateRepeat({
     request: {
       method: "GET",
       range: range.header,
+      ifRange: ifRangeValidator,
       origin,
       credentials: "omit",
       redirect: "error",
@@ -309,7 +465,8 @@ async function fetchAndValidateRepeat({
       acceptRanges: headers.get("accept-ranges") ?? null,
       etag: headers.get("etag") ?? null,
       total: parseContentRange(headers.get("content-range"))?.total ?? null,
-      bodyByteLength: body.byteLength,
+      bodyByteLength: bodyRead.bytes.byteLength,
+      bodyReadCapped: bodyRead.capped,
       bodySha256: sha256,
       cors: {
         accessControlAllowOrigin: headers.get("access-control-allow-origin") ?? null,
@@ -410,7 +567,14 @@ function validatePreflightResponse({ response, headers, origin }) {
   return failures;
 }
 
-function validateSingleResponse({ response, headers, body, range, origin }) {
+function validateSingleResponse({
+  response,
+  headers,
+  body,
+  bodyReadCapped,
+  range,
+  origin,
+}) {
   const failures = [];
 
   if (response.status !== 206) {
@@ -437,7 +601,11 @@ function validateSingleResponse({ response, headers, body, range, origin }) {
   if (headers.get("content-length") !== String(range.byteLength)) {
     failures.push(`Content-Length must be ${range.byteLength}.`);
   }
-  if (body.byteLength !== range.byteLength) {
+  if (bodyReadCapped) {
+    failures.push(
+      `Body exceeded the requested ${range.byteLength} bytes; the QC read was capped.`,
+    );
+  } else if (body.byteLength !== range.byteLength) {
     failures.push(`Body length must be ${range.byteLength} bytes.`);
   }
   if (headers.get("accept-ranges")?.toLowerCase() !== "bytes") {
@@ -518,17 +686,33 @@ function normalizeCloudFrontMode(value) {
 }
 
 function validateCloudFrontHit(responses) {
+  const hasCloudFrontIdentity = responses.some((entry) => {
+    const ledger = entry.response?.edgeLedger;
+    return /cloudfront/i.test(ledger?.via ?? "") ||
+      /from cloudfront/i.test(ledger?.xCache ?? "") ||
+      typeof ledger?.xAmzCfPop === "string" && ledger.xAmzCfPop.trim() !== "";
+  });
   const hasRepeatHit = responses
     .filter((entry) => entry.repeat > 1)
-    .some((entry) => /hit/i.test(entry.response?.edgeLedger?.xCache ?? ""));
+    .some((entry) => /^(?:refresh)?hit from cloudfront$/i.test(
+      entry.response?.edgeLedger?.xCache?.trim() ?? "",
+    ));
 
-  return hasRepeatHit ? [] : ["CloudFront mode requires at least one repeated request x-cache HIT."];
+  const failures = [];
+  if (!hasCloudFrontIdentity) {
+    failures.push("CloudFront mode requires CloudFront response identity evidence.");
+  }
+  if (!hasRepeatHit) {
+    failures.push("CloudFront mode requires at least one repeated request X-Cache: Hit from cloudfront.");
+  }
+  return failures;
 }
 
 function createResult({
   generatedAt,
   url,
   origin,
+  expectedHost,
   range,
   repeats,
   cloudFrontMode,
@@ -540,11 +724,12 @@ function createResult({
 }) {
   return {
     schema: "copc-viewer.deployed-edge-range-qc",
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: generatedAt.toISOString(),
     verdict,
     url,
     origin,
+    expectedHost,
     range,
     repeats,
     cloudFrontMode,
@@ -645,6 +830,36 @@ function readFlag(argv, name) {
   return argv.includes(name);
 }
 
+function readPositionalArgs(argv) {
+  const valueOptions = new Set([
+    "--url",
+    "--origin",
+    "--expected-host",
+    "--output",
+    "--repeats",
+    "--range-start",
+    "--range-end",
+  ]);
+  const flagOptions = new Set(["--cloudfront"]);
+  const positionals = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--") continue;
+    if (valueOptions.has(argument)) {
+      index += 1;
+      continue;
+    }
+    if (flagOptions.has(argument)) continue;
+    if (argument.startsWith("--")) {
+      throw new Error(`Unknown option: ${argument}.`);
+    }
+    positionals.push(argument);
+  }
+
+  return positionals;
+}
+
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : undefined;
 
 if (invokedPath === fileURLToPath(import.meta.url)) {
@@ -667,6 +882,7 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
       generatedAt: new Date(),
       url: null,
       origin: null,
+      expectedHost: null,
       range: null,
       repeats: null,
       cloudFrontMode: "generic-cdn",

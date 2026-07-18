@@ -53,10 +53,10 @@ describe("deployed edge range QC", () => {
       expect(written.responses).toHaveLength(3);
       expect(new Set(written.responses.map((entry) => entry.response.bodySha256)).size).toBe(1);
       expect(fetchLog).toEqual([
-        { url: "https://cdn.example/copc/millsite.copc.laz", method: "OPTIONS", origin: "https://viewer.example", range: undefined, credentials: "omit", redirect: "error" },
-        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", credentials: "omit", redirect: "error" },
-        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", credentials: "omit", redirect: "error" },
-        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", credentials: "omit", redirect: "error" },
+        { url: "https://cdn.example/copc/millsite.copc.laz", method: "OPTIONS", origin: "https://viewer.example", range: undefined, ifRange: undefined, credentials: "omit", redirect: "error" },
+        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", ifRange: undefined, credentials: "omit", redirect: "error" },
+        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", ifRange: '"v1"', credentials: "omit", redirect: "error" },
+        { url: "https://cdn.example/copc/millsite.copc.laz", method: "GET", origin: "https://viewer.example", range: "bytes=0-65535", ifRange: '"v1"', credentials: "omit", redirect: "error" },
       ]);
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
@@ -111,6 +111,17 @@ describe("deployed edge range QC", () => {
     });
 
     await expect(runDeployedEdgeRangeQc({
+      url: "https://cdn.example:8443/file.copc.laz",
+      origin: "https://viewer.example",
+      outputPath: tempOutputPath(),
+      fetchImplementation: createFetch(),
+      runEvidence,
+    })).resolves.toMatchObject({
+      verdict: "failed",
+      failures: [expect.stringMatching(/default HTTPS port/)],
+    });
+
+    await expect(runDeployedEdgeRangeQc({
       url: "https://cdn.example/file.copc.laz#v1",
       origin: "https://viewer.example",
       outputPath: tempOutputPath(),
@@ -140,6 +151,31 @@ describe("deployed edge range QC", () => {
     })).resolves.toMatchObject({
       verdict: "failed",
       failures: [expect.stringMatching(/viewer origin is required/)],
+    });
+
+    await expect(runDeployedEdgeRangeQc({
+      url: "https://cdn.example/file.copc.laz",
+      origin: "https://viewer.example",
+      expectedHost: "other.example",
+      cloudFrontMode: "cloudfront",
+      outputPath: tempOutputPath(),
+      fetchImplementation: createFetch(),
+      runEvidence,
+    })).resolves.toMatchObject({
+      verdict: "failed",
+      failures: [expect.stringMatching(/does not match expected host/)],
+    });
+
+    await expect(runDeployedEdgeRangeQc({
+      url: "https://cdn.example/file.copc.laz",
+      origin: "https://viewer.example",
+      cloudFrontMode: "cloudfront",
+      outputPath: tempOutputPath(),
+      fetchImplementation: createFetch(),
+      runEvidence,
+    })).resolves.toMatchObject({
+      verdict: "failed",
+      failures: [expect.stringMatching(/requires --expected-host/)],
     });
 
     await expect(runDeployedEdgeRangeQc({
@@ -250,6 +286,36 @@ describe("deployed edge range QC", () => {
     ]));
   });
 
+  it("caps an ignored Range response before buffering the full object", async () => {
+    const result = await runDeployedEdgeRangeQc({
+      url: "https://cdn.example/file.copc.laz",
+      origin: "https://viewer.example",
+      outputPath: tempOutputPath(),
+      repeats: 2,
+      fetchImplementation: createFetch({
+        status: 200,
+        headers: {
+          "Content-Length": String(sourceBytes.byteLength),
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": "Content-Range, ETag, Accept-Ranges, Content-Length, X-Cache, Age",
+        },
+        body: sourceBytes,
+      }),
+      runEvidence,
+    });
+
+    expect(result.verdict).toBe("failed");
+    expect(result.responses[0].response).toMatchObject({
+      bodyByteLength: 65_537,
+      bodyReadCapped: true,
+      bodySha256: null,
+    });
+    expect(result.failures).toEqual(expect.arrayContaining([
+      expect.stringMatching(/Expected HTTP 206/),
+      expect.stringMatching(/QC read was capped/),
+    ]));
+  });
+
   it("fails when repeated responses change total, etag, or body SHA", async () => {
     let repeat = 0;
     const result = await runDeployedEdgeRangeQc({
@@ -287,13 +353,14 @@ describe("deployed edge range QC", () => {
       outputPath: tempOutputPath(),
       repeats: 2,
       cloudFrontMode: "cloudfront",
+      expectedHost: "cdn.example",
       fetchImplementation: createFetch({
         edgeLedger: { xCache: "Miss from cloudfront", via: "1.1 cloudfront", xAmzCfPop: "ICN57-P1", age: "0" },
       }),
       runEvidence,
     });
     expect(missingHit.verdict).toBe("failed");
-    expect(missingHit.failures).toContain("CloudFront mode requires at least one repeated request x-cache HIT.");
+    expect(missingHit.failures).toContain("CloudFront mode requires at least one repeated request X-Cache: Hit from cloudfront.");
     expect(missingHit.responses[0].response.edgeLedger).toMatchObject({
       xCache: "Miss from cloudfront",
       via: "1.1 cloudfront",
@@ -308,6 +375,7 @@ describe("deployed edge range QC", () => {
       outputPath: tempOutputPath(),
       repeats: 3,
       cloudFrontMode: "cloudfront",
+      expectedHost: "cdn.example",
       fetchImplementation: createFetch({
         getResponseFactory: () => {
           repeat += 1;
@@ -326,6 +394,29 @@ describe("deployed edge range QC", () => {
 
     expect(passed.verdict).toBe("passed");
     expect(passed.cloudFrontMode).toBe("cloudfront");
+
+    const genericHit = await runDeployedEdgeRangeQc({
+      url: "https://cdn.example/file.copc.laz",
+      origin: "https://viewer.example",
+      outputPath: tempOutputPath(),
+      repeats: 2,
+      cloudFrontMode: "cloudfront",
+      expectedHost: "cdn.example",
+      fetchImplementation: createFetch({
+        edgeLedger: {
+          xCache: "Hit from generic-cache",
+          via: "1.1 generic-cache",
+          xAmzCfPop: null,
+          age: "4",
+        },
+      }),
+      runEvidence,
+    });
+    expect(genericHit.verdict).toBe("failed");
+    expect(genericHit.failures).toEqual(expect.arrayContaining([
+      "CloudFront mode requires CloudFront response identity evidence.",
+      "CloudFront mode requires at least one repeated request X-Cache: Hit from cloudfront.",
+    ]));
   });
 
   it("parses CLI URL, origin, output, repeat, range, and CloudFront options", () => {
@@ -334,6 +425,8 @@ describe("deployed edge range QC", () => {
       "https://cdn.example/file.copc.laz",
       "--origin",
       "https://viewer.example",
+      "--expected-host",
+      "cdn.example",
       "--output",
       "custom.json",
       "--repeats",
@@ -346,12 +439,30 @@ describe("deployed edge range QC", () => {
     ], {})).toMatchObject({
       url: "https://cdn.example/file.copc.laz",
       origin: "https://viewer.example",
+      expectedHost: "cdn.example",
       outputPath: "custom.json",
       repeats: 5,
       rangeStart: 4,
       rangeEndInclusive: 12,
       cloudFrontMode: "cloudfront",
     });
+
+    expect(parseCliArgs([
+      "--cloudfront",
+      "https://cdn.example/file.copc.laz",
+      "https://viewer.example",
+      "cdn.example",
+    ], {})).toMatchObject({
+      url: "https://cdn.example/file.copc.laz",
+      origin: "https://viewer.example",
+      expectedHost: "cdn.example",
+      cloudFrontMode: "cloudfront",
+    });
+    expect(() => parseCliArgs([
+      "--url",
+      "https://cdn.example/file.copc.laz",
+      "https://viewer.example",
+    ], {})).toThrow(/Do not mix positional/);
   });
 });
 
@@ -371,6 +482,7 @@ function createFetch({
       method: init.method,
       origin: init.headers?.Origin,
       range: init.headers?.Range,
+      ifRange: init.headers?.["If-Range"],
       credentials: init.credentials,
       redirect: init.redirect,
     });
