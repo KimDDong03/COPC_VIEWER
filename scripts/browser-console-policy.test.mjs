@@ -58,4 +58,30 @@ describe("browser console policy", () => {
       );
     }
   });
+
+  it("applies the same narrow warning policy in release browser benchmarks", () => {
+    for (const relativePath of [
+      "benchmark-smoothness.mjs",
+      "benchmark-renderers.mjs",
+    ]) {
+      const source = readFileSync(
+        fileURLToPath(new URL(relativePath, import.meta.url)),
+        "utf8",
+      );
+
+      expect(source).toMatch(
+        /import \{ isExpectedNonFatalWebGlDriverWarning \} from "\.\/browser-console-policy\.mjs";/,
+      );
+      expect(source).toMatch(
+        /const isExpectedNonFatalWebGlDriverWarning = \$\{isExpectedNonFatalWebGlDriverWarning\.toString\(\)\};/,
+      );
+      expect(source).toMatch(
+        /if \(isExpectedNonFatalWebGlDriverWarning\(type, text\)\) \{\s+ignoredConsoleWarnings\.push/,
+      );
+      expect(source).toMatch(
+        /if \(type === "error" \|\| type === "warning"\) \{\s+consoleProblems\.push/,
+      );
+      expect(source).toMatch(/ignoredConsoleWarnings,/);
+    }
+  });
 });

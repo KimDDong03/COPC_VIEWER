@@ -4,6 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 import { LIVE_COPC_SAMPLE_URLS } from "../config/live-copc-sources.mjs";
+import {
+  isExpectedNonFatalWebGlDriverWarning as expectedNonFatalWebGlDriverWarning,
+} from "./browser-console-policy.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const benchmarkScriptPath = path.join(scriptDir, "benchmark-smoothness.mjs");
@@ -795,7 +798,7 @@ async function createGeneratedFlow(options = {}) {
   assert.notEqual(end, -1);
 
   const createSmoothnessFlow = eval(
-    `${source.slice(start, end)}\ncreateSmoothnessFlow;`,
+    `const isExpectedNonFatalWebGlDriverWarning = ${expectedNonFatalWebGlDriverWarning.toString()};\n${source.slice(start, end)}\ncreateSmoothnessFlow;`,
   );
 
   return createSmoothnessFlow(

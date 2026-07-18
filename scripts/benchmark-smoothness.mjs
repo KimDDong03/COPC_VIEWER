@@ -8,6 +8,7 @@ import {
   createBrowserGpuRendererAssertionSource,
   resolveBrowserGpuProfile,
 } from "./browser-gpu-profile.mjs";
+import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 import { createRunEvidence } from "./run-evidence.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
@@ -634,6 +635,7 @@ function createSmoothnessFlow(
   ];
   const failures = [];
   const consoleProblems = [];
+  const ignoredConsoleWarnings = [];
   const pageErrors = [];
   const results = [];
   const warmups = [];
@@ -642,6 +644,7 @@ function createSmoothnessFlow(
   const activeHttpRangeRequests = new Map();
   const pendingHttpRangeFinalizers = new Set();
   let activeHttpRangeScope;
+  const isExpectedNonFatalWebGlDriverWarning = ${isExpectedNonFatalWebGlDriverWarning.toString()};
 ${browserGpuRendererAssertionSource}
 
   async function readBrowserGraphics() {
@@ -679,8 +682,16 @@ ${browserGpuRendererAssertionSource}
   }
 
   page.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") {
-      consoleProblems.push(\`\${message.type()}: \${message.text()}\`);
+    const type = message.type();
+    const text = message.text();
+
+    if (isExpectedNonFatalWebGlDriverWarning(type, text)) {
+      ignoredConsoleWarnings.push(\`\${type}: \${text}\`);
+      return;
+    }
+
+    if (type === "error" || type === "warning") {
+      consoleProblems.push(\`\${type}: \${text}\`);
     }
   });
 
@@ -2976,6 +2987,7 @@ ${browserGpuRendererAssertionSource}
     hierarchyHolds,
     results,
     httpRangeRequests,
+    ignoredConsoleWarnings,
   };
 }
 `;

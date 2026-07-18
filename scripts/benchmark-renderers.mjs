@@ -7,6 +7,7 @@ import {
   createBrowserGpuRendererAssertionSource,
   resolveBrowserGpuProfile,
 } from "./browser-gpu-profile.mjs";
+import { isExpectedNonFatalWebGlDriverWarning } from "./browser-console-policy.mjs";
 import { createRunEvidence } from "./run-evidence.mjs";
 import { resolveLocalPackageBinary } from "./resolve-local-package-binary.mjs";
 
@@ -249,8 +250,10 @@ function createBenchmarkFlow(baseUrl, targetPointCount, repeatCount) {
   const repeatCount = ${JSON.stringify(repeatCount)};
   const failures = [];
   const consoleProblems = [];
+  const ignoredConsoleWarnings = [];
   const pageErrors = [];
   const results = [];
+  const isExpectedNonFatalWebGlDriverWarning = ${isExpectedNonFatalWebGlDriverWarning.toString()};
 ${createBrowserGpuRendererAssertionSource(browserGpu.rendererPattern)}
 
   async function readBrowserGraphics() {
@@ -288,8 +291,16 @@ ${createBrowserGpuRendererAssertionSource(browserGpu.rendererPattern)}
   }
 
   page.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") {
-      consoleProblems.push(\`\${message.type()}: \${message.text()}\`);
+    const type = message.type();
+    const text = message.text();
+
+    if (isExpectedNonFatalWebGlDriverWarning(type, text)) {
+      ignoredConsoleWarnings.push(\`\${type}: \${text}\`);
+      return;
+    }
+
+    if (type === "error" || type === "warning") {
+      consoleProblems.push(\`\${type}: \${text}\`);
     }
   });
   page.on("pageerror", (error) => {
@@ -448,6 +459,7 @@ ${createBrowserGpuRendererAssertionSource(browserGpu.rendererPattern)}
     coordinateTransform: await metadataValue("Coordinate transform"),
     summaries: renderers.map(summarizeRenderer),
     results,
+    ignoredConsoleWarnings,
   };
 }
 `;

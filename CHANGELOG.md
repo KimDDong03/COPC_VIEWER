@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Release browser benchmarks now apply the existing exact headless-Linux WebGL
+  `ReadPixels` advisory policy while preserving every other console warning and
+  error as a blocking failure.
+
 ## [0.1.0] - 2026-07-19
 
 ### Added
