@@ -64,6 +64,8 @@ jobs:
           path: |
             output/qc/qc-status.json
             output/live-copc-range/live-copc-range.json
+            output/smoothness-benchmark/*.json
+            output/renderer-benchmark/*.json
 
       - name: Upload verified package and evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

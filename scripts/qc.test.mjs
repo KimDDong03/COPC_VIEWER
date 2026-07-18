@@ -88,6 +88,24 @@ test("preserves classification evidence when release or publish QC cannot comple
   }
 });
 
+test("preserves release browser benchmark evidence when QC fails", () => {
+  const workflow = readFileSync(
+    path.join(repoRoot, ".github", "workflows", "release-candidate.yml"),
+    "utf8",
+  );
+  const diagnosticsStep = workflow.slice(
+    workflow.indexOf("name: Upload QC classification diagnostics"),
+    workflow.indexOf("name: Upload verified package and evidence"),
+  );
+
+  assert.match(diagnosticsStep, /if: always\(\)/);
+  assert.match(
+    diagnosticsStep,
+    /output\/smoothness-benchmark\/\*\.json/,
+  );
+  assert.match(diagnosticsStep, /output\/renderer-benchmark\/\*\.json/);
+});
+
 function runQc(args) {
   return spawnSync(process.execPath, [qcPath, ...args], {
     cwd: repoRoot,
