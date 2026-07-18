@@ -317,25 +317,12 @@ restores exact-contiguous-only range planning. The integrated worker pool
 otherwise defaults to a 2 MiB maximum coalesced span, a 64 KiB maximum gap,
 and the basic viewer's measured four-worker policy.
 The latest two-repeat RTX 3060 checkpoint passed the strict equal-count gate. At
-1,047,575 points the local renderer recorded 86.678% coverage, 0.2238% bounded
-gaps, 0.009536 edge/foreground, 17.10 ms p95, and 11.065 s product first-ready,
-versus Eptium's 86.151%, 0.2992%, 0.010569, 17.05 ms, and 16.843 s. Integrated
-geometry workers now proxy byte reads through a shared main-thread broker while
-keeping LAZ decode parallel. The layer lazily plans exact-contiguous point-data
-spans up to 2 MiB, excludes already cached or decoded nodes from later plans,
-and serves contained requests from one bounded in-flight/completed range cache.
-Together with metadata reuse, soft cancellation, strict decoded-worker
-affinity, and the final-only typed terminal commit, this reduced the local
-equal-count product ledger from 85 original requests to 35 and 32 in the two
-opposite-order runs (33.5 median), versus Eptium's repeatable 55. Both local
-runs completed 31 ranges, issued no exact duplicates, had zero overlapping
-requested bytes, and held amplification at exactly 1.0; Eptium duplicated
-17,792 bytes at 1.0011 amplification. Local product-ready time was 37.51%
-lower, and median request count was 39.09% lower. The local median p95 was
-0.05 ms higher and maximum frame was 1.75 ms higher; its completed response
-bytes were also 5.62% higher, consistent with the additional measured
-coverage. This remains controlled Autzen evidence, not a universal
-cross-device, cross-dataset, or total-network-efficiency superiority claim.
+1,047,575 points, local versus Eptium measured 86.678% versus 86.151% coverage,
+0.2238% versus 0.2992% bounded gaps, 9.699 s versus 17.665 s first-ready, and
+34 versus 55 requests. Local requests had no duplicates or overlap and 1.0
+amplification; Eptium duplicated 17,792 bytes at 1.0011. Fair p95 was equal at
+17.0 ms; local maximum frame was 0.6 ms higher and response bytes were 5.62%
+higher. This is controlled Autzen evidence, not universal superiority evidence.
 
 `npm run benchmark:persistent-range-cache` measures the opt-in product
 IndexedDB path from a cold browser/store through a fresh page lifecycle. Both
@@ -350,6 +337,13 @@ renderer input, at least 90% of cold browser traffic, at least 90% fewer origin
 operations/bytes, and at least 80% lower elapsed time. This is a local reference,
 not deployed-CDN evidence. Output is
 `output/edge-range-cache/edge-range-cache-result.json`.
+
+The repository-only [AWS edge reference](https://github.com/KimDDong03/COPC_VIEWER/tree/main/deploy/aws)
+serves immutable paths from private S3 through public CloudFront OAC. Run
+`npm run qc:deployed-edge -- --url https://copc.example.com/copc/sha256/<digest>.copc.laz --origin https://viewer.example.com`.
+It gates preflight, exact repeated `206` bytes and validators, CORS exposure,
+and a repeat hit; missing inputs are non-pass. This is not browser proof, and
+deployment assets are outside the npm tarball.
 
 `npm run benchmark:smoothness` builds the example, starts a temporary preview server, enables camera streaming, moves the Cesium camera, records browser frame intervals through both camera movement and the exact terminal-refinement boundary, first visible application response timing, stream-stage timing, selected LOD depth, and structured decoded-worker cache telemetry, then writes the result to `output/smoothness-benchmark/smoothness.json`. A first response is accepted only after an actual scene commit (`app-render-commit`) or after the application proves that the unchanged exact frame is still resident (`app-render-retained`); beginning a load or resolving a cache lookup is not response evidence. Versioned current artifacts must contain terminal-frame and aggregate cache-envelope evidence; only explicitly unversioned legacy artifacts retain compatibility. The defaults are Autzen, Millsite Reservoir, and Custom Millsite URL samples; 2,500 / 5,000 / 10,000 / 20,000 camera-stream point budgets; 2 repeats per budget; 24 camera steps; 3 seconds per run; and sample-specific minimum selected-depth checks. On PowerShell, override them with `$env:COPC_SMOOTHNESS_SAMPLES="autzen-classified,millsite-reservoir"; $env:COPC_SMOOTHNESS_POINT_BUDGETS="5000,10000"; $env:COPC_SMOOTHNESS_REPEATS="5"; $env:COPC_SMOOTHNESS_MIN_SELECTED_DEPTH="2"; npm run benchmark:smoothness`.
 For range-coalescing sweeps, set
