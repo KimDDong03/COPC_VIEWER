@@ -12,75 +12,80 @@ applications.
 The project is submitted as **COPC Cesium PointCloud Provider**. The npm package
 name and JavaScript import identifier remain `copc-cesium`.
 
-`copc-cesium` reads existing COPC data directly from a URL, `File`, or `Blob`,
-selects the hierarchy nodes needed for the current camera, decodes them in the
-browser, and renders them in CesiumJS. When configured, bounded workers can
-perform point sampling and integrated geometry preparation. The library does
-not require a COPC-to-3D Tiles conversion step.
+`copc-cesium` opens an existing COPC URL, browser `File`, or `Blob`; reads only
+needed byte ranges; selects camera-relevant octree nodes; decodes and transforms
+points in the browser; and renders them in CesiumJS. No COPC-to-3D Tiles
+conversion step is required.
 
-> Status: `0.1.0`, pre-1.0 API. The npm registry release is pending; the source
-> repository and locally verified package tarball are currently authoritative.
+> Status: pre-1.0. `package.json` and the source tag are at `0.1.0`; `main` may
+> also contain entries listed under `Unreleased` in the changelog. Do not assume
+> an npm registry release exists—the verified local tarball workflow below is
+> the authoritative install path until publication is completed.
 
-## What It Does
+## Features
 
-- Strict HTTP byte-range reads with `206` and `Content-Range` validation.
-- COPC hierarchy expansion and bounded camera/frustum/LOD selection.
-- Geographic, EPSG:2992, WKT/proj4, and application-provided coordinate
-  transforms.
-- Optional bounded worker decode and geometry preparation, plus cache reuse,
-  priority, and cancellation.
-- Cesium-native typed-array rendering, a point-primitive fallback, and an
-  experimental buffer renderer.
-- A high-level camera stream plus lower-level loading, selection, and rendering
-  APIs.
-- Repeatable URL, local-file, package-consumer, license, and browser performance
-  verification.
+- Strict HTTP Range reads with `206`, exact body length, and exposed
+  `Content-Range` validation.
+- URL, `File`, and `Blob` inputs through the same COPC source boundary.
+- Camera/frustum-aware hierarchy expansion and bounded complete- or mixed-depth
+  LOD selection.
+- Optional worker decode and integrated Cesium geometry preparation with
+  bounded queues, caches, priorities, prefetch, and cancellation.
+- Geographic, EPSG:2992, proj4-compatible WKT, explicit proj4, and
+  application-provided coordinate transforms.
+- A typed-array Cesium `Primitive` renderer, stable point-primitive fallback,
+  and experimental buffer renderer.
+- A high-level camera stream plus lower-level source, planning, layer, renderer,
+  telemetry, and cache APIs.
+- Unit, build, live-source, local-file, package-consumer, browser, license/SBOM,
+  and device performance verification.
 
 ### Competition scope boundary
 
 The competition deliverable is the reusable TypeScript library, its CesiumJS
-rendering path, the reference example, and reproducible verification.
-Backend services, data hosting, COPC conversion, and external delivery infrastructure are explicitly out of scope.
-Public COPC URLs are test inputs; GitHub Pages is only static demo hosting and
-is not a runtime dependency or performance claim.
+rendering path, the reference example, and reproducible verification. Backend
+services, data hosting, COPC conversion, and external delivery infrastructure are explicitly out of scope.
+Public COPC URLs are test inputs. GitHub Pages only hosts the static reference
+example; it is not a runtime dependency or performance optimization.
 
-## Try the Demo
+## Run the Reference Viewer
 
 Use the [public viewer](https://kimddong03.github.io/COPC-Cesium-PointCloud-Provider/)
-or run it locally with Node.js 22:
+or run it locally with Node.js 22 and the npm version declared in
+`packageManager`:
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Then open <http://localhost:3000>.
-
-The example includes remote Autzen and Millsite COPC presets, custom URLs, and
-browser-selected local files. Sample provenance and redistribution terms are
-recorded in [DATASETS.md](docs/DATASETS.md).
+Open <http://localhost:3000>. The viewer supports the documented Autzen and
+Millsite presets, a custom URL, and a browser-selected local COPC file. Sample
+provenance and reuse terms are in [DATASETS.md](docs/DATASETS.md).
 
 ## Consumer Setup
 
 The package targets modern browser applications built with an ESM bundler.
-CesiumJS `>=1.140.0 <2` is a peer dependency. Native Node.js execution is not a
+CesiumJS `>=1.140.0 <2` is a peer dependency; native Node.js execution is not a
 supported runtime.
 
-The public npm release is not available yet. To create and verify the current
-local package candidate, clone this repository and run:
+Create and verify the current installable package from a repository checkout:
 
 ```bash
 npm ci
 npm run smoke:package
 ```
 
-The installable tarball and checksum are written under
-`output/package-smoke/`. Install that tarball together with Cesium in a consumer
-application. Do not rely on `npm install copc-cesium` until a registry release
-is published.
+The command builds, packs, installs, type-checks, bundles, and browser-tests a
+consumer application. It writes the tarball and checksum under
+`output/package-smoke/`. Install that tarball with Cesium until the npm registry
+release is confirmed:
 
-For a Vite consumer, configure Cesium's static assets with
-`vite-plugin-cesium`:
+```bash
+npm install ./path/to/copc-cesium-0.1.0.tgz cesium
+```
+
+For a Vite consumer, configure Cesium's static assets:
 
 ```ts
 // vite.config.ts
@@ -93,7 +98,7 @@ export default defineConfig({
 ```
 
 Other bundlers must copy Cesium's `Workers`, `Assets`, `Widgets`, and
-`ThirdParty` directories and configure `CESIUM_BASE_URL`. The COPC decoding
+`ThirdParty` directories and configure `CESIUM_BASE_URL`. The package's COPC
 workers are emitted as package-relative assets.
 
 ## Minimal Usage
@@ -114,35 +119,30 @@ const viewer = new Viewer("cesium-container", {
 });
 
 const layer = new CopcPointCloudLayer(viewer.scene, {
-  url: "https://example.com/point-cloud.copc.laz",
+  url: "https://example.com/cloud.copc.laz",
   pointSampleLoading: "worker",
-  maxPointCountPerNode: 5_000,
+  pointGeometryLoading: "integrated-worker",
+  showBounds: false,
 });
 
-const { hierarchy } = await layer.load();
-const firstNode = hierarchy.nodes[0];
+await layer.load();
 
-if (firstNode) {
-  await layer.renderNode(firstNode.key);
-}
-
-const cameraStream = new CopcPointCloudCameraStream({
+const stream = new CopcPointCloudCameraStream({
   camera: viewer.camera,
   layer,
   quality: "balanced",
-  renderOnStart: false,
   onError: console.error,
 });
 
-cameraStream.start();
+stream.start();
 
-// Later:
-cameraStream.destroy();
+// Dispose in ownership order when the view is no longer needed.
+stream.destroy();
 layer.destroy();
 viewer.destroy();
 ```
 
-For a browser-selected local file, use `source` instead of `url`:
+For a browser-selected local file, pass `source` instead of `url`:
 
 ```ts
 const file = fileInput.files?.[0];
@@ -156,21 +156,20 @@ if (file) {
 A complete type-checked integration is available in
 [examples/minimal-layer.ts](examples/minimal-layer.ts).
 
-## Remote Source Requirements
+## Remote Source Contract
 
-A remote COPC server must:
+A remote COPC host must:
 
 - honor `Range` requests and return `206 Partial Content`;
-- return the exact requested byte count;
-- expose `Content-Range` when exact range validation is required; and
-- allow the viewer origin and `Range` header through CORS.
+- return exactly the requested number of bytes;
+- expose `Content-Range` when exact range metadata is required; and
+- allow the viewer origin and `Range` request header through CORS.
 
-Persistent IndexedDB range reuse is opt-in and additionally requires a strong
-validator such as an exposed `ETag`, or an application-owned immutable version
-and authoritative source length. It improves repeat visits only; it is not a
-cold-load performance claim.
+Persistent IndexedDB range reuse is opt-in. It additionally needs an exposed
+strong `ETag`, or an application-owned immutable version plus authoritative
+source length. It improves repeat visits only and is not cold-load evidence.
 
-## Public Imports
+## Public Entry Points
 
 ```ts
 import { CopcPointCloudLayer } from "copc-cesium";
@@ -178,15 +177,18 @@ import { CopcSource } from "copc-cesium/core";
 import { CesiumPrimitivePointRenderer } from "copc-cesium/cesium";
 ```
 
-- `copc-cesium`: combined public surface.
-- `copc-cesium/core`: COPC inspection, hierarchy, range, sampling, and cache
-  APIs without Cesium imports.
-- `copc-cesium/cesium`: coordinate transforms, renderers, layer, and camera
-  streaming APIs.
+| Entry point | Purpose |
+| --- | --- |
+| `copc-cesium` | Combined public surface |
+| `copc-cesium/core` | Cesium-independent source, range, hierarchy, sampling, cache, and planning APIs |
+| `copc-cesium/cesium` | Coordinate transforms, renderers, layer, workers, camera stream, policies, and telemetry |
 
-See [API.md](docs/API.md) for the detailed contract.
+See [API.md](docs/API.md) for integration contracts and the emitted TypeScript
+declarations for the exhaustive public symbol list.
 
 ## Verification
+
+Choose the smallest gate that proves the change:
 
 ```bash
 npm test
@@ -194,39 +196,42 @@ npm run build
 npm run smoke:package
 ```
 
-The full workstation gate is:
+Browser rendering changes should also run `npm run smoke:example`. The full
+competition-device gate is:
 
 ```bash
 npm run qc:contest-device
+npm run evidence:contest:check
 ```
 
-It includes product tests, license/SBOM verification, real COPC Range checks,
-browser and package smoke tests, renderer measurements, smoothness checks, and
-a same-device regression comparison. Performance evidence records the actual
-GPU, browser, source state, and commit fingerprint; it is not a universal FPS
-guarantee. See the repository-only
-[performance methodology](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/docs/PERFORMANCE.md).
+The full gate includes deterministic product checks, documented live COPC
+Range checks, browser/package smoke, renderer measurements, smoothness gates,
+same-device regression comparison, and a source-bound evidence manifest.
+Performance reports record the actual GPU, browser, source state, and commit
+fingerprint; they are not universal FPS guarantees.
 
 ## Documentation
 
-- [API reference](docs/API.md)
+- [API guide](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Sample data provenance](docs/DATASETS.md)
-- [Performance methodology](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/docs/PERFORMANCE.md) (repository-only)
+- [Performance and evidence](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/docs/PERFORMANCE.md) (repository-only)
 - [Gaia3D competition evidence map](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/docs/COMPETITION.md) (repository-only)
 - [Release procedure](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/docs/RELEASE.md) (repository-only)
 - [Contributing](https://github.com/KimDDong03/COPC-Cesium-PointCloud-Provider/blob/main/CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [SPDX SBOM](docs/sbom.spdx.json)
 
 ## License and Stability
 
 The project is licensed under [MIT](LICENSE). Third-party packages and bundled
-worker components are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-and [docs/sbom.spdx.json](docs/sbom.spdx.json).
+worker components are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+[docs/sbom.spdx.json](docs/sbom.spdx.json).
 
 The API is pre-1.0 and may change between minor releases. Current limitations
-include incomplete coverage across COPC producers and coordinate systems,
-browser-only runtime support, and the need for application-supplied transforms
-when a CRS requires unavailable external datum grids.
+include browser-only runtime support, incomplete coverage across COPC producers,
+CRSs, browsers, and hardware, and the need for an application-provided transform
+when a CRS depends on unavailable external datum grids.
